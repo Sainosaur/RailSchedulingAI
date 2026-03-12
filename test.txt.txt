@@ -1,1 +1,15 @@
-sai is bad at github
+ git add .
+PS C:\Users\araam\OneDrive\Desktop\year-3\IDP3\Codebase\RailSchedulingAI> git commit -m "sai is bad boy"
+[main f6b43f8] sai is bad boy
+ 1 file changed, 1 insertion(+)
+PS C:\Users\araam\OneDrive\Desktop\year-3\IDP3\Codebase\RailSchedulingAI> git push -u origin main
+Enumerating objects: 5, done.
+Counting objects: 100% (5/5), done.
+Delta compression using up to 20 threads
+Compressing objects: 100% (2/2), done.
+Writing objects: 100% (3/3), 300 bytes | 150.00 KiB/s, done.
+Total 3 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+To https://github.com/Sainosaur/RailSchedulingAI.git
+   ba6f87a..f6b43f8  main -> main
+branch 'main' set up to track 'origin/main'.
+PS C:\Users\araam\OneDrive\Desktop\year-3\IDP3\Codebase\RailSchedulingAI
