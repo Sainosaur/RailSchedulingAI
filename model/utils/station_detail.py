@@ -1,10 +1,13 @@
+import time
+
 import requests
 from geopy.geocoders import Nominatim
 
 
 def get_station_location(station_name):
     geolocator = Nominatim(user_agent="ai_scheduler")
-    location = geolocator.geocode(station_name)
+    time.sleep(1)
+    location = geolocator.geocode(station_name, timeout=10)
     if location:
         return location.latitude, location.longitude
     raise Exception(f"Could not get location for station: {station_name}")
@@ -22,6 +25,3 @@ def get_station_elevation(station_name):
             data = response.json()
             return float(data["results"][0]["elevation"])
     raise Exception(f"Could not get elevation for station: {station_name}")
-
-
-print(get_station_elevation("34-650 Tymbark, Poland"))
