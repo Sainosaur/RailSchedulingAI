@@ -1,2 +1,3 @@
 NetworkX
 Dataclasses
+Geopy
