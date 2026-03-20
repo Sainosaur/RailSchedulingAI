@@ -29,19 +29,27 @@ class Segment:
 graph = net.Graph()
 
 # Stations
-chabowka = Station("Chabówka", 0, 0.582, get_station_elevation("Chabówka"), False)
+chabowka = Station(
+    "Chabówka", 0, 0.582, get_station_elevation("Dworzec Chabówka PKP"), True
+)
 rabka_zdroj = Station(
-    "Rabka-Zdrój", 1, 5.481, get_station_elevation("Rabka-Zdrój"), False
+    "Rabka-Zdrój", 1, 5.481, get_station_elevation("Dworzec Rabka-Zdrój PKP"), False
 )
 mszana_dolna = Station(
-    "Mszana Dolna", 2, 14.951, get_station_elevation("Mszana Dolna"), False
+    "Mszana Dolna", 2, 14.951, get_station_elevation("Przebudowa Mszana Dolna"), True
 )
-tymbark = Station("Tymbark", 3, 37.160, get_station_elevation("Tymbark PKP"), False)
-limanowa = Station("Limanowa", 4, 47.017, get_station_elevation("Limanowa"), False)
+tymbark = Station(
+    "Tymbark", 3, 37.160, get_station_elevation("Dworzec PKP Tymbark"), False
+)
+limanowa = Station(
+    "Limanowa", 4, 47.017, get_station_elevation("Dworzec Limanowa PKP"), True
+)
 stary_sacz = Station(
-    "Marcinkowice", 5, 67.394, get_station_elevation("Marcinkowice"), False
+    "Marcinkowice", 5, 67.394, get_station_elevation("Dworzec Marcinkowice PKP"), False
 )
-nowy_sacz = Station("Nowy Sącz", 6, 76.651, get_station_elevation("Nowy Sącz"), False)
+nowy_sacz = Station(
+    "Nowy Sącz", 6, 76.651, get_station_elevation("Dworzec Nowy Sącz PKP"), True
+)
 
 
 # Turning stations into an array
@@ -58,5 +66,3 @@ stations = [
 # Adding stations to the graph
 for station in stations:
     graph.add_node(station.name, data=station)
-    if station.elevation == None:
-        print(station)
