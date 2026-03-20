@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from operator import ne
 
 import networkx as net
 from utils.station_detail import get_station_elevation
@@ -23,7 +24,7 @@ class Segment:
     end_station: Station
     distance: float
     gradient: float
-    speed_limit: int
+    speed_limit: int | None
 
 
 graph = net.Graph()
@@ -44,7 +45,7 @@ tymbark = Station(
 limanowa = Station(
     "Limanowa", 4, 47.017, get_station_elevation("Dworzec Limanowa PKP"), True
 )
-stary_sacz = Station(
+marcinkowice = Station(
     "Marcinkowice", 5, 67.394, get_station_elevation("Dworzec Marcinkowice PKP"), False
 )
 nowy_sacz = Station(
@@ -59,10 +60,25 @@ stations = [
     mszana_dolna,
     tymbark,
     limanowa,
-    stary_sacz,
+    marcinkowice,
     nowy_sacz,
 ]
 
-# Adding stations to the graph
+# Adding stations and Segments to the graph
 for station in stations:
     graph.add_node(station.name, data=station)
+    limits = [90, 90, 60, 30, 30, 30]
+    if stations.index(station) < len(stations) - 1:
+        next_station = stations[(stations.index(station)) + 1]
+        graph.add_edge(
+            station.name,
+            next_station.name,
+            data=Segment(
+                station,
+                next_station,
+                next_station.distance - station.distance,
+                (next_station.elevation - station.elevation)
+                / (next_station.distance - station.distance),
+                limits[station.position],
+            ),
+        )
