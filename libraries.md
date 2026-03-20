@@ -1,3 +1,4 @@
 NetworkX
 Dataclasses
 Geopy
+Requests
