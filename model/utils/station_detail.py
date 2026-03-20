@@ -7,7 +7,7 @@ def get_station_location(station_name):
     location = geolocator.geocode(station_name)
     if location:
         return location.latitude, location.longitude
-    return None
+    raise Exception(f"Could not get location for station: {station_name}")
 
 
 def get_station_elevation(station_name):
@@ -20,5 +20,8 @@ def get_station_elevation(station_name):
         response = requests.get(url)
         if response.status_code == 200:
             data = response.json()
-            return data["results"][0]["elevation"]
-    return None
+            return float(data["results"][0]["elevation"])
+    raise Exception(f"Could not get elevation for station: {station_name}")
+
+
+print(get_station_elevation("34-650 Tymbark, Poland"))
