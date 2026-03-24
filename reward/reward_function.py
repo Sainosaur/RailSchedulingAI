@@ -36,7 +36,7 @@ class TrainState:
 
     # position
     current_position: float  # meters along the track
-    previouse_position: float  # psition at previous timestamp t-1
+    previous_position: float  # psition at previous timestamp t-1
     last_station_position: float  # position of the last station passed
     next_station_position: float  # position of the next station ahead
 
@@ -84,7 +84,7 @@ def _compute_progress_reward(state: TrainState) -> float:
         return 0.0
 
     p_current = (state.current_position - state.last_station_position) / span
-    p_previous = (state.previouse_position - state.last_station_position) / span
+    p_previous = (state.previous_position - state.last_station_position) / span
 
     p_current = max(0.0, min(1.0, p_current))  # clamp to [0,1]
     p_previous = max(0.0, min(1.0, p_previous))  # clamp to [0,1]
