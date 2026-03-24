@@ -35,7 +35,7 @@ class TrainState:
     """All variables required to compute the reward at one timestep."""
 
     # position
-    current_positions: float  # meters along the track
+    current_position: float  # meters along the track
     previouse_position: float  # psition at previous timestamp t-1
     last_station_position: float  # position of the last station passed
     next_station_position: float  # position of the next station ahead
@@ -83,7 +83,7 @@ def _compute_progress_reward(state: TrainState) -> float:
     if span <= 0:
         return 0.0
 
-    p_current = (state.current_positions - state.last_station_position) / span
+    p_current = (state.current_position - state.last_station_position) / span
     p_previous = (state.previouse_position - state.last_station_position) / span
 
     p_current = max(0.0, min(1.0, p_current))  # clamp to [0,1]
@@ -248,3 +248,42 @@ def compute_reward(state: TrainState) -> RewardOutput:
         r_terminal=r_terminal,
         r_total=r_total,
         terminate=terminate)
+
+
+# ---------------------------------------------------------------------------
+# Example usage
+# ---------------------------------------------------------------------------
+ 
+if __name__ == "__main__":
+    # Typical mid-journey timestep
+    state = TrainState(
+        current_position=1050.0,
+        previous_position=1020.0,
+        last_station_position=1000.0,
+        next_station_position=2000.0,
+        current_speed=25.0,
+        speed_limit=30.0,
+        distance_from_last_station=50.0,
+        distance_to_next_station=950.0,
+        headway=300.0,
+        reached_new_station=False,
+        acceleration_buffer=200.0,
+        braking_buffer=300.0,
+    )
+ 
+    result = compute_reward(state)
+ 
+    print("=== Reward Breakdown ===")
+    print(f"  Progress       : {result.r_progress:+.4f}")
+    print(f"  Headway        : {result.r_headway:+.4f}")
+    print(f"  Speed          : {result.r_speed:+.4f}")
+    print(f"  Station        : {result.r_station:+.4f}")
+    print(f"  Punctuality    : {result.r_time:+.4f}")
+    print(f"  HW Violation   : {result.r_violation:+.4f}")
+    print(f"  Collision      : {result.r_collision:+.4f}")
+    print(f"------------------------")
+    print(f"  Continuous     : {result.r_continuous:+.4f}")
+    print(f"  Event          : {result.r_event:+.4f}")
+    print(f"  Terminal       : {result.r_terminal:+.4f}")
+    print(f"  TOTAL          : {result.r_total:+.4f}")
+    print(f"  Terminate      : {result.terminate}")
