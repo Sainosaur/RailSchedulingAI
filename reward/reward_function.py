@@ -34,7 +34,7 @@ class TrainState:
 
     #postion 
     current_positions: float         #meters along the track
-    previouse_position: float        #psition at previous timestamp
+    previouse_position: float        #psition at previous timestamp t-1
     last_station_position: float     #position of the last station passed
     next_station_position: float     #position of the next station ahead
 
@@ -60,3 +60,29 @@ class TrainState:
     # Buffer distances for speed profile
     acceleration_buffer: float = 200.0  # D_a  (metres) — tune per prototype
     braking_buffer: float = 300.0       # D_b  (metres) — tune per prototype
+
+
+# Reward components 
+
+def compute_progress_reward(state:TrainState) -> float:
+    """
+    1.1 Incremental progress reward.
+ 
+    Normalised progress change between the last and current timestep.
+ 
+        p_t = (x_t - x_last) / (x_next - x_last)
+ 
+    r_progress = k_p * (p_t - p_{t-1})
+ 
+    Using previous_position as the proxy for p_{t-1}.
+    """
+    span = state.next_station_position - state.last_station_position
+    if span<=0:
+        return 0.0
+    
+    p_current = (state.current_positions - state.last_station_position)/span
+    p_previous = (state.previouse_position - state.last_station_position)/span
+
+    return K_P*(p_current - p_previous)
+
+
