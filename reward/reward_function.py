@@ -44,10 +44,6 @@ class TrainState:
     current_speed: float  # m/s
     speed_limit: float  # m/s (track speed limit)
 
-    # Distances (can be derived but passed in for clarity)
-    distance_from_last_station: float  # metres
-    distance_to_next_station: float  # metres
-
     # Safety
     headway: float  # seconds to the train ahead
 
@@ -122,16 +118,15 @@ def _compute_speed_reward(state: TrainState) -> float:
     """
     v: float = state.current_speed
     v_max: float = state.speed_limit
-    d_from: float = state.distance_from_last_station
-    d_to: float = state.distance_to_next_station
+    d_from: float = max(0.0, state.current_position - state.last_station_position)
+    d_to: float = max(0.0, state.next_station_position - state.current_position)
     D_a: float = state.acceleration_buffer
     D_b: float = state.braking_buffer
 
-    v_target: float = min(
-        v_max,
-        v_max * (d_from / D_a) if D_a > 0 else v_max,
-        v_max * (d_to / D_b) if D_b > 0 else v_max,
-    )
+    v_target: float = max(0.0,min(v_max,
+                                  v_max * (d_from / D_a) if D_a > 0 else v_max,
+                                  v_max * (d_to / D_b) if D_b > 0 else v_max))
+    
     overspeed: float = max(0.0, v - v_target)
     underspeed: float = max(0.0, v_target - v)
 
@@ -263,8 +258,6 @@ if __name__ == "__main__":
         next_station_position=2000.0,
         current_speed=25.0,
         speed_limit=30.0,
-        distance_from_last_station=50.0,
-        distance_to_next_station=950.0,
         headway=300.0,
         reached_new_station=False,
         acceleration_buffer=200.0,
