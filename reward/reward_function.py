@@ -14,7 +14,7 @@ from typing import Optional
 # Constants / hyperparameters
 
 K_P: float = 5.0 # incremental progress rewad scale
-PUNCTUALITY_FACTOR: float = 5.0
+STATION_REWARD: float = 5.0
 PUNCTUALITY_FACTOR: float = 0.5
  
 HEADWAY_WARNING_THRESHOLD: float = 240.0   # seconds — warning zone begins
@@ -129,4 +129,29 @@ def _compute_speed_reward(state: TrainState) -> float:
      underspeed:float=max(0.0, v_target-v)
 
      return -(K_OVER * overspeed**2) - (K_UNDER * underspeed)
+
+def _compute_station_reward(state: TrainState) -> float:
+    """
+    2.1 Station reached milestone reward.
+ 
+        r_station = +5   if reached_new_station
+                  =  0   otherwise
+    """
+    return STATION_REWARD if state.reached_new_station else 0.0 
+ 
+def _compute_punctuality_penalty(state: TrainState) ->float:
+    """
+    2.2 Punctuality penalty at station arrival.
+ 
+    Only applied when the train has just reached a new station and
+    both scheduled and actual arrival times are provided.
+ 
+        r_time = -0.5 * |T_sched - T_arr|   if station reached
+               =  0                          otherwise
+    """
+    if not state.reached_new_station:
+        return 0.0
+    if state.scheduled_arrival_time is None or state.actual_arrival_time is None:
+        return 0.0
+    return -PUNCTUALITY_FACTOR * abs(state.scheduled_arrival_time - state.actual_arrival_time)
 
