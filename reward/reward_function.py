@@ -170,6 +170,7 @@ def _compute_headway_violation(state: TrainState) -> tuple[float, bool]:
     """
     if state.headway <= HEADWAY_VIOLATION_THRESHOLD:
         return HEADWAY_VIOLATION_PENALTY, True
+    
     return 0.0, False
 
 def _compute_collision_penalty(state: TrainState) -> tuple[float, bool]:
@@ -181,3 +182,69 @@ def _compute_collision_penalty(state: TrainState) -> tuple[float, bool]:
     if state.collision:
         return COLLISION_PENALTY, True
     return 0.0, False
+
+# Main reward function
+
+@dataclass
+class RewardOutput:
+    """Structured reward breakdown for easy debugging."""
+    # Continuous
+    r_progress: float
+    r_headway: float
+    r_speed: float
+    # Event
+    r_station: float
+    r_time: float
+    # Terminal
+    r_violation: float
+    r_collision: float
+    # Aggregate
+    r_continuous: float
+    r_event: float
+    r_terminal: float
+    r_total: float
+    # Episode control
+    terminate: bool
+
+def compute_reward(state: TrainState) -> RewardOutput:
+    """
+    Compute the full reward for one timestep.
+ 
+    r_t = r_continuous + r_event + r_terminal
+ 
+    Also returns a `terminate` flag that the environment loop should
+    check to end the episode immediately.
+    """
+    # --- Continuous ---
+    r_progress = _compute_progress_reward(state)
+    r_headway  = _compute_headway_penalty(state)
+    r_speed    = _compute_speed_reward(state)
+ 
+    # --- Event ---
+    r_station = _compute_station_reward(state)
+    r_time    = _compute_punctuality_penalty(state)
+ 
+    # --- Terminal ---
+    r_violation, terminate_violation = _compute_headway_violation(state)
+    r_collision, terminate_collision = _compute_collision_penalty(state)
+ 
+    # Aggregates
+    r_continuous = r_progress + r_headway + r_speed
+    r_event      = r_station  + r_time
+    r_terminal   = r_violation + r_collision
+    r_total      = r_continuous + r_event + r_terminal
+    terminate    = terminate_violation or terminate_collision
+ 
+    return RewardOutput(
+        r_progress=r_progress,
+        r_headway=r_headway,
+        r_speed=r_speed,
+        r_station=r_station,
+        r_time=r_time,
+        r_violation=r_violation,
+        r_collision=r_collision,
+        r_continuous=r_continuous,
+        r_event=r_event,
+        r_terminal=r_terminal,
+        r_total=r_total,
+        terminate=terminate)
