@@ -1,0 +1,4 @@
+NetworkX
+Dataclasses
+Geopy
+Requests
