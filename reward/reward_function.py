@@ -64,7 +64,7 @@ class TrainState:
 
 # Reward components 
 
-def compute_progress_reward(state:TrainState) -> float:
+def _compute_progress_reward(state:TrainState) -> float:
     """
     1.1 Incremental progress reward.
  
@@ -83,6 +83,50 @@ def compute_progress_reward(state:TrainState) -> float:
     p_current = (state.current_positions - state.last_station_position)/span
     p_previous = (state.previouse_position - state.last_station_position)/span
 
+    p_current = max(0.0, min(1.0, p_current))   #clamp to [0,1]
+    p_previous = max(0.0, min(1.0, p_previous)) #clamp to [0,1]
+
     return K_P*(p_current - p_previous)
 
+def _compute_headway_penalty(state: TrainState) -> float:
+    """
+    1.2 Headway warning-zone penalty.
+ 
+    Applied only when headway < 240 s (above the hard 192 s limit).
+ 
+        r_headway = -h_t * (240 - h_t) / 1000   if h_t < 240
+                  = 0                             otherwise
+    """
+    h = state.headway
+    if HEADWAY_VIOLATION_THRESHOLD < h < HEADWAY_WARNING_THRESHOLD:
+        return -(h * (HEADWAY_WARNING_THRESHOLD - h)) / 1000.0
+    return 0.0
+
+def _compute_speed_reward(state: TrainState) -> float:
+     """
+    1.3 Speed compliance reward.
+ 
+    Phase-aware target speed:
+ 
+        v* = min(v_max,
+                 v_max * d_from / D_a,   # acceleration buffer
+                 v_max * d_to   / D_b)   # braking buffer
+ 
+    r_speed = -k_over  * max(0, v - v*)^2
+              -k_under * max(0, v* - v)
+    """
+     v: float = state.current_speed
+     v_max: float = state.speed_limit
+     d_from: float = state.distance_from_last_station
+     d_to: float = state.distance_to_next_station
+     D_a:float = state.acceleration_buffer
+     D_b:float = state.braking_buffer
+
+     v_target: float = min(v_max,
+                          v_max * (d_from/D_a) if D_a>0 else v_max,
+                          v_max * (d_to/D_b) if D_b>0 else v_max)
+     overspeed:float=max(0.0,v-v_target)
+     underspeed:float=max(0.0, v_target-v)
+
+     return -(K_OVER * overspeed**2) - (K_UNDER * underspeed)
 
