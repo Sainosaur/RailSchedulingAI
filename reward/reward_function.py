@@ -168,6 +168,16 @@ def _compute_headway_violation(state: TrainState) -> tuple[float, bool]:
  
     Returns (penalty, should_terminate).
     """
-    if state.headway < HEADWAY_VIOLATION_THRESHOLD:
+    if state.headway <= HEADWAY_VIOLATION_THRESHOLD:
         return HEADWAY_VIOLATION_PENALTY, True
+    return 0.0, False
+
+def _compute_collision_penalty(state: TrainState) -> tuple[float, bool]:
+    """
+    3.2 Collision penalty — terminal.
+ 
+    Returns (penalty, should_terminate).
+    """
+    if state.collision:
+        return COLLISION_PENALTY, True
     return 0.0, False
