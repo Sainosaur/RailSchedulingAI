@@ -19,8 +19,8 @@ A3) Green (next three zone are clear: speed limit), double-yellow (next two zone
 * **Target:** Distance to Zone (`DTZ`) — the coordinate of the next red signal or occupied block. Time to Zone (TTZ) - time taken to traverse DTZ at speed limit
 * **Logic:** Identify current segment and zone and override `proposed values` if the resulting velocity would exceed the segment's speed limit. How are zones decided?
 
-Q4) Why use train-to-zone?
-A4) Traditional standard (allegedly) and accessible for ETCS Level 2, moving zones not possible becasue ECTS Level 3, 5G, and GPS required (allegely). Poland Line 104 already had zones (allegedly). For example, if a sensor dies (won't because of May's group), the zone are combined temporarily making a bigger block - less efficieny but fail-safe. Moving block would be more complex to work with for prototype.
+Q4) Why use train-to-zone (Fixed-Block Signalling)?
+A4) Traditional standard (allegedly) and accessible for ETCS Level 2. Also, balises are present in the railway, but document doesn't tell where they are, so the simulation zones will be decided by designer.
 
 ## Layer 2: Simulation
 * **Steps:** Run three 10-second projections (T+5, T+10, T+15). 
