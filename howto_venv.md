@@ -4,7 +4,7 @@ Using the terminal.
 *1) set up new virtual environment (venv) using:*
 python -m venv venv
 
-*2) activate environment using:* (this must be done at the start of every session)
+*2) activate environment using (this must be done at the start of every session):*
 source venv/bin/activate
 
 *3) install libraries in venv:*
@@ -15,4 +15,3 @@ pip freeze > requirements.txt
 
 *5) Deactivate venv when done for the day:*
 deactivate
-
