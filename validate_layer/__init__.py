@@ -1,0 +1,1 @@
+"""The __init__.py allows the validate_layer folder to be used a pacakge, meaning you can reference the classes inside this folder from another folder (encapsulation)"""
