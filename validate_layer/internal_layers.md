@@ -49,17 +49,17 @@ A5) If we jumped to final time (linear calculation), the train would teleport th
 | Segment | Start (m) | End (m) | Limit (km/h) | Spacial Headway | Temporal Headway | 
                                                   (SH, no buffer)   (TH, no buffer)
                                                         
-| S0      | 0000      | 02000   | 90           | 312.5           | 12.5 |
+| S0      | 00582     | 05481   | 90           | 312.5           | 12.5 |
 
-| S1      | 2000     | 04000   | 90            | 312.5           | 12.5 |
+| S1      | 05481     | 14951   | 90           | 312.5           | 12.5 |
 
-| S2      | 4000      | 06000   | 60           | 138.9           | 08.3 |
+| S2      | 14951     | 37160   | 60           | 138.9           | 08.3 |
 
-| S3      | 6000      | 10000   | 30           | 034.7           | 04.2 |
+| S3      | 37160     | 47017   | 30           | 034.7           | 04.2 |
 
-| S4      | 6000      | 10000   | 30           | 034.7           | 04.2 |
+| S4      | 47017     | 67394   | 30           | 034.7           | 04.2 |
 
-| S5      | 6000      | 10000   | 30           | 034.7           | 04.2 |
+| S5      | 67394     | 76651   | 30           | 034.7           | 04.2 |
 
 Table values rounded to nearest decimal place where possible. 
 Gradients ignored in calcualtions, for now.

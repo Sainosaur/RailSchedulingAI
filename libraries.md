@@ -4,3 +4,4 @@ Geopy
 Requests
 Gymnasium
 Typing
+Matplotlib
