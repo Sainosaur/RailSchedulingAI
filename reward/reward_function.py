@@ -16,7 +16,8 @@ from typing import Optional
 
 K_P: float = 5.0 # incremental progress rewad scale
 STATION_REWARD: float = 5.0
-PUNCTUALITY_FACTOR: float = 0.5
+PUNCTUALITY_FACTOR: float = 0.5       # penalty per second *outside* tolerance
+PUNCTUALITY_TOLERANCE: float = 60.0   # seconds, "on time" window
 
 K_H: float =3  #HEADWAY_WARNING_SCALE
 HEADWAY_WARNING_THRESHOLD: float = 240.0  # seconds — warning zone begins
@@ -65,17 +66,7 @@ class TrainState:
 
 
 def _compute_progress_reward(state: TrainState) -> float:
-    """
-    1.1 Incremental progress reward.
-
-    Normalised progress change between the last and current timestep.
-
-        p_t = (x_t - x_last) / (x_next - x_last)
-
-    r_progress = k_p * (p_t - p_{t-1})
-
-    Using previous_position as the proxy for p_{t-1}.
-    """
+    
     span = state.next_station_position - state.last_station_position
     if span <= 0:
         return 0.0
@@ -90,14 +81,7 @@ def _compute_progress_reward(state: TrainState) -> float:
 
 
 def _compute_headway_penalty(state: TrainState) -> float:
-    """
-    1.2 Headway warning-zone penalty.
-
-    Applied only when headway < 240 s (above the hard 192 s limit).
-
-        r_headway = -k_H*h_t * (240 - h_t) / 1000   if h_t < 240
-                  = 0                             otherwise
-    """
+    
     h = state.headway
     if HEADWAY_VIOLATION_THRESHOLD < h < HEADWAY_WARNING_THRESHOLD:
         return -K_H*(h * (HEADWAY_WARNING_THRESHOLD - h)) / 1000.0
@@ -105,18 +89,7 @@ def _compute_headway_penalty(state: TrainState) -> float:
 
 
 def _compute_speed_reward(state: TrainState) -> float:
-    """
-    1.3 Speed compliance reward.
-
-    Phase-aware target speed:
-
-        v* = min(v_max,
-                 v_max * d_from / D_a,   # acceleration buffer
-                 v_max * d_to   / D_b)   # braking buffer
-
-    r_speed = -k_over  * max(0, v - v*)^2
-              -k_under * max(0, v* - v)
-    """
+    
     v: float = state.current_speed
     v_max: float = state.speed_limit
     d_from: float = max(0.0, state.current_position - state.last_station_position)
@@ -134,47 +107,28 @@ def _compute_speed_reward(state: TrainState) -> float:
     return -(K_OVER * overspeed**2) - (K_UNDER * underspeed)
 
 def _compute_station_reward(state: TrainState) -> float:
-    """
-    2.1 Station reached milestone reward.
- 
-        r_station = +5   if reached_new_station
-                  =  0   otherwise
-    """
+    
     return STATION_REWARD if state.reached_new_station else 0.0 
  
 def _compute_punctuality_penalty(state: TrainState) ->float:
-    """
-    2.2 Punctuality penalty at station arrival.
- 
-    Only applied when the train has just reached a new station and
-    both scheduled and actual arrival times are provided.
- 
-        r_time = -0.5 * |T_sched - T_arr|   if station reached
-               =  0                          otherwise
-    """
+    
     if not state.reached_new_station:
         return 0.0
     if state.scheduled_arrival_time is None or state.actual_arrival_time is None:
         return 0.0
-    return -PUNCTUALITY_FACTOR * abs(state.scheduled_arrival_time - state.actual_arrival_time)
-
+    
+    deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
+    excess = max(0.0, deviation - PUNCTUALITY_TOLERANCE)
+    return -PUNCTUALITY_FACTOR * excess
 def _compute_headway_violation(state: TrainState) -> tuple[float, bool]:
-    """
-    3.1 Headway violation penalty — terminal.
- 
-    Returns (penalty, should_terminate).
-    """
+
     if state.headway <= HEADWAY_VIOLATION_THRESHOLD:
         return HEADWAY_VIOLATION_PENALTY, True
     
     return 0.0, False
 
 def _compute_collision_penalty(state: TrainState) -> tuple[float, bool]:
-    """
-    3.2 Collision penalty — terminal.
- 
-    Returns (penalty, should_terminate).
-    """
+   
     if state.collision:
         return COLLISION_PENALTY, True
     return 0.0, False
