@@ -18,10 +18,11 @@ K_P: float = 5.0 # incremental progress rewad scale
 STATION_REWARD: float = 5.0
 PUNCTUALITY_FACTOR: float = 0.5
 
+K_H: float =3  #HEADWAY_WARNING_SCALE
 HEADWAY_WARNING_THRESHOLD: float = 240.0  # seconds — warning zone begins
 HEADWAY_VIOLATION_THRESHOLD: float = 192.0  # seconds — hard safety limit
 
-K_OVER: float = 1.0  # overspeed penalty weight  (quadratic)
+K_OVER: float = 0.5  # overspeed penalty weight  (quadratic)
 K_UNDER: float = 0.0  # underspeed penalty weight (linear, default 0)
 
 HEADWAY_VIOLATION_PENALTY: float = -150.0
@@ -94,12 +95,12 @@ def _compute_headway_penalty(state: TrainState) -> float:
 
     Applied only when headway < 240 s (above the hard 192 s limit).
 
-        r_headway = -h_t * (240 - h_t) / 1000   if h_t < 240
+        r_headway = -k_H*h_t * (240 - h_t) / 1000   if h_t < 240
                   = 0                             otherwise
     """
     h = state.headway
     if HEADWAY_VIOLATION_THRESHOLD < h < HEADWAY_WARNING_THRESHOLD:
-        return -(h * (HEADWAY_WARNING_THRESHOLD - h)) / 1000.0
+        return -K_H*(h * (HEADWAY_WARNING_THRESHOLD - h)) / 1000.0
     return 0.0
 
 
@@ -245,20 +246,20 @@ def compute_reward(state: TrainState) -> RewardOutput:
         terminate=terminate)
 
 
-# ---------------------------------------------------------------------------
+
 # Example usage
-# ---------------------------------------------------------------------------
+
  
 if __name__ == "__main__":
     # Typical mid-journey timestep
     state = TrainState(
-        current_position=1050.0,
-        previous_position=1020.0,
+        current_position=1500.0,
+        previous_position=1450.0,
         last_station_position=1000.0,
         next_station_position=2000.0,
-        current_speed=25.0,
+        current_speed=30.0,
         speed_limit=30.0,
-        headway=300.0,
+        headway=190.0,
         reached_new_station=False,
         acceleration_buffer=200.0,
         braking_buffer=300.0,
