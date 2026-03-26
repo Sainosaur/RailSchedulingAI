@@ -76,4 +76,4 @@ A6) The segments are best estimates looking at map of Line 104 release in 2025 a
 When writing report, then figure out estimated start up and long term cost for the VL. Also, expand by introducing moving zone and maybe opposite direction traffic.
 
 ## AI Declaration
-AI was used during research and providein the template for this markdown. All final safety design choices (logic, formulae, variables, justifications) were chosen by me.
+AI was used iterativley during research and planning, and provided the template for this markdown. All final safety design choices (logic, formulae, variables, justifications) were chosen by me.
