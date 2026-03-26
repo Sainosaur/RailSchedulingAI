@@ -1,6 +1,6 @@
 """
 Draft: 1
-This draft was full AI-generated, but used my specification in documentation.
+This draft was fully AI-generated, but used my specification in documentation.
 Next steps are to read and understand code, find errors and fix them.
 Once done, then make a separate test file to force values and see if code works as expected.
 
