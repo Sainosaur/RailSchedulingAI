@@ -22,7 +22,7 @@ A3) Green (next three zone are clear: speed limit), double-yellow (next two zone
 Q4) Why use train-to-zone (Fixed-Block Signalling)?
 A4) Traditional standard (allegedly) and accessible for ETCS Level 2. Also, balises are present in the railway, but document doesn't tell where they are, so the simulation zones will be decided by designer.
 
-## Layer 2: Simulation
+### Layer 2: Simulation
 * **Steps:** Run three 10-second projections (T+5, T+10, T+15). 
 * **Justification:** Prevents "overshooting" into a restricted speed zone or a stop point that is currently out of the immediate sensor range.
 
