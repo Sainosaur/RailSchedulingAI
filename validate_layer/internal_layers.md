@@ -1,5 +1,5 @@
 # Validation Layer (VL) Documentation
-Update as code changes; draft number: 3.
+Update as code changes; draft number: 4.
 
 ## 1. Why have a VL?
 The AI is a non-deterministic black box. This layers provides the determinism so the AI can undergo aggressive learning whilst ensuring no accidents. 
@@ -11,8 +11,8 @@ Q2) Why convoy (same direction traffic) model only for prototype?
 A2) Simplifies prototpye to one-dimensional preoblem - focus on proving AI improves throughput while managing headways.
 
 Also, 4 aspect signalling is applied. 
-Q3) Why 4-aspect signalling?
-A3) Green (next three zone are clear: speed limit), double-yellow (next two zone are clear : go to 60 kmph using 1 m/s² (not 0.5 for simplicity)), yellow (next zone is clear: got to 30 kmph using 1 m/s²), red (next zone is occupied: go to 0 kmph: using 1 m/s²). This provdes speed and decleration guidance and increases throughput because the brakes do not have to slammed near hazard, maintaining average speed for longer. Green to red is worst case senario. This does mean space is unutilised, but safety is priority and this keeps VL simple.
+Q3) Why 4-aspect signalling? This determines action space. Assume acceleration is 0.5 m/s² and emergency deceleration at 1 m/s².
+A3) Green (next three zone are clear: speed limit), double-yellow (next two zone are clear : go to 60 kmph), yellow (next zone is clear: got to 30 kmph), red (next zone is occupied: go to 0 kmph). This provdes speed and decleration guidance and increases throughput because the brakes do not have to slammed near hazard, maintaining average speed for longer. Green to red is worst case senario. This does mean space is unutilised, but safety is priority and this keeps VL simple.
 
 ### Layer 1: Ingestion & Static Limits
 * **Inputs:** `current_v` (m/s), `current_x` (m), `proposed_a` (m/s²), `propsed_v` (m/s²), `signal_aspect`. 
@@ -37,7 +37,7 @@ A5) If we jumped to final time (linear calculation), the train would teleport th
 
 ### Layer 4: The Decision Node (4a/4b)
 * **4a (Pass):** Return `proposed values` to the environment. Log: `Status: Clear`.
-* **4b (Fail):** Intercept the action (quickly sieve through actions by decrementing available options and repeat layer 2 and 3 until pass found). Trigger Layer 5.
+* **4b (Fail):** Intercept the action (quickly sieve through actions by decrementing available options in action space and repeat layer 2 and 3 until pass found). Trigger Layer 5.
 
 ### Layer 5: XAI Log
 * **XAI Logging:** Append to `override_log.csv`:
