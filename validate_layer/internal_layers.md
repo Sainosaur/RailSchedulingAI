@@ -1,5 +1,5 @@
 # Validation Layer (VL) Documentation
-Update as code changes; draft number: 1.
+Update as code changes; draft number: 3.
 
 ## 1. Why have a VL?
 The AI is a non-deterministic black box. This layers provides the determinism so the AI can undergo aggressive learning whilst ensuring no accidents. 
