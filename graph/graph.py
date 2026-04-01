@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from operator import ne
 
 import networkx as net
 from utils.station_detail import get_station_elevation
