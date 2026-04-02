@@ -49,8 +49,8 @@ class ModernizedLine104(gym.Env):
     # --- Station positions (metres) — from segment map ---
     STATIONS: list[float] = [582, 5481, 14951, 37160, 47017, 67394, 76651]
 
-    # --- 4-Aspect fixed speed targets (m/s); aspect 3 is segment-dependent ---
-    SPEED_MAP: dict[int, float] = {0: 0.0, 1: 8.33, 2: 16.67}
+    # Speed targets now derived from segment limit via
+    # ValidationLayer._speed_for_action (1/3, 2/3, full).
 
     def __init__(
         self,
@@ -113,13 +113,10 @@ class ModernizedLine104(gym.Env):
             action, self.x, self.v, self.dtz,
         )
 
-        # Target speed from the validated action
+        # Target speed from the validated action (uses the same 1/3, 2/3
+        # fraction logic as the validator so physics and safety stay in sync)
         seg = self.vl.get_segment(self.x)
-        target_v = (
-            seg.limit_ms
-            if safe_action == 3
-            else self.SPEED_MAP[safe_action]
-        )
+        target_v = self.vl._speed_for_action(safe_action, seg)
 
         # ----- 2. Physics — two-phase SUVAT update -----
         prev_x = self.x
@@ -236,38 +233,40 @@ class ModernizedLine104(gym.Env):
         """
         Update Distance-to-Zone.
 
-        DTZ = coordinate of the nearest constraint the train must not
-        cross.  In this convoy prototype it is the lead train's position
-        (fixed-block boundary of the occupied zone).
+        DTZ = distance from the train to the next fixed-block boundary.
+        Blocks are SH-length subdivisions within each segment, so
+        DTZ is always ≤ SH.
         """
-        self.dtz = self.lead_x
+        self.dtz = self.vl.compute_dtz(self.x)
 
     def _get_signal_aspect(self) -> int:
         """
-        Derive the 4-aspect signal from the distance to the occupied zone
-        and the current segment's spatial headway.
+        Derive the 4-aspect signal from the distance to the lead train
+        and the current segment's spatial headway (SH).
 
-        Green  (3) — next 3 blocks clear    (dist > 3 × SH)
-        DblYlw (2) — next 2 blocks clear    (dist > 2 × SH)
-        Yellow (1) — next 1 block  clear     (dist > 1 × SH)
-        Red    (0) — next block occupied     (dist ≤ 1 × SH)
+        The lead train's distance determines how many blocks ahead are
+        clear.  SH is the block length:
+            Green  (3) — next 3 blocks clear    (dist > 3 × SH)
+            DblYlw (2) — next 2 blocks clear    (dist > 2 × SH)
+            Yellow (1) — next 1 block  clear     (dist > 1 × SH)
+            Red    (0) — next block occupied     (dist ≤ 1 × SH)
         """
-        dist = self.dtz - self.x
+        dist_to_lead = self.lead_x - self.x
         sh = self.vl.get_segment(self.x).spatial_headway
 
-        if dist > 3 * sh:
+        if dist_to_lead > 3 * sh:
             return 3
-        if dist > 2 * sh:
+        if dist_to_lead > 2 * sh:
             return 2
-        if dist > sh:
+        if dist_to_lead > sh:
             return 1
         return 0
 
     def _get_obs(self) -> np.ndarray:
-        """Build the observation vector [pos, speed, dist_to_zone, aspect]."""
+        """Build the observation vector [pos, speed, dtz, aspect]."""
         aspect = self._get_signal_aspect()
         return np.array(
-            [self.x, self.v, self.dtz - self.x, float(aspect)],
+            [self.x, self.v, self.dtz, float(aspect)],
             dtype=np.float32,
         )
 

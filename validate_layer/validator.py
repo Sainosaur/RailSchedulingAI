@@ -1,5 +1,5 @@
 """
-Draft: 3
+Draft: 5
 Corrected to match internal_layers.md (draft 4).
 
 validate_layer/validator.py
@@ -13,28 +13,28 @@ Layer 2 — Simulation  (3-step SUVAT lookahead at T+5, T+10, T+15 s)
 Layer 3 — Multi-Factor Violation Check  (spatial, temporal, segment)
 Layer 4 — Decision Node  (4a pass / 4b sieve)
 Layer 5 — XAI Log  (override_log.csv)
+
+Assume two trains, train 1 and train 2, with train 1 in front of train 2.
+
+DTZ (Distance-to-Zone) definition
+----------------------------------
+Each segment is divided into fixed blocks of length SH (spatial headway).
+DTZ is the *distance* from the train's front to the start of the next
+block boundary ahead.  DTZ is therefore always ≤ SH.
 """
 
 import csv
 import os
+import sys
 import time
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Tuple
 
+# Ensure project-root imports work regardless of working directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# ---------------------------------------------------------------------------
-# Data structures  (internal_layers.md  §3)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class Segment:
-    """One fixed-block segment of Rail Line 104."""
-    id: str
-    start: float          # metres along track
-    end: float            # metres along track
-    limit_ms: float       # speed limit  (m/s)
-    spatial_headway: float   # SH — metres, no buffer
-    temporal_headway: float  # TH — seconds, no buffer
+from graph.graph import VLSegment, build_vl_segments   # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -46,13 +46,13 @@ EMERGENCY_DECEL: float = -1.0  # service / emergency braking  (m/s²)
 TEMPORAL_BUFFER: float = 5.0   # headway reaction buffer  (seconds)
 SIM_STEPS: list[int] = [5, 10, 15]  # simulation lookahead times  (seconds)
 
-# 4-Aspect signalling — fixed speed targets for aspects 0-2
-# Aspect 3 (Green) is segment-dependent (= segment speed limit)
-_ASPECT_SPEEDS: dict[int, float] = {
-    0: 0.0,    # Red    — stop
-    1: 8.33,   # Yellow — 30 km/h
-    2: 16.67,  # Double-Yellow — 60 km/h
-}
+# Number of 4-aspect actions per train
+ACTIONS_PER_TRAIN: int = 4
+
+# Action space layout (single flat space for both trains):
+#   0–3 → Train 1 (front)   |   4–7 → Train 2 (rear)
+# Aspect 0 = Red (stop), 1 = Yellow (1/3 limit), 2 = Dbl-Yellow (2/3 limit),
+# 3 = Green (segment limit).
 
 
 # ---------------------------------------------------------------------------
@@ -66,18 +66,20 @@ class ValidationLayer:
     Public API
     ----------
     get_safe_action(proposed_act, x, v, dtz) -> (safe_action, was_overridden)
+    compute_dtz(x)                           -> float  (distance to next block)
+
+    The action integers follow the combined layout:
+        0–3  →  Train 1       4–7  →  Train 2
+    Internally the per-train action (0–3) is decoded for the sieve.
+
+    DTZ is the distance from the train to the next fixed-block boundary.
+    It is always ≤ SH for the current segment.
     """
 
     def __init__(self, log_dir: str = "."):
-        # Segment Map  (internal_layers.md  §3 — table)
-        self.segments: list[Segment] = [
-            Segment("S0",   582,  5481, 25.00, 312.5, 12.5),
-            Segment("S1",  5481, 14951, 25.00, 312.5, 12.5),
-            Segment("S2", 14951, 37160, 16.67, 138.9,  8.3),
-            Segment("S3", 37160, 47017,  8.33,  34.7,  4.2),
-            Segment("S4", 47017, 67394,  8.33,  34.7,  4.2),
-            Segment("S5", 67394, 76651,  8.33,  34.7,  4.2),
-        ]
+        # Segments (with block boundaries) are built once by graph.py
+        # and cached at module level — no repeated computation.
+        self.segments: list[VLSegment] = build_vl_segments()
 
         # Layer 5 — XAI log path
         self._log_path = os.path.join(log_dir, "override_log.csv")
@@ -95,7 +97,7 @@ class ValidationLayer:
                     ["timestamp", "original_ppo_a", "corrected_a", "constraint_id"]
                 )
 
-    def get_segment(self, x: float) -> Segment:
+    def get_segment(self, x: float) -> VLSegment:
         """Return the segment that contains position *x*."""
         for seg in self.segments:
             if seg.start <= x < seg.end:
@@ -105,12 +107,57 @@ class ValidationLayer:
             return self.segments[-1]
         return self.segments[0]
 
+    def compute_dtz(self, x: float) -> float:
+        """
+        Compute Distance-to-Zone (DTZ).
+
+        DTZ = distance from position *x* to the start of the next
+        fixed-block boundary ahead.  Blocks within each segment are
+        spaced SH apart, so DTZ is always ≤ SH.
+
+        Returns
+        -------
+        float   Distance in metres (always > 0 unless exactly on a
+                boundary, in which case the *following* boundary is used).
+        """
+        seg = self.get_segment(x)
+        for boundary in seg.block_boundaries:
+            if boundary > x:
+                return boundary - x
+        # x is at or past the last boundary in this segment →
+        # next boundary is the start of the following segment.
+        seg_idx = self.segments.index(seg)
+        if seg_idx + 1 < len(self.segments):
+            return self.segments[seg_idx + 1].start - x
+        # Beyond all segments — return a large safe value
+        return seg.spatial_headway
+
     @staticmethod
-    def _speed_for_action(action: int, segment: Segment) -> float:
-        """Map a 4-aspect action integer to a target speed (m/s)."""
-        if action == 3:
-            return segment.limit_ms          # Green = segment limit
-        return _ASPECT_SPEEDS.get(action, 0.0)
+    def _speed_for_action(action: int, segment: VLSegment) -> float:
+        """
+        Map a per-train 4-aspect action (0–3) to a target speed (m/s).
+
+        The target speeds are proportional to the *current segment's*
+        speed limit so they adapt automatically as the train crosses
+        segment boundaries:
+            0  Red          →  0           (stop)
+            1  Yellow       →  1/3 × limit (cautious approach)
+            2  Double-Yellow→  2/3 × limit (moderate approach)
+            3  Green        →  limit       (full speed)
+        """
+        fractions = {0: 0.0, 1: 1.0 / 3.0, 2: 2.0 / 3.0, 3: 1.0}
+        return fractions.get(action, 0.0) * segment.limit_ms
+
+    @staticmethod
+    def _decode_action(combined_action: int) -> Tuple[int, int]:
+        """
+        Decode a combined action into (train_index, per_train_action).
+
+        Combined layout:  0–3 → Train 1,  4–7 → Train 2.
+        """
+        train_idx = combined_action // ACTIONS_PER_TRAIN
+        per_train = combined_action % ACTIONS_PER_TRAIN
+        return train_idx, per_train
 
     # ------------------------------------------------------------------
     # Layer 2 — SUVAT Projection
@@ -137,11 +184,26 @@ class ValidationLayer:
         t_to_target = (target_v - v) / accel       # always positive
 
         if t <= t_to_target:
-            # Still accelerating / braking throughout the window
+            # The train has NOT yet reached target_v within the
+            # lookahead window, so it is still accelerating or braking
+            # throughout.  We use the *actual* current speed (v) and
+            # the constant acceleration directly in SUVAT — no
+            # "projected / intermediate" values are needed because the
+            # motion is a single constant-acceleration phase from t = 0
+            # to t = t.
             v_proj = v + accel * t
             x_proj = x + v * t + 0.5 * accel * t ** 2
         else:
-            # Reach target partway, then cruise
+            # The train reaches target_v at t_to_target, BEFORE the end
+            # of the lookahead window.  After that instant the
+            # acceleration drops to zero and the train cruises.  We
+            # therefore split into two SUVAT phases:
+            #   Phase 1 (0 → t_to_target):  constant accel, uses actual v.
+            #   Phase 2 (t_to_target → t):  zero accel, uses target_v
+            #                                (the "projected" cruise speed).
+            # x_at_target is the position at the moment the train
+            # finishes accelerating / braking; the remaining time is
+            # covered at the constant cruise speed target_v.
             x_at_target = x + v * t_to_target + 0.5 * accel * t_to_target ** 2
             x_proj = x_at_target + target_v * (t - t_to_target)
             v_proj = target_v
@@ -162,7 +224,12 @@ class ValidationLayer:
     ) -> Tuple[bool, str]:
         """
         Run the 3-step simulation (Layer 2) and perform the multi-factor
-        violation check (Layer 3) for a given *action*.
+        violation check (Layer 3) for a given per-train *action* (0–3).
+
+        Parameters
+        ----------
+        dtz : float   Distance (metres) from the train to the next
+                       fixed-block boundary.  Always ≤ SH.
 
         Returns
         -------
@@ -177,19 +244,22 @@ class ValidationLayer:
             current_seg.limit_ms,
         )
 
+        # Absolute coordinate of the next block boundary
+        boundary_x = x + dtz
+
         # Layer 2 — simulate at T+5, T+10, T+15
         for t in SIM_STEPS:
             x_proj, v_proj = self._project(x, v, target_v, t)
 
             # --- Layer 3a: Spatial Violation ---
-            # Train must not enter / pass the occupied zone
-            if x_proj >= dtz:
+            # Train must not reach or cross the next block boundary
+            if x_proj >= boundary_x:
                 return False, "DTZ_Spatial_Violation"
 
             # --- Layer 3b: Temporal Violation ---
-            # Ensure enough reaction time before reaching DTZ
+            # Ensure enough reaction time before reaching the boundary
             if v_proj > 0.01:                       # avoid div-by-zero
-                time_to_zone = (dtz - x_proj) / v_proj
+                time_to_zone = (boundary_x - x_proj) / v_proj
                 if time_to_zone < TEMPORAL_BUFFER:
                     return False, "DTZ_Temporal_Violation"
 
@@ -221,15 +291,26 @@ class ValidationLayer:
 
         Parameters
         ----------
-        proposed_act : int   Action from PPO (0-3, 4-aspect).
+        proposed_act : int   Per-train action (0–3, 4-aspect).
         x            : float Current position (m).
         v            : float Current speed (m/s).
-        dtz          : float Coordinate of the next red signal / occupied
-                             block (m).
+        dtz          : float Distance to the next fixed-block boundary
+                             (m).  Always ≤ SH.
 
         Returns
         -------
         (safe_action, was_overridden)
+
+        Performance note — sieve cost on segments S0 / S1
+        -------------------------------------------------
+        The sieve decrements through at most 4 actions (3 → 2 → 1 → 0),
+        each running 3 SUVAT projections — a worst-case of 12 lightweight
+        arithmetic operations.  On S0/S1 the higher speed limit (90 km/h)
+        does *not* increase the number of iterations; it only makes it
+        more likely that the higher-speed actions violate a constraint
+        and are skipped quickly.  The fixed, small action space (4 actions)
+        means the sieve completes in constant O(1) time regardless of
+        segment, so performance is not a concern. ??? fact check.
         """
         # 4a — try the proposed action first
         is_safe, constraint = self._check_action_safety(proposed_act, x, v, dtz)
