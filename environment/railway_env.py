@@ -1,29 +1,302 @@
+"""
+environment/railway_env.py
+
+Gymnasium environment for a single train traversing Polish Rail Line 104
+(Chabówka → Nowy Sącz, ~76 km).
+
+Convoy model: one AI-controlled train follows a lead train that cruises
+at a configurable constant speed.  The agent chooses a 4-aspect signal
+action each timestep; the Validation Layer ensures safety before the
+physics update runs.
+"""
+
+import sys
+from pathlib import Path
+
 import gymnasium as gym
-from validator import ValidationLayer
-from reward_function import compute_reward, TrainState
+import numpy as np
+
+# Ensure project-root imports work regardless of working directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from validate_layer.validator import ValidationLayer   # noqa: E402
+from reward.reward_function import compute_reward, TrainState  # noqa: E402
+
 
 class ModernizedLine104(gym.Env):
-    def __init__(self):
+    """
+    Gymnasium environment — Line 104 single-train convoy.
+
+    Observation  (Box, shape=(4,)):
+        [position, speed, distance_to_zone, signal_aspect]
+
+    Action (Discrete(4)):
+        0 = Red (stop)  |  1 = Yellow (30 km/h)
+        2 = Double-Yellow (60 km/h)  |  3 = Green (segment limit)
+    """
+
+    metadata = {"render_modes": ["human"]}
+
+    # --- Physics ---
+    DT: float = 1.0      # timestep  (seconds)
+    ACCEL: float = 0.5    # traction acceleration  (m/s²)
+    DECEL: float = -1.0   # service braking  (m/s²)
+
+    # --- Track extents ---
+    TRACK_START: float = 582.0
+    TRACK_END: float = 76651.0
+
+    # --- Station positions (metres) — from segment map ---
+    STATIONS: list[float] = [582, 5481, 14951, 37160, 47017, 67394, 76651]
+
+    # --- 4-Aspect fixed speed targets (m/s); aspect 3 is segment-dependent ---
+    SPEED_MAP: dict[int, float] = {0: 0.0, 1: 8.33, 2: 16.67}
+
+    def __init__(
+        self,
+        lead_train_speed: float = 20.0,
+        render_mode: str | None = None,
+    ):
         super().__init__()
+        self.render_mode = render_mode
+        self.lead_train_speed = lead_train_speed
+
+        # Validation Layer (safety sieve)
         self.vl = ValidationLayer()
+
+        # Spaces
         self.action_space = gym.spaces.Discrete(4)
-        # State: [pos, speed, dtz, aspect]
-        self.observation_space = gym.spaces.Box(low=0, high=80000, shape=(4,))
+        self.observation_space = gym.spaces.Box(
+            low=np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([80000.0, 30.0, 80000.0, 3.0], dtype=np.float32),
+            dtype=np.float32,
+        )
 
-    def step(self, action):
-        # 1. Validate with Sieve
-        safe_action, overridden = self.vl.get_safe_action(action, self.x, self.v, self.dtz)
+        # State variables — initialised properly in reset()
+        self.x: float = self.TRACK_START
+        self.v: float = 0.0
+        self.dtz: float = 0.0
+        self.lead_x: float = 0.0
+        self.time: float = 0.0
+        self.last_station_idx: int = 0
+        self.visited_stations: set[int] = set()
 
-        # 2. Physics Update (0.5s)
+    # ------------------------------------------------------------------
+    # Gymnasium API
+    # ------------------------------------------------------------------
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+
+        self.x = self.TRACK_START
+        self.v = 0.0
+        self.time = 0.0
+        self.last_station_idx = 0
+        self.visited_stations = {0}  # starting station already "visited"
+
+        # Lead train begins ~2 km ahead
+        self.lead_x = self.TRACK_START + 2000.0
+        self._update_dtz()
+
+        return self._get_obs(), {}
+
+    def step(self, action: int):
+        """
+        Execute one environment step:
+            1.  Validate the proposed action through the safety sieve.
+            2.  Apply SUVAT physics.
+            3.  Advance the lead train.
+            4.  Compute the reward.
+        """
+        # ----- 1. Validation Layer (Layers 1–5) -----
+        safe_action, overridden = self.vl.get_safe_action(
+            action, self.x, self.v, self.dtz,
+        )
+
+        # Target speed from the validated action
+        seg = self.vl.get_segment(self.x)
+        target_v = (
+            seg.limit_ms
+            if safe_action == 3
+            else self.SPEED_MAP[safe_action]
+        )
+
+        # ----- 2. Physics — two-phase SUVAT update -----
         prev_x = self.x
-        # ... (SUVAT updates for self.x and self.v based on safe_action) ...
 
-        # 3. Reward with "Beat Up" logic
-        state = TrainState(current_position=self.x, previous_position=prev_x, ...)
+        if abs(target_v - self.v) < 0.01:
+            # Cruising
+            accel = 0.0
+            self.x += self.v * self.DT
+        else:
+            accel = self.ACCEL if target_v > self.v else self.DECEL
+            t_to_target = (target_v - self.v) / accel   # always > 0
+
+            if self.DT <= t_to_target:
+                # Still accelerating / braking within this timestep
+                self.x += self.v * self.DT + 0.5 * accel * self.DT ** 2
+                self.v += accel * self.DT
+            else:
+                # Reach target partway, cruise the remainder
+                self.x += (
+                    self.v * t_to_target
+                    + 0.5 * accel * t_to_target ** 2
+                    + target_v * (self.DT - t_to_target)
+                )
+                self.v = target_v
+
+        # Clamp: speed cannot be negative
+        self.v = max(0.0, self.v)
+
+        self.time += self.DT
+
+        # ----- 3. Lead train moves forward -----
+        self.lead_x += self.lead_train_speed * self.DT
+        self._update_dtz()
+
+        # ----- 4. Station arrival check -----
+        reached_new_station = False
+        next_st_idx = self.last_station_idx + 1
+        if next_st_idx < len(self.STATIONS):
+            if self.x >= self.STATIONS[next_st_idx]:
+                reached_new_station = True
+                self.last_station_idx = next_st_idx
+                self.visited_stations.add(next_st_idx)
+
+        # ----- 5. Reward computation -----
+        last_st_pos = self.STATIONS[self.last_station_idx]
+        next_st_pos = self.STATIONS[
+            min(self.last_station_idx + 1, len(self.STATIONS) - 1)
+        ]
+
+        # Temporal headway: time gap to the lead train (seconds)
+        headway = (
+            (self.lead_x - self.x) / self.v
+            if self.v > 0.01 else 9999.0
+        )
+
+        state = TrainState(
+            current_position=self.x,
+            previous_position=prev_x,
+            last_station_position=last_st_pos,
+            next_station_position=next_st_pos,
+            current_speed=self.v,
+            speed_limit=seg.limit_ms,
+            headway=headway,
+            reached_new_station=reached_new_station,
+            collision=(self.x >= self.lead_x),
+        )
+
         reward_out = compute_reward(state)
         total_reward = reward_out.r_total
 
+        # Override penalty — discourages PPO from proposing unsafe actions
         if overridden:
-            total_reward -= 500 # The Penalty
+            total_reward -= 500
 
-        return self._get_obs(), total_reward, self.x >= 76651, False, {"overridden": overridden}
+        # ----- 6. Termination -----
+        terminated = bool(self.x >= self.TRACK_END or reward_out.terminate)
+        truncated = False
+
+        info = {
+            "overridden": overridden,
+            "safe_action": safe_action,
+            "time": self.time,
+            "segment": seg.id,
+            "reward_breakdown": {
+                "progress": reward_out.r_progress,
+                "headway": reward_out.r_headway,
+                "speed": reward_out.r_speed,
+                "station": reward_out.r_station,
+                "punctuality": reward_out.r_time,
+                "violation": reward_out.r_violation,
+                "collision": reward_out.r_collision,
+            },
+        }
+
+        return self._get_obs(), total_reward, terminated, truncated, info
+
+    def render(self):
+        if self.render_mode == "human":
+            seg = self.vl.get_segment(self.x)
+            print(
+                f"t={self.time:7.1f}s │ "
+                f"x={self.x:8.1f}m │ "
+                f"v={self.v:5.2f} m/s ({self.v * 3.6:5.1f} km/h) │ "
+                f"seg={seg.id} │ "
+                f"dtz={self.dtz:8.1f}m │ "
+                f"lead={self.lead_x:8.1f}m"
+            )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _update_dtz(self) -> None:
+        """
+        Update Distance-to-Zone.
+
+        DTZ = coordinate of the nearest constraint the train must not
+        cross.  In this convoy prototype it is the lead train's position
+        (fixed-block boundary of the occupied zone).
+        """
+        self.dtz = self.lead_x
+
+    def _get_signal_aspect(self) -> int:
+        """
+        Derive the 4-aspect signal from the distance to the occupied zone
+        and the current segment's spatial headway.
+
+        Green  (3) — next 3 blocks clear    (dist > 3 × SH)
+        DblYlw (2) — next 2 blocks clear    (dist > 2 × SH)
+        Yellow (1) — next 1 block  clear     (dist > 1 × SH)
+        Red    (0) — next block occupied     (dist ≤ 1 × SH)
+        """
+        dist = self.dtz - self.x
+        sh = self.vl.get_segment(self.x).spatial_headway
+
+        if dist > 3 * sh:
+            return 3
+        if dist > 2 * sh:
+            return 2
+        if dist > sh:
+            return 1
+        return 0
+
+    def _get_obs(self) -> np.ndarray:
+        """Build the observation vector [pos, speed, dist_to_zone, aspect]."""
+        aspect = self._get_signal_aspect()
+        return np.array(
+            [self.x, self.v, self.dtz - self.x, float(aspect)],
+            dtype=np.float32,
+        )
+
+
+# -----------------------------------------------------------------------
+# Quick smoke-test
+# -----------------------------------------------------------------------
+if __name__ == "__main__":
+    env = ModernizedLine104(render_mode="human")
+    obs, info = env.reset()
+    print("=== Line 104 Environment — Smoke Test ===\n")
+    env.render()
+
+    total_r = 0.0
+    for step_i in range(200):
+        # Simple heuristic: always request Green
+        action = 3
+        obs, reward, terminated, truncated, info = env.step(action)
+        total_r += reward
+
+        if step_i % 25 == 0:
+            env.render()
+            print(f"     step {step_i:4d}  reward={reward:+8.3f}  "
+                  f"overridden={info['overridden']}")
+
+        if terminated or truncated:
+            print(f"\n--- Episode ended at step {step_i} ---")
+            break
+
+    env.render()
+    print(f"\nTotal reward: {total_r:+.2f}")
+    print(f"Stations visited: {sorted(env.visited_stations)}")
