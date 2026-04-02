@@ -5,9 +5,15 @@ from pathlib import Path
 
 # Ensure project-root imports work regardless of working directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Also add the graph/ directory so 'utils' is found when run directly
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import networkx as net
-from graph.utils.station_detail import get_station_elevation
+
+try:
+    from graph.utils.station_detail import get_station_elevation
+except ModuleNotFoundError:
+    from utils.station_detail import get_station_elevation
 
 
 @dataclass
