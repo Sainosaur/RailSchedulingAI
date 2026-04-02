@@ -31,7 +31,7 @@ A5) If we jumped to final time (linear calculation), the train would teleport th
 
 ### Layer 3: Multi-Factor Violation Check
 * **Spatial Violation:** Is s_projected >= DTZ, then ok. This ensures train does not share same zone as hazard.
-* **Temporal Violation:** Is TTZ + 5.0 s<= (DTZ / v), with the 5-second reaction buffer included, then ok. This ensures train are not going to fast to react to. Also, need a special case for when v is a low number or equals zero.
+* **Temporal Violation:** Is TTZ = (DTZ / v) <= 5.0 s (5-second reaction buffer). This ensures train are not going to fast to react to. Also, need a special case for when v is a low number or equals zero.
 * **Segment Violation:** If the train enter a new segment at a speed higher than the segment's limit, the cap speed and override.
 
 
