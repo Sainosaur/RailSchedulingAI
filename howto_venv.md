@@ -10,7 +10,7 @@ source venv/bin/activate
 *3) install libraries in venv:*
 pip install networkx geopy requests gymnasium
 
-*4) Create snapshot of libraires in venv in a text file called requiremnts and overwirte current file:*
+*4) Create snapshot of libraires in venv in a text file called requiremnts and overwirte current file (can be done in venv or outside):*
 pip freeze > requirements.txt
 
 *5) Deactivate venv when done for the day:*
