@@ -23,11 +23,8 @@ DTZ is the *distance* from the train's front to the start of the next
 block boundary ahead.  DTZ is therefore always ≤ SH.
 """
 
-import csv
-import os
 import sys
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Tuple
 
@@ -35,6 +32,7 @@ from typing import Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from graph.graph import VLSegment, build_vl_segments   # noqa: E402
+from validate_layer.log_manager import init_log, append_row  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -76,26 +74,17 @@ class ValidationLayer:
     It is always ≤ SH for the current segment.
     """
 
-    def __init__(self, log_dir: str = "."):
+    def __init__(self):
         # Segments (with block boundaries) are built once by graph.py
         # and cached at module level — no repeated computation.
         self.segments: list[VLSegment] = build_vl_segments()
 
-        # Layer 5 — XAI log path
-        self._log_path = os.path.join(log_dir, "override_log.csv")
-        self._init_log()
+        # Layer 5 — XAI log (managed by log_manager.py)
+        init_log()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    def _init_log(self) -> None:
-        """Create the override log with a header row if it doesn't exist."""
-        if not os.path.exists(self._log_path):
-            with open(self._log_path, "w", newline="") as fh:
-                csv.writer(fh).writerow(
-                    ["timestamp", "original_ppo_a", "corrected_a", "constraint_id"]
-                )
 
     def get_segment(self, x: float) -> VLSegment:
         """Return the segment that contains position *x*."""
@@ -330,17 +319,14 @@ class ValidationLayer:
         return 0, True
 
     # ------------------------------------------------------------------
-    # Layer 5 — XAI Log
+    # Layer 5 — XAI Log  (delegated to log_manager.py)
     # ------------------------------------------------------------------
 
+    @staticmethod
     def _log_override(
-        self,
         original: int,
         corrected: int,
         constraint_id: str,
     ) -> None:
-        """Append one row to override_log.csv."""
-        with open(self._log_path, "a", newline="") as fh:
-            csv.writer(fh).writerow(
-                [time.time(), original, corrected, constraint_id]
-            )
+        """Append one override event row to validate_layer/override_log.csv."""
+        append_row(time.time(), original, corrected, constraint_id)
