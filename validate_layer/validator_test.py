@@ -16,6 +16,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from graph.graph import VLSegment
 from validate_layer.validator import ValidationLayer
+from validate_layer import log_manager
+
+
+# Path for the test-only log (inside validate_layer/)
+_TEST_LOG = os.path.join(
+    str(Path(__file__).resolve().parent), "override_log_test.csv"
+)
 
 
 class _BaseValidatorTest(unittest.TestCase):
@@ -55,13 +62,14 @@ class _BaseValidatorTest(unittest.TestCase):
             VLSegment("S5", 67394, 76651,  8.33,  34.7,  4.2,
                       self._make_blocks(67394, 76651, 34.7)),
         ]
-        self.vl._log_path = "override_log_test.csv"
-        self.vl._init_log()
+        # Point the log manager at a test-only file
+        log_manager._LOG_PATH = _TEST_LOG
+        log_manager.init_log()
 
     def tearDown(self):
         """Remove the temporary override log after each test."""
-        if os.path.exists("override_log_test.csv"):
-            os.remove("override_log_test.csv")
+        if os.path.exists(_TEST_LOG):
+            os.remove(_TEST_LOG)
 
 
 # -----------------------------------------------------------------------
@@ -299,7 +307,7 @@ class TestXAILog(_BaseValidatorTest):
         dtz = ...           # distance to zone (m), chosen to force override
         self.vl.get_safe_action(proposed_act, x, v, dtz)
 
-        with open("override_log_test.csv") as f:
+        with open(_TEST_LOG) as f:
             lines = f.readlines()
         # Header + at least one data row
         self.assertGreaterEqual(len(lines), 2)
@@ -312,7 +320,7 @@ class TestXAILog(_BaseValidatorTest):
         dtz = ...           # distance to zone (m), chosen so action passes
         self.vl.get_safe_action(proposed_act, x, v, dtz)
 
-        with open("override_log_test.csv") as f:
+        with open(_TEST_LOG) as f:
             lines = f.readlines()
         self.assertEqual(len(lines), 1)  # header only
 

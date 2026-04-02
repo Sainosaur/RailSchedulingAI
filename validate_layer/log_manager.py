@@ -13,8 +13,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Hardcoded reset flag — set to True to wipe the log on next run.
 # ---------------------------------------------------------------------------
-LOG_RESET: bool = False
-
+LOG_RESET: bool = True
 # Log file lives inside validate_layer/
 _LOG_DIR = str(Path(__file__).resolve().parent)
 _LOG_FILENAME = "override_log.csv"
