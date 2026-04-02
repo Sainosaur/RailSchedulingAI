@@ -12,7 +12,7 @@ A2) Simplifies prototpye to one-dimensional preoblem - focus on proving AI impro
 
 Also, 4 aspect signalling is applied. 
 Q3) Why 4-aspect signalling? This determines action space. Assume acceleration is 0.5 m/s² and emergency deceleration at 1 m/s².
-A3) Green (next three zone are clear: speed limit), double-yellow (next two zone are clear : go to 60 kmph), yellow (next zone is clear: got to 30 kmph), red (next zone is occupied: go to 0 kmph). This provdes speed and decleration guidance and increases throughput because the brakes do not have to slammed near hazard, maintaining average speed for longer. Green to red is worst case senario. This does mean space is unutilised, but safety is priority and this keeps VL simple.
+A3) Green (next three zone are clear: speed limit), double-yellow (next two zone are clear : go to 2/3 of speed limit), yellow (next zone is clear: got to 1/3 of speed limit), red (next zone is occupied: go to 0 kmph). This provdes speed and decleration guidance and increases throughput because the brakes do not have to slammed near hazard, maintaining average speed for longer. Green to red is worst case senario. This does mean space is unutilised, but safety is priority and this keeps VL simple.
 
 ### Layer 1: Ingestion & Static Limits
 * **Inputs:** `current_v` (m/s), `current_x` (m), `proposed_a` (m/s²), `propsed_v` (m/s²), `signal_aspect`. 
