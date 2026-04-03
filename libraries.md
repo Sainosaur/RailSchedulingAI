@@ -5,3 +5,5 @@ Requests
 Gymnasium
 Typing
 Matplotlib
+FastAPI
+Websockets
