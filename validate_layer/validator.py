@@ -87,14 +87,19 @@ class ValidationLayer:
     # ------------------------------------------------------------------
 
     def get_segment(self, x: float) -> VLSegment:
-        """Return the segment that contains position *x*."""
+        """
+        Return the segment that contains position *x*.
+        Raises ValueError if *x* is outside the track boundaries.
+        """
         for seg in self.segments:
             if seg.start <= x < seg.end:
                 return seg
-        # Clamp: before first segment → first; after last → last
-        if x >= self.segments[-1].end:
+        # Allow exact endpoint of the track
+        if x == self.segments[-1].end:
             return self.segments[-1]
-        return self.segments[0]
+        
+        raise ValueError(f"Position x={x} is off the track "
+                         f"[{self.segments[0].start}, {self.segments[-1].end}]")
 
     def compute_dtz(self, x: float) -> float:
         """
@@ -254,9 +259,13 @@ class ValidationLayer:
 
             # --- Layer 3c: Segment Violation ---
             # Projected position may have crossed into a new segment
-            proj_seg = self.get_segment(x_proj)
-            if v_proj > proj_seg.limit_ms + 0.01:   # small tolerance
-                return False, f"{proj_seg.id}_Limit"
+            try:
+                proj_seg = self.get_segment(x_proj)
+                if v_proj > proj_seg.limit_ms + 0.01:   # small tolerance
+                    return False, f"{proj_seg.id}_Limit"
+            except ValueError:
+                # If projected completely off the track, it is inherently unsafe
+                return False, "Track_Bounds_Violation"
 
         return True, ""
 
