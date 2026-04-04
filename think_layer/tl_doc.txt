@@ -1,0 +1,252 @@
+# Think Layer (TL) Documentation
+Update as code changes; draft number: 1.
+
+## 1. Why Have a Think Layer?
+The Think Layer is the PPO (Proximal Policy Optimisation) agent — the AI "brain" that decides which signal aspect to propose each timestep. The Validation Layer (VL) ensures safety deterministically, but it cannot *optimise*. It cannot learn to minimise journey time, smooth speed profiles, or maintain efficient headways. That is the TL's job.
+
+Q1) Why separate TL from VL?
+A1) The VL is a deterministic safety sieve (hard-coded rules, O(1) per step). The TL is a stochastic, learned policy (neural network weights, gradient updates). Separating them means the TL can explore aggressively during training — the VL catches every unsafe proposal before it reaches the physics engine. This separation is also good for trustworthiness: the safety guarantees are independent of the neural network.
+
+Q2) Why PPO specifically?
+A2) PPO is an on-policy, actor-critic algorithm with a clipped surrogate objective.  Advantages for this problem:
+  - **Stability:** The clipped objective prevents catastrophic policy updates — important when the reward signal is multi-component (progress + headway + speed + station + punctuality + violation + collision).
+  - **Sample efficiency vs. simplicity trade-off:** PPO is simpler to tune than SAC/TD3 (no replay buffer, no twin critics) while being more sample-efficient than vanilla policy gradient (REINFORCE).
+  - **Discrete action space:** PPO handles Discrete(4) natively via a categorical policy head — no need for the continuous-to-discrete tricks required by DDPG/SAC.
+  - **Proven in rail/transport RL:** PPO is widely used in Gymnasium-based transport scheduling research.
+
+## 2. Internal Architecture
+
+### 2.1 Observation Space (What the TL Sees)
+The environment (`ModernizedLine104`) provides a 4-dimensional observation vector every timestep:
+
+| Index | Name              | Units   | Range              | Source                          |
+|-------|-------------------|---------|--------------------|---------------------------------|
+| 0     | `position`        | metres  | [0, 80 000]        | Train's chainage along track    |
+| 1     | `speed`           | m/s     | [0, 30]            | Current velocity                |
+| 2     | `distance_to_zone`| metres  | [0, 80 000]        | DTZ from VL `compute_dtz()`     |
+| 3     | `signal_aspect`   | —       | {0, 1, 2, 3}       | Derived from lead-train distance|
+
+Q3) Why only 4 observation dimensions?
+A3) Minimal observation keeps the prototype simple and debuggable. Each dimension is physically meaningful and directly actionable. More dimensions (e.g., gradient, timetable deviation, fuel state) can be added later without changing the TL architecture — just increase the `Box` shape.
+
+Q4) Why is `signal_aspect` in the observation AND also the action?
+A4) The *observed* signal aspect tells the agent what the track signalling system *currently shows* (based on lead-train distance and SH). The *action* is what the agent *proposes* — "I want to behave as if the signal were X." The VL then checks whether that proposal is physically safe. So the observation is information, and the action is intention.
+
+### 2.2 Action Space (What the TL Decides)
+Discrete(4) — one of four signal aspects:
+
+| Action | Aspect        | Target Speed           | Meaning                         |
+|--------|---------------|------------------------|---------------------------------|
+| 0      | Red           | 0 m/s                  | Emergency stop                  |
+| 1      | Yellow        | 1/3 × segment limit    | Cautious approach               |
+| 2      | Double-Yellow | 2/3 × segment limit    | Moderate approach               |
+| 3      | Green         | segment limit           | Full speed                      |
+
+Target speeds are always relative to the *current segment's* speed limit (via `VL._speed_for_action()`), so they adapt automatically at segment boundaries. The VL may override the TL's proposed action downward (never upward) if the proposal would violate a safety constraint.
+
+Q5) Why not a continuous action space (e.g., target speed directly)?
+A5) The 4-aspect system mirrors real-world fixed-block signalling, which is the operational model we are simulating. It also constrains the VL sieve to at most 4 × 3 = 12 SUVAT projections per step (O(1)). A continuous action space would require a different sieve architecture and lose the direct analogy to real signalling.
+
+### 2.3 PPO Policy Network (to be implemented)
+
+```
+Observation [4] → FC(64) → ReLU → FC(64) → ReLU →  Actor Head  → Categorical(4)
+                                               →  Critic Head → V(s) scalar
+```
+
+Q6) Why shared backbone with separate heads?
+A6) The actor (policy) and critic (value function) share early feature extraction layers because they process the same observation. Separate heads allow independent output dimensions (4-class probability vs. scalar value). This is standard PPO architecture and reduces total parameter count.
+
+Q7) What hidden size?
+A7) 64 units per layer is a starting point. The observation space is tiny (4 dims), and the action space is small (4 choices), so a large network risks overfitting. We can increase later if training plateaus.
+
+### 2.4 Reward Signal (from `reward/reward_function.py`)
+The TL receives a scalar reward each timestep. The reward is computed by `compute_reward()` and has three categories:
+
+**Continuous (every timestep):**
+| Component     | Symbol        | Logic                                                    |
+|---------------|---------------|----------------------------------------------------------|
+| Progress      | `r_progress`  | Fractional distance gained toward next station × K_P (5) |
+| Headway       | `r_headway`   | Penalty when headway falls in warning zone (192–240 s)   |
+| Speed         | `r_speed`     | Quadratic penalty for exceeding speed profile            |
+
+**Event (on station arrival):**
+| Component     | Symbol        | Logic                                                    |
+|---------------|---------------|----------------------------------------------------------|
+| Station       | `r_station`   | +5.0 reward on reaching a new station                    |
+| Punctuality   | `r_time`      | Penalty proportional to deviation from scheduled time    |
+
+**Terminal (ends episode):**
+| Component     | Symbol        | Logic                                                    |
+|---------------|---------------|----------------------------------------------------------|
+| HW Violation  | `r_violation` | −150 if headway ≤ 192 s (hard safety limit)              |
+| Collision     | `r_collision` | −200 if train catches the lead train                     |
+
+**Override penalty (applied in environment, NOT in reward function):**
+| Component     | Logic                                                                 |
+|---------------|-----------------------------------------------------------------------|
+| VL Override   | −500 per step where the VL overrides the TL's proposed action         |
+
+The override penalty is the key bridge between TL and VL. It teaches the policy to avoid proposing actions that the VL will reject, effectively embedding safety awareness into the learned policy over time.
+
+Q8) Why is the override penalty so large (−500)?
+A8) The largest positive reward per step is roughly K_P × 1.0 = 5.0 (progress). The override penalty must dominate to ensure PPO learns to avoid unsafe proposals. If it were small (e.g., −10), the agent might still propose Green everywhere and let the VL "clean up" — which is safe but defeats the purpose of having a learned policy. The exact value (500) is a hyperparameter to tune.
+
+### 2.5 Episode Structure
+- **Start:** Train at Chabówka (x = 582 m), speed = 0, lead train 2 km ahead.
+- **Timestep:** 1 second (DT = 1.0 s). Each step: TL proposes action → VL validates → physics update → reward computed.
+- **Termination:** Train reaches Nowy Sącz (x ≥ 76 651 m), OR a terminal penalty fires (headway violation / collision).
+- **Stations visited:** Tracked in `visited_stations` set. Goal is to visit all 7 stations.
+
+### 2.6 Physics Model
+Two-phase SUVAT per timestep (same model in both `railway_env.py` and `validator.py`):
+- **Phase 1:** Accelerate/brake toward target speed (a = +0.5 or −1.0 m/s²).
+- **Phase 2:** If target speed is reached before DT expires, cruise for the remainder.
+- Speed clamped to ≥ 0 (no reversing).
+
+Q9) Why is braking (1.0 m/s²) twice as strong as acceleration (0.5 m/s²)?
+A9) Real trains brake faster than they accelerate. Emergency braking rates of ~1.0 m/s² are typical; traction acceleration depends on gradient and load but is generally slower. These are placeholder values — awaiting updates from the mechanical subgroup.
+
+## 3. Data Structures for Coding
+
+### 3.1 PPO Hyperparameters (Initial Values)
+| Parameter               | Symbol  | Value   | Justification                                                  |
+|-------------------------|---------|---------|----------------------------------------------------------------|
+| Learning rate           | `lr`    | 3e-4    | Adam default; standard for PPO                                 |
+| Discount factor         | `γ`     | 0.99    | Long episodes (~76 km at ~8 m/s ≈ 9 500 steps); need far sight|
+| GAE lambda              | `λ`     | 0.95    | Balance bias-variance in advantage estimation                  |
+| Clip ratio              | `ε`     | 0.2     | PPO default; prevents large policy jumps                       |
+| Entropy coefficient     | `c_ent` | 0.01    | Encourage exploration early in training                        |
+| Value loss coefficient  | `c_vf`  | 0.5     | Standard weighting for critic loss                             |
+| Batch size              | `B`     | 2048    | Number of timesteps collected before each update               |
+| Mini-batch size         | `m`     | 64      | SGD mini-batches within each update epoch                      |
+| Update epochs           | `K`     | 10      | Number of passes over the batch per update                     |
+| Max gradient norm       | `—`     | 0.5     | Gradient clipping for stability                                |
+
+Q10) Why these specific values?
+A10) These are standard PPO defaults from Schulman et al. (2017) and Stable-Baselines3. They are starting points. Tuning priority: `lr`, `γ`, `c_ent`, `ε` — in that order.
+
+### 3.2 Training Loop Pseudocode
+```
+initialise policy π_θ  (actor-critic network)
+initialise VL           (deterministic safety sieve)
+initialise environment  (ModernizedLine104)
+
+for iteration = 1, 2, … :
+    # --- Rollout phase ---
+    buffer ← empty
+    obs ← env.reset()
+    for t = 1 to B:
+        action, log_prob, value ← π_θ.sample(obs)
+        obs', reward, done, info ← env.step(action)   # VL runs inside env.step()
+        buffer.store(obs, action, log_prob, value, reward, done)
+        obs ← obs'
+        if done: obs ← env.reset()
+
+    # --- Advantage estimation (GAE) ---
+    advantages, returns ← compute_gae(buffer, γ, λ)
+
+    # --- PPO update phase ---
+    for epoch = 1 to K:
+        for mini_batch in buffer.shuffle_and_split(m):
+            ratio ← π_θ(a|s) / π_old(a|s)
+            clipped_ratio ← clip(ratio, 1−ε, 1+ε)
+            L_policy ← −min(ratio × A, clipped_ratio × A)
+            L_value  ← (V(s) − R)²
+            L_entropy ← −H(π_θ(·|s))
+            loss ← L_policy + c_vf × L_value + c_ent × L_entropy
+            θ ← θ − lr × ∇loss
+```
+
+### 3.3 Module Layout (Planned Files)
+| File                          | Purpose                                                     |
+|-------------------------------|-------------------------------------------------------------|
+| `think_layer/__init__.py`     | Package init                                                |
+| `think_layer/agent.py`        | PPO agent class: network definition, action sampling        |
+| `think_layer/trainer.py`      | Training loop, rollout buffer, GAE, PPO update              |
+| `think_layer/config.py`       | Hyperparameter dataclass (all values from §3.1)             |
+| `think_layer/train.py`        | Entry-point script: `python -m think_layer.train`           |
+| `think_layer/evaluate.py`     | Run a trained policy deterministically, log metrics         |
+| `think_layer/tl_doc.txt`      | This document                                               |
+
+## 4. TL ↔ VL Interface Contract
+
+The TL and VL interact through `env.step(action)`:
+
+```
+TL proposes action (0–3)
+        │
+        ▼
+env.step(action)
+        │
+        ├── VL.get_safe_action(action, x, v, dtz)
+        │       │
+        │       ├── safe? → return (action, False)
+        │       └── unsafe? → sieve down → return (safe_action, True)
+        │
+        ├── Physics update (SUVAT with safe_action)
+        │
+        ├── Reward computation
+        │       └── if overridden: total_reward −= 500
+        │
+        └── return (obs, reward, done, info)
+```
+
+**Key invariant:** The TL never directly controls the train. Every action passes through the VL first. The TL learns to propose actions that the VL will accept.
+
+Q11) Does the TL know it was overridden?
+A11) Yes, via two channels:
+  1. `info["overridden"]` — boolean flag in the step info dict.
+  2. The −500 reward penalty — the strongest learning signal.
+  
+  The TL could also be given the `safe_action` in the observation (as a 5th dimension), but currently it is not. This is a design choice: we want the TL to learn *not to propose unsafe actions* rather than learn to predict what the VL will substitute.
+
+## 5. Metrics and Evaluation
+
+### 5.1 Training Metrics (logged per episode)
+| Metric                     | What it measures                                              |
+|----------------------------|---------------------------------------------------------------|
+| `episode_reward`           | Sum of all timestep rewards (including override penalties)    |
+| `episode_length`           | Number of timesteps before termination                        |
+| `stations_visited`         | Count of stations reached (out of 7)                          |
+| `override_count`           | How many times the VL overrode the TL per episode             |
+| `override_rate`            | override_count / episode_length                               |
+| `mean_speed`               | Average speed over the episode (m/s)                          |
+| `terminal_reason`          | "completed" / "headway_violation" / "collision"               |
+
+### 5.2 Success Criteria (Prototype)
+A trained TL should demonstrate:
+1. **All 7 stations visited** without collision or headway violation.
+2. **Override rate < 5%** — the learned policy almost always proposes safe actions.
+3. **Higher mean speed** than a baseline heuristic (e.g., always-Green or always-Yellow).
+4. **Converging `episode_reward`** over training iterations.
+
+Q12) What is the baseline heuristic?
+A12) The smoke test in `railway_env.py` already uses "always Green" as a heuristic (action = 3 every step). This is the simplest possible policy. The trained TL should outperform it on total reward because it will learn to slow down proactively near boundaries (avoiding the −500 override penalty) while still making progress.
+
+## 6. Dependencies
+| Library           | Version  | Purpose                                  |
+|-------------------|----------|------------------------------------------|
+| `gymnasium`       | 1.2.3    | Environment interface (already in use)   |
+| `numpy`           | 2.4.4    | Array operations  (already in use)       |
+| `torch`           | TBD      | Neural network, PPO optimisation         |
+| `tensorboard`     | TBD      | Training visualisation (optional)        |
+
+Q13) Why PyTorch over TensorFlow?
+A13) PPO implementations are cleaner in PyTorch (imperative style). Also, Stable-Baselines3 (our likely reference implementation) is PyTorch-based. Decision: use PyTorch. Version will be added to `requirements.txt` when the TL is implemented.
+
+Q14) Should we use Stable-Baselines3 directly or implement PPO from scratch?
+A14) **Decision needed.** Options:
+  - **SB3:** Faster to get working, battle-tested, hyperparameter scheduling built in. But less control over the VL integration (the override penalty is applied inside env.step, which SB3 supports natively).
+  - **From scratch:** Full control, better for learning and for the report, but more bug risk.
+  - **Recommendation:** Start with SB3 to prove the concept quickly. Then optionally re-implement from scratch for the report if needed.
+
+## 7. Future Work
+- Add more observation dimensions (gradient, timetable deviation, distance to next station).
+- Implement curriculum learning: train on shorter segments first, then full line.
+- Multi-train support: expand action space to Discrete(8) for two trains (already partially supported in VL's `_decode_action`).
+- Reward shaping: tune hyperparameters using Optuna or similar.
+- Evaluate transferability to other rail lines.
+
+## 8. AI Declaration
+AI was used iteratively during research and planning, and provided the template for this document. All final design choices (architecture, hyperparameters, interface contracts, justifications) were reviewed and decided by me.
