@@ -306,9 +306,17 @@ class ValidationLayer:
         arithmetic operations.  On S0/S1 the higher speed limit (90 km/h)
         does *not* increase the number of iterations; it only makes it
         more likely that the higher-speed actions violate a constraint
-        and are skipped quickly.  The fixed, small action space (4 actions)
-        means the sieve completes in constant O(1) time regardless of
-        segment, so performance is not a concern. ??? fact check.
+        and are skipped quickly.
+        
+        Why this is mathematically O(1) (Constant Time):
+        In Big O notation, O(1) means the runtime scales constantly regardless 
+        of dynamic inputs (like track distance `dtz` or speed `v`). 
+        Although increasing the number of physical actions to 160 would make 
+        it run ~40x slower, the runtime bounds are tied to hardcoded system 
+        limits: (Max 4 actions due to the 4-aspect system) × (3 sim steps that is hard coded by us) = 12 maximum SUVAT projections. 
+        Because there is an absolute ceiling of 12 evaluations regardless of 
+        input data size, the computational cost is capped at a strict mathematical 
+        constant. Thus, it is O(1).
         """
         # 4a — try the proposed action first
         is_safe, constraint = self._check_action_safety(proposed_act, x, v, dtz)
