@@ -45,7 +45,7 @@ Without fixed seeds, two identical training runs produce different results. This
 "is the training different because of my code change, or just random variance?"
 Add deterministic seeding, 42 is industry standard.
 
-9/ Lead Train Behaviour
+9/ Lead Train Behaviour -- easily add over hundreds of trains towards end (min in report).
 Lead train moves at a constant 20 m/s every episode. The agent can effectively "memorise" the exact headway profile.
 Start with fixed 20 m/s to get training working. Once you have a converging learning curve, 
 switch to randomised per episode to test robustness. 
