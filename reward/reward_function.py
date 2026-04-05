@@ -12,25 +12,27 @@ Total: r_t = r_continuous + r_event + r_terminal
 from dataclasses import dataclass
 from typing import Optional
 
-# Constants / hyperparameters
-
-K_P: float = 5.0 # incremental progress rewad scale
-STATION_REWARD: float = 5.0
-PUNCTUALITY_FACTOR: float = 0.5       # penalty per second *outside* tolerance
-PUNCTUALITY_TOLERANCE: float = 60.0   # seconds, "on time" window
-
-K_H: float =3  #HEADWAY_WARNING_SCALE
-HEADWAY_WARNING_THRESHOLD: float = 240.0  # seconds — warning zone begins
-HEADWAY_VIOLATION_THRESHOLD: float = 192.0  # seconds — hard safety limit
-
-K_OVER: float = 0.5  # overspeed penalty weight  (quadratic)
-K_UNDER: float = 0.0  # underspeed penalty weight (linear, default 0)
-
-HEADWAY_VIOLATION_PENALTY: float = -150.0
-COLLISION_PENALTY: float = -200.0
-
 # State container
 
+@dataclass
+class RewardConfig:
+    """Hyperparameters for the reward function."""
+    k_p: float = 5.0 # incremental progress reward scale
+    station_reward: float = 5.0
+    punctuality_factor: float = 0.5       # penalty per second *outside* tolerance
+    punctuality_tolerance: float = 60.0   # seconds, "on time" window
+    
+    k_h: float = 3.0  # HEADWAY_WARNING_SCALE
+    headway_warning_multiplier: float = 3.0  # e.g., 3x TH starts warning zone
+    headway_violation_multiplier: float = 1.0  # e.g., 1x TH is hard safety limit
+    
+    k_over: float = 0.5  # overspeed penalty weight  (quadratic)
+    k_under: float = 0.0  # underspeed penalty weight (linear, default 0)
+    
+    headway_violation_penalty: float = -150.0
+    collision_penalty: float = -200.0
+
+DEFAULT_CONFIG = RewardConfig()
 
 @dataclass
 class TrainState:
@@ -48,6 +50,7 @@ class TrainState:
 
     # Safety
     headway: float  # seconds to the train ahead
+    temporal_headway: float = 12.5  # default to highest TH
 
     # Timetable / events
     reached_new_station: bool  # True only in the timestep of arrival
@@ -65,7 +68,7 @@ class TrainState:
 # Reward components
 
 
-def _compute_progress_reward(state: TrainState) -> float:
+def _compute_progress_reward(state: TrainState, config: RewardConfig) -> float:
     
     span = state.next_station_position - state.last_station_position
     if span <= 0:
@@ -77,18 +80,21 @@ def _compute_progress_reward(state: TrainState) -> float:
     p_current = max(0.0, min(1.0, p_current))  # clamp to [0,1]
     p_previous = max(0.0, min(1.0, p_previous))  # clamp to [0,1]
 
-    return K_P * (p_current - p_previous)
+    return config.k_p * (p_current - p_previous)
 
 
-def _compute_headway_penalty(state: TrainState) -> float:
+def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
     
+    warning_thresh = state.temporal_headway * config.headway_warning_multiplier
+    violation_thresh = state.temporal_headway * config.headway_violation_multiplier
     h = state.headway
-    if HEADWAY_VIOLATION_THRESHOLD < h < HEADWAY_WARNING_THRESHOLD:
-        return -K_H*(h * (HEADWAY_WARNING_THRESHOLD - h)) / 1000.0
+    
+    if violation_thresh < h < warning_thresh:
+        return -config.k_h * (h * (warning_thresh - h)) / 1000.0
     return 0.0
 
 
-def _compute_speed_reward(state: TrainState) -> float:
+def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     
     v: float = state.current_speed
     v_max: float = state.speed_limit
@@ -104,13 +110,13 @@ def _compute_speed_reward(state: TrainState) -> float:
     overspeed: float = max(0.0, v - v_target)
     underspeed: float = max(0.0, v_target - v)
 
-    return -(K_OVER * overspeed**2) - (K_UNDER * underspeed)
+    return -(config.k_over * overspeed**2) - (config.k_under * underspeed)
 
-def _compute_station_reward(state: TrainState) -> float:
+def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
     
-    return STATION_REWARD if state.reached_new_station else 0.0 
+    return config.station_reward if state.reached_new_station else 0.0 
  
-def _compute_punctuality_penalty(state: TrainState) ->float:
+def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> float:
     
     if not state.reached_new_station:
         return 0.0
@@ -118,19 +124,21 @@ def _compute_punctuality_penalty(state: TrainState) ->float:
         return 0.0
     
     deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
-    excess = max(0.0, deviation - PUNCTUALITY_TOLERANCE)
-    return -PUNCTUALITY_FACTOR * excess
-def _compute_headway_violation(state: TrainState) -> tuple[float, bool]:
+    excess = max(0.0, deviation - config.punctuality_tolerance)
+    return -config.punctuality_factor * excess
 
-    if state.headway <= HEADWAY_VIOLATION_THRESHOLD:
-        return HEADWAY_VIOLATION_PENALTY, True
+def _compute_headway_violation(state: TrainState, config: RewardConfig) -> tuple[float, bool]:
+
+    violation_thresh = state.temporal_headway * config.headway_violation_multiplier
+    if state.headway <= violation_thresh:
+        return config.headway_violation_penalty, True
     
     return 0.0, False
 
-def _compute_collision_penalty(state: TrainState) -> tuple[float, bool]:
+def _compute_collision_penalty(state: TrainState, config: RewardConfig) -> tuple[float, bool]:
    
     if state.collision:
-        return COLLISION_PENALTY, True
+        return config.collision_penalty, True
     return 0.0, False
 
 # Main reward function
@@ -156,7 +164,7 @@ class RewardOutput:
     # Episode control
     terminate: bool
 
-def compute_reward(state: TrainState) -> RewardOutput:
+def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> RewardOutput:
     """
     Compute the full reward for one timestep.
  
@@ -166,17 +174,17 @@ def compute_reward(state: TrainState) -> RewardOutput:
     check to end the episode immediately.
     """
     # --- Continuous ---
-    r_progress = _compute_progress_reward(state)
-    r_headway  = _compute_headway_penalty(state)
-    r_speed    = _compute_speed_reward(state)
+    r_progress = _compute_progress_reward(state, config)
+    r_headway  = _compute_headway_penalty(state, config)
+    r_speed    = _compute_speed_reward(state, config)
  
     # --- Event ---
-    r_station = _compute_station_reward(state)
-    r_time    = _compute_punctuality_penalty(state)
+    r_station = _compute_station_reward(state, config)
+    r_time    = _compute_punctuality_penalty(state, config)
  
     # --- Terminal ---
-    r_violation, terminate_violation = _compute_headway_violation(state)
-    r_collision, terminate_collision = _compute_collision_penalty(state)
+    r_violation, terminate_violation = _compute_headway_violation(state, config)
+    r_collision, terminate_collision = _compute_collision_penalty(state, config)
  
     # Aggregates
     r_continuous = r_progress + r_headway + r_speed
@@ -213,7 +221,8 @@ if __name__ == "__main__":
         next_station_position=2000.0,
         current_speed=30.0,
         speed_limit=30.0,
-        headway=190.0,
+        headway=15.0, # e.g. 15s headway
+        temporal_headway=12.5,
         reached_new_station=False,
         acceleration_buffer=200.0,
         braking_buffer=300.0,
@@ -229,7 +238,7 @@ if __name__ == "__main__":
     print(f"  Punctuality    : {result.r_time:+.4f}")
     print(f"  HW Violation   : {result.r_violation:+.4f}")
     print(f"  Collision      : {result.r_collision:+.4f}")
-    print(f"------------------------")
+    print("------------------------")
     print(f"  Continuous     : {result.r_continuous:+.4f}")
     print(f"  Event          : {result.r_event:+.4f}")
     print(f"  Terminal       : {result.r_terminal:+.4f}")
