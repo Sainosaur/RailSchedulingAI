@@ -29,6 +29,11 @@ class RewardConfig:
     k_over: float = 0.5  # overspeed penalty weight  (quadratic)
     k_under: float = 0.0  # underspeed penalty weight (linear, default 0)
     
+    # New addition: Behavioral and Operational penalties
+    heartbeat_penalty: float = -0.1          # penalty applied every step to prevent stalling
+    override_penalty: float = -500.0         # penalty when the Validation Layer intervenes
+    jerk_penalty: float = -20.0               # penalty for flip-flopping actions abruptly
+    
     headway_violation_penalty: float = -150.0
     collision_penalty: float = -200.0
 
@@ -50,7 +55,6 @@ class TrainState:
 
     # Safety
     headway: float  # seconds to the train ahead
-    temporal_headway: float = 12.5  # default to highest TH
 
     # Timetable / events
     reached_new_station: bool  # True only in the timestep of arrival
@@ -59,6 +63,13 @@ class TrainState:
 
     # Safety events
     collision: bool = False
+
+    # Default parameters that must follow non-defaults (to fix dataclass syntax error)
+    temporal_headway: float = 12.5  # default to highest TH
+    
+    # Validation / Smoothing (Defaults set to safe values so the environment won't break until we integrate them)
+    overridden: bool = False
+    action_delta: int = 0  # Magnitude of change (e.g. 0 to 3)
 
     # Buffer distances for speed profile
     acceleration_buffer: float = 200.0  # D_a  (metres) — tune per prototype
@@ -112,6 +123,16 @@ def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
 
     return -(config.k_over * overspeed**2) - (config.k_under * underspeed)
 
+def _compute_heartbeat_penalty(state: TrainState, config: RewardConfig) -> float:
+    return config.heartbeat_penalty
+
+def _compute_override_penalty(state: TrainState, config: RewardConfig) -> float:
+    return config.override_penalty if state.overridden else 0.0
+
+def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
+    # Penalize the magnitude of the action shift squared (e.g., jump of 1 = -20, jump of 3 = -180)
+    return config.jerk_penalty * (state.action_delta ** 2)
+
 def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
     
     return config.station_reward if state.reached_new_station else 0.0 
@@ -150,9 +171,12 @@ class RewardOutput:
     r_progress: float
     r_headway: float
     r_speed: float
+    r_heartbeat: float
     # Event
     r_station: float
     r_time: float
+    r_override: float
+    r_jerk: float
     # Terminal
     r_violation: float
     r_collision: float
@@ -174,21 +198,24 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
     check to end the episode immediately.
     """
     # --- Continuous ---
-    r_progress = _compute_progress_reward(state, config)
-    r_headway  = _compute_headway_penalty(state, config)
-    r_speed    = _compute_speed_reward(state, config)
+    r_progress  = _compute_progress_reward(state, config)
+    r_headway   = _compute_headway_penalty(state, config)
+    r_speed     = _compute_speed_reward(state, config)
+    r_heartbeat = _compute_heartbeat_penalty(state, config)
  
     # --- Event ---
-    r_station = _compute_station_reward(state, config)
-    r_time    = _compute_punctuality_penalty(state, config)
+    r_station   = _compute_station_reward(state, config)
+    r_time      = _compute_punctuality_penalty(state, config)
+    r_override  = _compute_override_penalty(state, config)
+    r_jerk      = _compute_jerk_penalty(state, config)
  
     # --- Terminal ---
     r_violation, terminate_violation = _compute_headway_violation(state, config)
     r_collision, terminate_collision = _compute_collision_penalty(state, config)
  
     # Aggregates
-    r_continuous = r_progress + r_headway + r_speed
-    r_event      = r_station  + r_time
+    r_continuous = r_progress + r_headway + r_speed + r_heartbeat
+    r_event      = r_station + r_time + r_override + r_jerk
     r_terminal   = r_violation + r_collision
     r_total      = r_continuous + r_event + r_terminal
     terminate    = terminate_violation or terminate_collision
@@ -197,8 +224,11 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
         r_progress=r_progress,
         r_headway=r_headway,
         r_speed=r_speed,
+        r_heartbeat=r_heartbeat,
         r_station=r_station,
         r_time=r_time,
+        r_override=r_override,
+        r_jerk=r_jerk,
         r_violation=r_violation,
         r_collision=r_collision,
         r_continuous=r_continuous,
@@ -234,8 +264,11 @@ if __name__ == "__main__":
     print(f"  Progress       : {result.r_progress:+.4f}")
     print(f"  Headway        : {result.r_headway:+.4f}")
     print(f"  Speed          : {result.r_speed:+.4f}")
+    print(f"  Heartbeat      : {result.r_heartbeat:+.4f}")
     print(f"  Station        : {result.r_station:+.4f}")
     print(f"  Punctuality    : {result.r_time:+.4f}")
+    print(f"  Override       : {result.r_override:+.4f}")
+    print(f"  Jerk           : {result.r_jerk:+.4f}")
     print(f"  HW Violation   : {result.r_violation:+.4f}")
     print(f"  Collision      : {result.r_collision:+.4f}")
     print("------------------------")
