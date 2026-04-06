@@ -8,6 +8,8 @@ TODO
      as TH does this and scales with speed.
 1.5/ Update Docs about what physics equations are use and why in that branch.
 1.6/ Update Docs about the obervation logs in more detail.
+1.7/ remove the speed limit for the 4 aspect signal, keep the distance to blocked zone for each signal 
+
 
 2/ Update code accordingly to docs. 
 Objectives:
