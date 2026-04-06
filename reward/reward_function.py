@@ -11,6 +11,7 @@ Total: r_t = r_continuous + r_event + r_terminal
 
 from dataclasses import dataclass
 from typing import Optional
+import math
 
 # State container
 
@@ -29,10 +30,15 @@ class RewardConfig:
     k_over: float = 0.5  # overspeed penalty weight  (quadratic)
     k_under: float = 0.0  # underspeed penalty weight (linear, default 0)
     
+    # Kinematic Comfort Limits
+    comfortable_acceleration: float = 0.5  # m/s²
+    comfortable_deceleration: float = 0.5  # m/s²
+    
     # New addition: Behavioral and Operational penalties
     heartbeat_penalty: float = -0.1          # penalty applied every step to prevent stalling
     override_penalty: float = -500.0         # penalty when the Validation Layer intervenes
     jerk_penalty: float = -20.0               # penalty for flip-flopping actions abruptly
+    energy_penalty_weight: float = -5.0      # penalty for positive traction use
     
     headway_violation_penalty: float = -150.0
     collision_penalty: float = -200.0
@@ -70,10 +76,7 @@ class TrainState:
     # Validation / Smoothing (Defaults set to safe values so the environment won't break until we integrate them)
     overridden: bool = False
     action_delta: int = 0  # Magnitude of change (e.g. 0 to 3)
-
-    # Buffer distances for speed profile
-    acceleration_buffer: float = 200.0  # D_a  (metres) — tune per prototype
-    braking_buffer: float = 300.0  # D_b  (metres) — tune per prototype
+    applied_traction: float = 0.0  # Positive throttle applied by agent (m/s²), defaults to 0
 
 
 # Reward components
@@ -111,17 +114,21 @@ def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     v_max: float = state.speed_limit
     d_from: float = max(0.0, state.current_position - state.last_station_position)
     d_to: float = max(0.0, state.next_station_position - state.current_position)
-    D_a: float = state.acceleration_buffer
-    D_b: float = state.braking_buffer
 
-    v_target: float = max(0.0,min(v_max,
-                                  v_max * (d_from / D_a) if D_a > 0 else v_max,
-                                  v_max * (d_to / D_b) if D_b > 0 else v_max))
+    # Kinematic dynamic bounds (v^2 = u^2 + 2as => v = sqrt(2as))
+    v_accel = math.sqrt(2 * config.comfortable_acceleration * d_from)
+    v_brake = math.sqrt(2 * config.comfortable_deceleration * d_to)
+    
+    v_target: float = min(v_max, v_accel, v_brake)
     
     overspeed: float = max(0.0, v - v_target)
     underspeed: float = max(0.0, v_target - v)
 
     return -(config.k_over * overspeed**2) - (config.k_under * underspeed)
+
+def _compute_energy_penalty(state: TrainState, config: RewardConfig) -> float:
+    # Penalize purely positive acceleration applications (traction). Coasting and braking are free.
+    return config.energy_penalty_weight * state.applied_traction
 
 def _compute_heartbeat_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.heartbeat_penalty
@@ -177,6 +184,7 @@ class RewardOutput:
     r_time: float
     r_override: float
     r_jerk: float
+    r_energy: float
     # Terminal
     r_violation: float
     r_collision: float
@@ -208,6 +216,7 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
     r_time      = _compute_punctuality_penalty(state, config)
     r_override  = _compute_override_penalty(state, config)
     r_jerk      = _compute_jerk_penalty(state, config)
+    r_energy    = _compute_energy_penalty(state, config)
  
     # --- Terminal ---
     r_violation, terminate_violation = _compute_headway_violation(state, config)
@@ -215,7 +224,7 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
  
     # Aggregates
     r_continuous = r_progress + r_headway + r_speed + r_heartbeat
-    r_event      = r_station + r_time + r_override + r_jerk
+    r_event      = r_station + r_time + r_override + r_jerk + r_energy
     r_terminal   = r_violation + r_collision
     r_total      = r_continuous + r_event + r_terminal
     terminate    = terminate_violation or terminate_collision
@@ -229,6 +238,7 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
         r_time=r_time,
         r_override=r_override,
         r_jerk=r_jerk,
+        r_energy=r_energy,
         r_violation=r_violation,
         r_collision=r_collision,
         r_continuous=r_continuous,
@@ -254,8 +264,6 @@ if __name__ == "__main__":
         headway=15.0, # e.g. 15s headway
         temporal_headway=12.5,
         reached_new_station=False,
-        acceleration_buffer=200.0,
-        braking_buffer=300.0,
     )
  
     result = compute_reward(state)
@@ -269,6 +277,7 @@ if __name__ == "__main__":
     print(f"  Punctuality    : {result.r_time:+.4f}")
     print(f"  Override       : {result.r_override:+.4f}")
     print(f"  Jerk           : {result.r_jerk:+.4f}")
+    print(f"  Energy         : {result.r_energy:+.4f}")
     print(f"  HW Violation   : {result.r_violation:+.4f}")
     print(f"  Collision      : {result.r_collision:+.4f}")
     print("------------------------")

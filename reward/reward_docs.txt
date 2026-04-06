@@ -1,0 +1,64 @@
+RAIL SCHEDULING AI: REWARD & PENALTY DOCUMENTATION
+==================================================
+
+This text elaborates on the exact mathematics and purpose of every single reward/penalty component tracked within `reward_function.py`.
+
+The reinforcement learning agent operates by calculating these rewards every single timestep. The total reward (`r_total`) is the sum of Continuous Rewards, Event Rewards, and Terminal Penalties.
+
+------------------------------------------------------------------
+A. CONTINUOUS REWARDS (Calculated every physical timestep)
+------------------------------------------------------------------
+
+1. Progress Reward (`_compute_progress_reward`)
+- Goal: Encourage the train to move forward along the track.
+- Logic: Takes the percentage of track completed between the last station and the next station. By subtracting the previous percentage from the current percentage, we measure how much the train advanced in that exact timestep. 
+- Formula: `k_p * (p_current - p_previous)`
+
+2. Headway Penalty (`_compute_headway_penalty`)
+- Goal: Discourage the train from getting too close to the train ahead.
+- Logic: The segment dictates a Temporal Headway (TH). The warning zone begins at `3 * TH` and ends at `1 * TH` (the severe violation boundary). If the train is in this warning zone, it receives a scaling penalty that grows steeper the closer it gets to the violaton line.
+
+3. Speed Target Penalty (`_compute_speed_reward`)
+- Goal: Create a highly efficient, comfortable, physics-driven velocity curve.
+- Logic: Uses the Kinematic Dynamic Trapezoid. It calculates a continuously adapting "Perfect Velocity Target" using SUVAT physics (`√2ad`) based on distance from the station and a comfortable acceleration/deceleration factor (`0.5 m/s²`).
+- Penalty: If the train accelerates faster or slower than this curve, it is penalized. Overspeeding is penalized heavily (quadratically) to ensure ETCS compliance, while underspeeding is penalized linearly (preventing crawling).
+
+4. Energy Penalty (`_compute_energy_penalty`)
+- Goal: Optimise for Energy Efficiency.
+- Logic: Penalises only "positive acceleration" (throttle traction). If the train is aggressively throttling up to stay close to a target speed, it bleeds points. Coasting (0 traction) and braking burn almost zero energy and receive no penalty. This naturally creates "Eco-Driving" coast profiles.
+
+5. Heartbeat Penalty (`_compute_heartbeat_penalty`)
+- Goal: Prevents deadlocks and stagnation.
+- Logic: A constant, small negative reward (`-0.1`) applied every single timestep that the train is alive. This teaches the AI that "sitting completely still" is not a safe strategy—it bleeds points over time. The only way to stop the bleeding is to finish its journey.
+
+------------------------------------------------------------------
+B. EVENT REWARDS (Calculated strictly on triggering conditions)
+------------------------------------------------------------------
+
+6. Station Reward (`_compute_station_reward`)
+- Goal: Celebrate the main objective.
+- Logic: Applies a large chunk of positive points exclusively on the exact timestep that the train pulls into the target station border.
+
+7. Punctuality Penalty (`_compute_punctuality_penalty`)
+- Goal: Keep the ETCS line fluid according to rigid timetables.
+- Logic: Also triggered only upon reaching a station. It measures the `abs(scheduled_time - actual_time)`. A generous buffer (e.g. 60 seconds) is granted as tolerance without penalty. Every second late/early beyond that window applies a scaling deduction.
+
+8. Override Penalty (`_compute_override_penalty`)
+- Goal: Teach the AI to be safe so the Validation Layer doesn't have to be.
+- Logic: The Safety Validation Layer (VL) acts as a deterministic wall. If the RL Agent suggests an unsafe action, the VL forcefully overrides it. This penalty violently punishes the model whenever the VL has to jump in, thereby teaching the RL to learn perfectly safe boundaries independently.
+
+9. Jerk Penalty (`_compute_jerk_penalty`)
+- Goal: Prevent passenger whiplash from flip-flopping control decisions.
+- Logic: In RL, models often output "0, 3, 0, 3" (Max Brake then Max Accelerate) rapidly. We track the `action_delta` (the magnitude of the shift, e.g. shifting from signal 3 to signal 1 is a delta of 2). We penalise the delta *squared*, meaning a smooth transition (delta 1) is a tiny penalty, while slamming the brakes (delta 3) is a massive penalty.
+
+------------------------------------------------------------------
+C. TERMINAL PENALTIES (Triggers "Terminate = True")
+------------------------------------------------------------------
+
+10. Headway Violation Penalty (`_compute_headway_violation`)
+- Goal: The ultimate safety boundary for spacing.
+- Logic: If the train crosses beneath `1 * Temporal Headway`, it is dangerously close to a crash. It receives a massive negative score (e.g. `-150`) and the simulation/episode immediately aborts forcefully.
+
+11. Collision Penalty (`_compute_collision_penalty`)
+- Goal: Avoid the ultimate physical catastrophe.
+- Logic: If physical spatial collision actually occurs, it receives another massive deduction (e.g. `-200`) and the episode concludes immediately in failure.
