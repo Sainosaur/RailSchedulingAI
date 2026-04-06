@@ -1,4 +1,59 @@
-TODO:
+RAIL SCHEDULING AI: GYMNASIUM ENVIRONMENT DOCUMENTATION
+=====================================================
+File: environment/railway_env.py
 
-update towards the end
-double check and verify env
+This document explains the architecture, flow, and math behind the Reinforcement Learning (RL) custom environment. The `ModernizedLine104` class is built using the standard Gymnasium `gym.Env` framework, meaning it is perfectly compatible with RL libraries like Stable Baselines 3 (SB3) for PPO training.
+
+------------------------------------------------------------------
+1. CORE CONCEPT (THE CONVOY MODEL)
+------------------------------------------------------------------
+The environment simulates two trains running on a single track across the 76km Polish Rail Line 104 line. 
+- The Lead Train: A "dummy" train that spawns ahead of our AI and cruises at a flat constant speed.
+- The AI Train (The Agent): The train driven by the RL model trying to get from station to station quickly, smoothly, and safely without crashing into the lead train or violating ETCS speed bounds.
+
+------------------------------------------------------------------
+2. AGENT COMMUNICATION (SPACES)
+------------------------------------------------------------------
+
+A. Observation Space (What the AI Sees)
+A 7-dimensional Box matrix (array) of floats that feeds real-time telemetry to the AI every single second.
+- [0] position: How many meters down the track the train is.
+- [1] speed: Current velocity in m/s.
+- [2] dtz (Distance-To-Zone): Distance to the next fixed-block ETCS boundary.
+- [3] signal_aspect: The standard 4-aspect signal (0=Red, 1=Yellow, 2=Dbl-Yellow, 3=Green) showing how many blocks ahead are clear.
+- [4] distance_to_next_station: Crucial for calculating the dynamic trapezoidal braking curve.
+- [5] speed_limit: The maximum speed allowed in the current segment.
+- [6] headway: The time gap separating the AI from the lead train in seconds.
+
+B. Action Space (What the AI Does)
+A Discrete space of 4 integers. The AI attempts to select a 4-aspect signal command to drive at.
+- 0: Red (Full stop)
+- 1: Yellow (Target 1/3 of the segment's speed limit)
+- 2: Double-Yellow (Target 2/3 of the limit)
+- 3: Green (Target the full segment limit)
+
+*Note: The AI cannot force an action. It essentially "requests" an action, which the Validation Layer then reviews.*
+
+------------------------------------------------------------------
+3. THE SIMULATION LOOP (step() function)
+------------------------------------------------------------------
+The environment steps forward exactly 1 Second (DT = 1.0) at a time by executing the following 6 phases inside the `step()` function:
+
+PHASE 1: The Validation Sieve
+The environment hands the AI's requested action to the Validation Layer (`validator.py`). The VL runs a 15-second "lookahead" simulation. If the AI's action causes a crash in the lookahead, the VL forcefully overwrites the action (e.g. downgrades Green to Red). The absolute difference between the last action and the new safe action is logged as `action_delta` to measure "Passenger Jerk."
+
+PHASE 2: SUVAT Physics
+Now that a safe target speed is established, the environment updates the train physically. It chooses whether to accelerate (0.5 m/s²) or brake (-1.0 m/s²) towards the target. It factors in if it reaches the target "mid-step" (meaning it accelerates for 0.4s and coasts for 0.6s). Finally, it calculates `applied_traction` to see how much energy the engine actually exerted this second.
+
+PHASE 3: Lead Train Advancement
+The dummy lead train simply glides forward (`lead_speed * DT`). The environment then re-calculates the AI's `dtz` boundaries based on the new distance to the lead train.
+
+PHASE 4: Station Checkmarks
+If the AI Train's position crosses the coordinate boundary of the next target station, the station index shifts, unlocking the massive "Arrival Reward".
+
+PHASE 5: Reward Calculation
+The environment packages all the live data (speed, limits, headways, traction, override-flags) into the `TrainState` dataclass from `reward_function.py`. The Reward Function crunches the data and returns the `total_reward`, passing the penalty or bounty back to the PPO Agent.
+
+PHASE 6: Termination & Truncation
+- Termination occurs if the train finishes the 76km track, OR if it triggers a terminal penalty (e.g. physically hitting a train or violating the critical 1x Headway boundary).
+- Truncation (Max Steps) occurs if the simulated time hits 10,000 steps (~2.8 hours). This breaks the simulation artificially if an untrained AI decides to stall at 0 km/h forever, preventing the training software from hanging infinitely.

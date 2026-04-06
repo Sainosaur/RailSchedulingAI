@@ -27,12 +27,13 @@ class ModernizedLine104(gym.Env):
     """
     Gymnasium environment — Line 104 single-train convoy.
 
-    Observation  (Box, shape=(4,)):
-        [position, speed, distance_to_zone, signal_aspect]
+    Observation  (Box, shape=(7,)):
+        [position, speed, dtz, signal_aspect,
+         distance_to_next_station, speed_limit, headway]
 
     Action (Discrete(4)):
-        0 = Red (stop)  |  1 = Yellow (30 km/h)
-        2 = Double-Yellow (60 km/h)  |  3 = Green (segment limit)
+        0 = Red (stop)          1 = Yellow (1/3 limit)
+        2 = Double-Yellow (2/3) 3 = Green  (full limit)
     """
 
     metadata = {"render_modes": ["human"]}
@@ -41,6 +42,9 @@ class ModernizedLine104(gym.Env):
     DT: float = 1.0      # timestep  (seconds)
     ACCEL: float = 0.5    # traction acceleration  (m/s²)
     DECEL: float = -1.0   # service braking  (m/s²)
+
+    # --- Episode limits ---
+    MAX_STEPS: int = 10_000  # ~2.8 hours simulated at DT=1.0
 
     # --- Track extents ---
     TRACK_START: float = 582.0
@@ -67,8 +71,8 @@ class ModernizedLine104(gym.Env):
         # Spaces
         self.action_space = gym.spaces.Discrete(4)
         self.observation_space = gym.spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
-            high=np.array([80000.0, 30.0, 80000.0, 3.0], dtype=np.float32),
+            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([80000.0, 30.0, 80000.0, 3.0, 80000.0, 30.0, 10000.0], dtype=np.float32),
             dtype=np.float32,
         )
 
@@ -80,6 +84,8 @@ class ModernizedLine104(gym.Env):
         self.time: float = 0.0
         self.last_station_idx: int = 0
         self.visited_stations: set[int] = set()
+        self.last_action: int = 3  # Track the last *safe* action for jerk calculation
+        self.step_count: int = 0
 
     # ------------------------------------------------------------------
     # Gymnasium API
@@ -93,6 +99,8 @@ class ModernizedLine104(gym.Env):
         self.time = 0.0
         self.last_station_idx = 0
         self.visited_stations = {0}  # starting station already "visited"
+        self.last_action = 3
+        self.step_count = 0
 
         # Lead train begins ~2 km ahead
         self.lead_x = self.TRACK_START + 2000.0
@@ -113,6 +121,10 @@ class ModernizedLine104(gym.Env):
             action, self.x, self.v, self.dtz,
         )
 
+        # Jerk tracking: delta of the *physically executed* action
+        action_delta = abs(safe_action - self.last_action)
+        self.last_action = safe_action
+
         # Target speed from the validated action (uses the same 1/3, 2/3
         # fraction logic as the validator so physics and safety stay in sync)
         seg = self.vl.get_segment(self.x)
@@ -120,7 +132,8 @@ class ModernizedLine104(gym.Env):
 
         # ----- 2. Physics — two-phase SUVAT update -----
         prev_x = self.x
-
+        prev_v = self.v
+        
         if abs(target_v - self.v) < 0.01:
             # Cruising
             accel = 0.0
@@ -142,10 +155,15 @@ class ModernizedLine104(gym.Env):
                 )
                 self.v = target_v
 
-        # Clamp: speed cannot be negative
+        # Clamp: speed cannot be negative, position cannot exceed track
         self.v = max(0.0, self.v)
+        self.x = min(self.x, self.TRACK_END)
+
+        # Calculate applied traction (positive acceleration only)
+        applied_traction = max(0.0, (self.v - prev_v) / self.DT)
 
         self.time += self.DT
+        self.step_count += 1
 
         # ----- 3. Lead train moves forward -----
         self.lead_x += self.lead_train_speed * self.DT
@@ -182,18 +200,18 @@ class ModernizedLine104(gym.Env):
             headway=headway,
             reached_new_station=reached_new_station,
             collision=(self.x >= self.lead_x),
+            temporal_headway=seg.temporal_headway,
+            overridden=overridden,
+            action_delta=action_delta,
+            applied_traction=applied_traction,
         )
 
         reward_out = compute_reward(state)
         total_reward = reward_out.r_total
 
-        # Override penalty — discourages PPO from proposing unsafe actions
-        if overridden:
-            total_reward -= 500
-
-        # ----- 6. Termination -----
+        # ----- 6. Termination & Truncation -----
         terminated = bool(self.x >= self.TRACK_END or reward_out.terminate)
-        truncated = False
+        truncated = bool(self.step_count >= self.MAX_STEPS)
 
         info = {
             "overridden": overridden,
@@ -204,8 +222,12 @@ class ModernizedLine104(gym.Env):
                 "progress": reward_out.r_progress,
                 "headway": reward_out.r_headway,
                 "speed": reward_out.r_speed,
+                "heartbeat": reward_out.r_heartbeat,
                 "station": reward_out.r_station,
                 "punctuality": reward_out.r_time,
+                "override": reward_out.r_override,
+                "jerk": reward_out.r_jerk,
+                "energy": reward_out.r_energy,
                 "violation": reward_out.r_violation,
                 "collision": reward_out.r_collision,
             },
@@ -217,11 +239,11 @@ class ModernizedLine104(gym.Env):
         if self.render_mode == "human":
             seg = self.vl.get_segment(self.x)
             print(
-                f"t={self.time:7.1f}s │ "
-                f"x={self.x:8.1f}m │ "
-                f"v={self.v:5.2f} m/s ({self.v * 3.6:5.1f} km/h) │ "
-                f"seg={seg.id} │ "
-                f"dtz={self.dtz:8.1f}m │ "
+                f"t={self.time:7.1f}s | "
+                f"x={self.x:8.1f}m | "
+                f"v={self.v:5.2f} m/s ({self.v * 3.6:5.1f} km/h) | "
+                f"seg={seg.id} | "
+                f"dtz={self.dtz:8.1f}m | "
                 f"lead={self.lead_x:8.1f}m"
             )
 
@@ -263,10 +285,20 @@ class ModernizedLine104(gym.Env):
         return 0
 
     def _get_obs(self) -> np.ndarray:
-        """Build the observation vector [pos, speed, dtz, aspect]."""
+        """Build the observation vector (7 values)."""
         aspect = self._get_signal_aspect()
+        seg = self.vl.get_segment(self.x)
+        next_st_pos = self.STATIONS[
+            min(self.last_station_idx + 1, len(self.STATIONS) - 1)
+        ]
+        dist_to_next_station = max(0.0, next_st_pos - self.x)
+        headway = (
+            (self.lead_x - self.x) / self.v
+            if self.v > 0.01 else 9999.0
+        )
         return np.array(
-            [self.x, self.v, self.dtz, float(aspect)],
+            [self.x, self.v, self.dtz, float(aspect),
+             dist_to_next_station, seg.limit_ms, min(headway, 9999.0)],
             dtype=np.float32,
         )
 
