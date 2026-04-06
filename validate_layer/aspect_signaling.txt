@@ -1,0 +1,53 @@
+ASPECT SIGNALING ANALYSIS: STATIC FRACTIONS vs DYNAMIC DISTANCES
+==================================================================
+
+ARE THE SIGNALS NECESSARY NOW?
+Yes. While the dynamic kinematic formula (v = sqrt(2ad)) calculates a continuous, perfect mathematical curve, real-world trains (especially on moderately modernized lines like Line 104) still operate within a block-based infrastructure and communicate via discrete signals. Removing them entirely would turn the problem into a continuous physics simulation, losing the "railway" realism. 
+
+However, HOW the signals are interpreted must change drastically to support the new dynamic trapezoid.
+
+------------------------------------------------------------------
+CURRENT USAGE (According to vl_doc.md)
+------------------------------------------------------------------
+Currently, the signals act as arbitrary fraction multipliers of a segment's speed limit:
+- Green: Next 3 zones clear -> Go 100% of speed limit
+- Double-Yellow: Next 2 zones clear -> Go 66% of speed limit
+- Yellow: Next 1 zone clear -> Go 33% of speed limit
+- Red: Next zone occupied -> Go 0% of speed limit
+
+WHY THIS FAILS NOW:
+By tying signals to fixed speed fractions, you cripple the dynamic trapezoid. A train going 90 km/h that sees a Yellow signal is forced to instantly drop its target to 30 km/h, regardless of whether the hazard is 300 meters away or 3000 meters away. It reintroduces the exact "wasted throughput" problem we fixed by removing the static braking buffers.
+
+------------------------------------------------------------------
+PROPOSED USAGE (Aligning with todo.txt & Dynamic Profile)
+------------------------------------------------------------------
+Signals should completely decouple from the "speed limit" and instead represent "guaranteed clear distance" (blocks ahead). 
+
+Instead of telling the train HOW FAST to go, the signal tells the train HOW FAR it is allowed to travel. The train then uses the dynamic kinematic formula to calculate its own optimal speed based on that distance.
+
+How it should be implemented conceptually:
+1. Red (0): The very next block boundary is the stopping point. 
+   -> `distance_available = DTZ` (Distance to the upcoming block boundary).
+   
+2. Yellow (1): The next block is clear, but the one after is occupied. 
+   -> `distance_available = DTZ + (1 * Spatial_Headway)`
+   
+3. Double-Yellow (2): The next two blocks are clear. 
+   -> `distance_available = DTZ + (2 * Spatial_Headway)`
+   
+4. Green (3): The track is clear for the foreseeable future. 
+   -> `distance_available = Infinity` (or distance to next station).
+
+------------------------------------------------------------------
+HOW THIS BENEFITS THE 4 OBJECTIVES
+------------------------------------------------------------------
+If the RL Agent receives a Yellow signal, it knows the hazard is exactly `(DTZ + 1*SH)` meters away. 
+
+Instead of violently slamming the brakes to reach 33% speed, the reward function uses the dynamic formula: `v_target = min(v_max, sqrt(2 * a_comfort * distance_available))`.
+
+1. Maximise Speed: The train holds its top speed until the mathematical boundary of that `distance_available` forces it to brake.
+2. Jerk & Energy: The RL agent learns to coast down gracefully toward the end of its clear distance.
+3. Validation Layer (Safety): The VL no longer needs to test proposed "fractional target speeds" (1/3, 2/3). The VL simply tests if the proposed *acceleration* profile will cause the train to cross the occupied block boundary in the T+5, T+10, T+15 simulations.
+
+SUMMARY
+The 4-aspect signals remain the core inputs from the environment, but they should be translated into "Distance to Hazard" rather than "Target Speed Fractions". This allows the train to obey block-signaling safety while exploiting the continuous, smooth, energy-efficient physics of the dynamic trapezoid.
