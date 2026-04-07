@@ -1,7 +1,17 @@
-from dataclasses import dataclass, field
-
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+
+_HEADWAY_TABLE: dict[int, tuple[float, float]] = {
+    # index: (SH in metres, TH in seconds)
+    0: (312.5, 12.5),  # S0  90 km/h
+    1: (312.5, 12.5),  # S1  90 km/h
+    2: (138.9, 8.3),  # S2  60 km/h
+    3: (34.7, 4.2),  # S3  30 km/h
+    4: (34.7, 4.2),  # S4  30 km/h
+    5: (34.7, 4.2),  # S5  30 km/h
+}
+
 
 # Ensure project-root imports work regardless of working directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -42,15 +52,6 @@ class Segment:
 # Hardcoded SH and TH from internal_layers.md §3 (rounded values from doc)
 # Key: segment index (0-based, matching station pair order)
 # ---------------------------------------------------------------------------
-_HEADWAY_TABLE: dict[int, tuple[float, float]] = {
-    # index: (SH in metres, TH in seconds)
-    0: (312.5, 12.5),   # S0  90 km/h
-    1: (312.5, 12.5),   # S1  90 km/h
-    2: (138.9,  8.3),   # S2  60 km/h
-    3: ( 34.7,  4.2),   # S3  30 km/h
-    4: ( 34.7,  4.2),   # S4  30 km/h
-    5: ( 34.7,  4.2),   # S5  30 km/h
-}
 
 
 @dataclass
@@ -61,12 +62,13 @@ class VLSegment:
     All values are in SI units (metres, m/s, seconds).
     Built once by build_vl_segments() and then shared with the VL.
     """
+
     id: str
-    start: float              # metres along track
-    end: float                # metres along track
-    limit_ms: float           # speed limit  (m/s)
-    spatial_headway: float    # SH — metres, no buffer
-    temporal_headway: float   # TH — seconds, no buffer
+    start: float  # metres along track
+    end: float  # metres along track
+    limit_ms: float  # speed limit  (m/s)
+    spatial_headway: float  # SH — metres, no buffer
+    temporal_headway: float  # TH — seconds, no buffer
     block_boundaries: list[float] = field(default_factory=list)
     # Ascending list of absolute positions (metres) where fixed blocks
     # begin within this segment.  The first boundary equals self.start;
@@ -174,9 +176,9 @@ def build_vl_segments() -> list[VLSegment]:
 
     for i, (u, v_node, data) in enumerate(g.edges(data=True)):
         edge = data["data"]
-        start_m = round(edge.start_station.distance * 1000)   # km → m
+        start_m = round(edge.start_station.distance * 1000)  # km → m
         end_m = round(edge.end_station.distance * 1000)
-        limit_ms = round(edge.speed_limit / 3.6, 2)          # km/h → m/s
+        limit_ms = round(edge.speed_limit / 3.6, 2)  # km/h → m/s
 
         sh, th = _HEADWAY_TABLE[i]
 
@@ -191,15 +193,17 @@ def build_vl_segments() -> list[VLSegment]:
         if boundaries[-1] < end_m:
             boundaries.append(float(end_m))
 
-        segments.append(VLSegment(
-            id=f"S{i}",
-            start=float(start_m),
-            end=float(end_m),
-            limit_ms=limit_ms,
-            spatial_headway=sh,
-            temporal_headway=th,
-            block_boundaries=boundaries,
-        ))
+        segments.append(
+            VLSegment(
+                id=f"S{i}",
+                start=float(start_m),
+                end=float(end_m),
+                limit_ms=limit_ms,
+                spatial_headway=sh,
+                temporal_headway=th,
+                block_boundaries=boundaries,
+            )
+        )
 
     _cached_vl_segments = segments
     return segments
