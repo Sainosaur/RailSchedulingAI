@@ -92,7 +92,7 @@ def graph() -> net.Graph:
     if _cached_graph is not None:
         return _cached_graph
 
-    g = net.DiGraph()
+    g = net.Graph()
 
     # Stations
     chabowka = Station(
