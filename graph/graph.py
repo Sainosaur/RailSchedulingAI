@@ -2,6 +2,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from server.main import hazard
+
 _HEADWAY_TABLE: dict[int, tuple[float, float]] = {
     # index: (SH in metres, TH in seconds)
     0: (312.5, 12.5),  # S0  90 km/h
@@ -41,11 +43,13 @@ class Station:
 class Segment:
     """A Class to represent a segment between two stations."""
 
+    position: int
     start_station: Station
     end_station: Station
     distance: float
     gradient: float
     speed_limit: int | None
+    hazard: bool
 
 
 # ---------------------------------------------------------------------------
