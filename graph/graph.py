@@ -2,8 +2,6 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from server.main import hazard
-
 _HEADWAY_TABLE: dict[int, tuple[float, float]] = {
     # index: (SH in metres, TH in seconds)
     0: (312.5, 12.5),  # S0  90 km/h
@@ -94,7 +92,7 @@ def graph() -> net.Graph:
     if _cached_graph is not None:
         return _cached_graph
 
-    g = net.Graph()
+    g = net.DiGraph()
 
     # Stations
     chabowka = Station(
@@ -148,12 +146,14 @@ def graph() -> net.Graph:
                 station.name,
                 next_station.name,
                 data=Segment(
+                    stations.index(station),
                     station,
                     next_station,
                     next_station.distance - station.distance,
                     (next_station.elevation - station.elevation)
                     / (next_station.distance - station.distance),
                     limits[station.position],
+                    False,
                 ),
             )
 
