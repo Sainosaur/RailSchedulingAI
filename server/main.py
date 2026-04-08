@@ -8,7 +8,8 @@ from graph import graph
 from validate_layer import log_manager
 
 app = FastAPI()
-graph = graph()
+g = graph()
+
 STATUS = "Running"  # Temporary placeholder for /kill endpoints
 origins = [
     "http://localhost:5173",
@@ -26,7 +27,18 @@ app.add_middleware(
 # Returns the graph to front end client
 @app.get("/api/dashboard/graph")
 async def root():
-    return {"graph": graph}
+    return {"graph": g}
+
+
+# Updates the graph with hazard data
+@app.post("/api/hazard/{segmentPosition}/{status}")
+async def hazard(segmentPosition: int, status: bool):
+    nodes = [data["data"] for _, data in g.nodes(data=True)]
+    start = next(s for s in nodes if s.position == segmentPosition)
+    end = next(s for s in nodes if s.position == segmentPosition + 1)
+    edge = g.get_edge_data(start.name, end.name)
+    edge["data"].hazard = status
+    return {"segment": edge, "success": edge["data"].hazard == status}
 
 
 # Returns the logs to front end client
