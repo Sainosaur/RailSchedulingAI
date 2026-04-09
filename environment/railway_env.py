@@ -136,20 +136,54 @@ class ModernizedLine104(gym.Env):
         action_delta = abs(safe_a - self.last_a)
         self.last_a = safe_a
 
-        # ----- 2. Physics — direct acceleration update -----
+        # ----- 2. Physics — two-phase SUVAT update -----
+        # Matches validator._project() so safety projection and actual
+        # kinematics use the same model.
         prev_x = self.x
         prev_v = self.v
-        
-        # SUVAT: v = u + at, s = ut + 0.5at^2
-        self.v += safe_a * self.DT
-        
-        # Speed limits: speed cannot be negative, and shouldn't exceed local limit
+
         seg = self.vl.get_segment(self.x)
-        self.v = max(0.0, min(self.v, seg.limit_ms))
-        
-        # Displacement
-        self.x += self.v * self.DT  # Simplified; or use 0.5*a*t^2 for more precision
-        self.x = min(self.x, self.TRACK_END)
+        limit_v = seg.limit_ms
+
+        if safe_a == 0.0:
+            # Coasting at current speed (capped at segment limit)
+            self.v = min(prev_v, limit_v)
+            dx = self.v * self.DT
+        elif safe_a > 0.0:
+            if prev_v >= limit_v:
+                # Already at limit — coast
+                self.v = limit_v
+                dx = limit_v * self.DT
+            else:
+                t_to_limit = (limit_v - prev_v) / safe_a
+                if self.DT <= t_to_limit:
+                    # Full acceleration phase
+                    self.v = prev_v + safe_a * self.DT
+                    dx = prev_v * self.DT + 0.5 * safe_a * self.DT ** 2
+                else:
+                    # Accelerate to limit, then coast for remainder
+                    dx = (prev_v * t_to_limit
+                          + 0.5 * safe_a * t_to_limit ** 2
+                          + limit_v * (self.DT - t_to_limit))
+                    self.v = limit_v
+        else:  # safe_a < 0
+            if prev_v <= 0.0:
+                # Already stopped
+                self.v = 0.0
+                dx = 0.0
+            else:
+                t_to_zero = prev_v / abs(safe_a)
+                if self.DT <= t_to_zero:
+                    # Full braking phase
+                    self.v = prev_v + safe_a * self.DT
+                    dx = prev_v * self.DT + 0.5 * safe_a * self.DT ** 2
+                else:
+                    # Brake to stop, then stationary for remainder
+                    dx = prev_v * t_to_zero + 0.5 * safe_a * t_to_zero ** 2
+                    self.v = 0.0
+
+        self.v = max(0.0, self.v)
+        self.x = min(prev_x + max(0.0, dx), self.TRACK_END)
 
         # Calculate applied traction (positive acceleration only)
         # Note: if safe_a was overridden to -1.0, applied_traction is 0.0
@@ -308,13 +342,13 @@ if __name__ == "__main__":
     env.render()
 
     total_r = 0.0
-    for step_i in range(200):
+    for step_i in range(env.MAX_STEPS):
         # Continuous action: try to accelerate at max (0.5)
         action = np.array([0.5], dtype=np.float32)
         obs, reward, terminated, truncated, info = env.step(action)
         total_r += reward
 
-        if step_i % 25 == 0:
+        if step_i % 500 == 0:
             env.render()
             print(f"     step {step_i:4d}  reward={reward:+8.3f}  "
                   f"overridden={info['overridden']}  "

@@ -26,13 +26,13 @@ A 7-dimensional Box matrix (array) of floats that feeds real-time telemetry to t
 - [6] headway: The time gap separating the AI from the lead train in seconds.
 
 B. Action Space (What the AI Does)
-A Discrete space of 4 integers. The AI attempts to select a 4-aspect signal command to drive at.
-- 0: Red (Full stop)
-- 1: Yellow (Target 1/3 of the segment's speed limit)
-- 2: Double-Yellow (Target 2/3 of the limit)
-- 3: Green (Target the full segment limit)
+A continuous Box space with a single float in [-1.0, 0.5] representing the proposed acceleration (m/s²):
+- -1.0: Emergency braking
+-  0.0: Coast (no acceleration or braking)
+- +0.5: Maximum traction acceleration
 
-*Note: The AI cannot force an action. It essentially "requests" an action, which the Validation Layer then reviews.*
+The agent outputs a raw acceleration request. The Validation Layer then checks
+whether that acceleration is safe; if not, it overrides to emergency braking (-1.0).
 
 ------------------------------------------------------------------
 3. THE SIMULATION LOOP (step() function)
@@ -40,20 +40,27 @@ A Discrete space of 4 integers. The AI attempts to select a 4-aspect signal comm
 The environment steps forward exactly 1 Second (DT = 1.0) at a time by executing the following 6 phases inside the `step()` function:
 
 PHASE 1: The Validation Sieve
-The environment hands the AI's requested action to the Validation Layer (`validator.py`). The VL runs a 15-second "lookahead" simulation. If the AI's action causes a crash in the lookahead, the VL forcefully overwrites the action (e.g. downgrades Green to Red). The absolute difference between the last action and the new safe action is logged as `action_delta` to measure "Passenger Jerk."
+The environment hands the AI's requested continuous acceleration to the Validation Layer (`validator.py`). The VL runs a multi-step lookahead simulation (5, 10, 15 seconds) against the ETCS aspect boundaries. If the proposed acceleration would cause a spatial, temporal, kinematic, or segment-limit violation in the lookahead, the VL overrides the action to emergency braking (-1.0 m/s²). The absolute difference between the last executed acceleration and the new one is logged as `action_delta` to measure passenger jerk.
 
-PHASE 2: SUVAT Physics
-Now that a safe target speed is established, the environment updates the train physically. It chooses whether to accelerate (0.5 m/s²) or brake (-1.0 m/s²) towards the target. It factors in if it reaches the target "mid-step" (meaning it accelerates for 0.4s and coasts for 0.6s). Finally, it calculates `applied_traction` to see how much energy the engine actually exerted this second.
+PHASE 2: Two-Phase SUVAT Physics
+The environment applies the safe acceleration using a two-phase kinematic model that matches the Validation Layer's `_project()` function:
+- If accelerating and the speed limit would be reached mid-step: accelerate to the limit, then coast for the remainder of the timestep.
+- If braking and zero speed would be reached mid-step: brake to zero, then remain stationary for the remainder.
+- Otherwise: standard SUVAT (s = ut + ½at²) for the full 1-second timestep.
+This ensures the safety projection and actual physics are consistent — what the VL predicts is exactly what happens.
 
 PHASE 3: Lead Train Advancement
 The dummy lead train simply glides forward (`lead_speed * DT`). The environment then re-calculates the AI's `dtz` boundaries based on the new distance to the lead train.
 
 PHASE 4: Station Checkmarks
-If the AI Train's position crosses the coordinate boundary of the next target station, the station index shifts, unlocking the massive "Arrival Reward".
+If the AI Train's position crosses the coordinate boundary of the next target station, the station index shifts, unlocking the "Arrival Reward".
 
 PHASE 5: Reward Calculation
-The environment packages all the live data (speed, limits, headways, traction, override-flags) into the `TrainState` dataclass from `reward_function.py`. The Reward Function crunches the data and returns the `total_reward`, passing the penalty or bounty back to the PPO Agent.
+The environment packages all the live data (speed, limits, headways, traction, override-flags) into the `TrainState` dataclass from `reward_function.py`. The Reward Function crunches the data and returns `total_reward`, composed of:
+  - Continuous rewards (every step): progress, headway, speed profile, heartbeat
+  - Event rewards (on occurrence): station arrival, punctuality, override penalty, jerk penalty, energy penalty
+  - Terminal penalties (once, ends episode): headway violation, collision
 
 PHASE 6: Termination & Truncation
-- Termination occurs if the train finishes the 76km track, OR if it triggers a terminal penalty (e.g. physically hitting a train or violating the critical 1x Headway boundary).
+- Termination occurs if the train finishes the 76km track, OR if it triggers a terminal penalty (collision or critical headway violation at 1x TH).
 - Truncation (Max Steps) occurs if the simulated time hits 10,000 steps (~2.8 hours). This breaks the simulation artificially if an untrained AI decides to stall at 0 km/h forever, preventing the training software from hanging infinitely.
