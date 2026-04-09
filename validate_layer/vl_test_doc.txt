@@ -1,0 +1,62 @@
+Validation Layer: Continuous Action Testing Documentation
+Architecture: Exact mappings supporting tests established in `validator_test.py`.
+
+1. test_dtz_mid_segment_S0
+Input: x=1000.0 on Segment S0.
+Mathematical Justification: Tests that standard `compute_dtz` organically calculates distance between the front bumper and the next boundary in the system spatial mesh.
+
+2. test_dtz_on_block_boundary_S0
+Input: Train exactly crossing a boundary block. 
+Mathematical Justification: Verifies that boundary overlap mathematically snaps to lookup the subsequent block correctly. 
+
+3. test_red_is_dtz
+Input: Aspect 0 (Red), injected dtz of 100m.
+Mathematical Justification: The train acknowledges the physical boundary is heavily constrained. Mapped clearance is strictly 100m. Train must physically cease progress before 100m to prevent crashes.
+
+4. test_green_is_dtz_plus_3_sh
+Input: Aspect 3 (Green), dtz of 100m.
+Mathematical Justification: Polish SBL standard S2 signal means the next blocks are completely free. Simulation realistically assumes safe track for 3 consecutive Spatial Headways (SH) so physics models have a bounded runway.
+
+5. test_coast
+Input: proposed_a = 0.0 m/s²
+Mathematical Justification: Proves basic SUVAT model correctly projects static speed profile linearly while calculating geographical position over elapsed time intervals.
+
+6. test_accelerating
+Input: proposed_a = 0.5 m/s², starting v=0
+Mathematical Justification: v_proj successfully accelerates linearly over T=10, ensuring kinetic profiles match system boundary outputs exactly.
+
+7. test_safe_action_continuous_green
+Input: Action +0.5 m/s² underneath a Green Aspect with heavy runway.
+Mathematical Justification: Proves PPO agents can seamlessly dictate maximal throttle vectors across open spans without being incorrectly intercepted by the Safety deterministic layer.
+
+8. test_override_spatial_violation
+Input: Action +0.5 m/s² towards a Red track signal precisely 10m away at lethal speeds (20 m/s). 
+Mathematical Justification: The simulation mathematically proves the train will massively cross the track limit. `validator.py` instantly blocks the AI action, intercepting it and returning `-1.0 m/s²` Emergency Brakes in O(1) continuous time.
+
+9. test_clamp_extreme_action
+Input: Action -5.0 m/s². 
+Mathematical Justification: Ensures noise emitted by stochastic bounds of RL agent logic does not ruin physical limitations. The system automatically clamps unachievable float constraints down strictly to internal physical braking metrics (-1.0).
+
+10. test_override_creates_log_entry
+Input: Safety Sieve is triggered. 
+Mathematical Justification: Confirms the Explainable AI (XAI) CSV append tracker executes seamlessly when safety falls-back.
+
+11. test_orange_is_dtz_plus_1_sh
+Input: Aspect 1 (Orange).
+Mathematical Justification: Verifies Polish warning signal enforces exact 1*SH limit buffering, cascading safety correctly ahead of a hazard boundary.
+
+12. test_flash_green_is_dtz_plus_2_sh
+Input: Aspect 2 (Flashing Green).
+Mathematical Justification: Verifies medium track clearance maps cleanly to exactly 2*SH distance available.
+
+13. test_heavy_braking_never_negative
+Input: Train applying severe braking -1.0 towards target 0.0 speed.
+Mathematical Justification: Confirms that physics model completely grounds train at exactly 0.0 without allowing backwards negative motion overflow during 2-phase projections.
+
+14. test_override_temporal_violation
+Input: Action +0.5, Train traveling at 15m/s towards Red Signal 100m away.
+Mathematical Justification: The train does not instantly crash spatially in 15 seconds, but its reaction buffer drops below exactly 5.0 seconds. The simulation perfectly triggers a Temporal safeguard to prevent future inevitable clashes.
+
+15. test_override_segment_overspeed
+Input: Action +0.5, Green aspect, but approaching a track switch into segment S2. 
+Mathematical Justification: Despite the Green signal allowing high-speed distance clearance, the virtual projected position lands in a segment strictly limited to 60km/h (16.67 m/s). The simulation forces an override solely to prevent derailing over the upcoming constraints.

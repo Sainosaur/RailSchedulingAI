@@ -43,7 +43,7 @@ def init_log() -> None:
             csv.writer(fh).writerow(_HEADER)
 
 
-def append_row(timestamp: float, original: int, corrected: int,
+def append_row(timestamp: float, original: float, corrected: float,
                constraint_id: str) -> None:
     """Append a single override event row to the log."""
     with open(_LOG_PATH, "a", newline="") as fh:
