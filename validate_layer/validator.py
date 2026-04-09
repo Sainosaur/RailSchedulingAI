@@ -200,7 +200,7 @@ class ValidationLayer:
     ) -> Tuple[bool, str]:
         """
         Run the 3-step simulation and perform the multi-factor violation 
-        check (Layer 2) for a given continuous proposed acceleration.
+        check for a given continuous proposed acceleration.
         """
         current_seg = self.get_segment(x)
 
