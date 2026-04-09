@@ -5,7 +5,10 @@ from dataclasses import asdict
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from graph import graph
+try:
+    from graph.graph import graph
+except ImportError:
+    from graph import graph
 from validate_layer import log_manager
 
 
