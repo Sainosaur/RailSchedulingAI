@@ -9,7 +9,11 @@ import os
 import unittest
 from pathlib import Path
 
-from graph.graph import VLSegment
+try:
+    from graph.graph import graph
+except ModuleNotFoundError:
+    from graph import graph
+
 from validate_layer.validator import ValidationLayer
 from validate_layer import log_manager
 
