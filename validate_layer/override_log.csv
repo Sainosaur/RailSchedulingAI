@@ -1,4 +1,5 @@
 timestamp,original_ppo_a,corrected_a,constraint_id
+<<<<<<< HEAD
 1775745005.1800108,0.5,-1.0,Kinematic_Target_Violation
 1775745005.1800673,0.5,-1.0,Kinematic_Target_Violation
 1775745005.1800945,0.5,-1.0,Kinematic_Target_Violation
@@ -2779,3 +2780,12 @@ timestamp,original_ppo_a,corrected_a,constraint_id
 1775745005.3225324,0.5,-1.0,Aspect_Temporal_Violation
 1775745005.322577,0.5,-1.0,Aspect_Temporal_Violation
 1775745005.3226542,0.5,-1.0,Aspect_Temporal_Violation
+=======
+1775745696.100072,0.5,-1.0,S2_Limit
+1775745696.100554,0.10113954544067383,-1.0,S2_Limit
+1775745696.1007948,0.5,-1.0,S2_Limit
+1775745696.1011798,0.5,-1.0,S2_Limit
+1775745696.101571,0.5,-1.0,S2_Limit
+1775745696.102112,0.5,-1.0,S2_Limit
+1775745696.103338,0.5,-1.0,S2_Limit
+>>>>>>> a704341 (feat: save trained PPO model artifacts and log constraint override events)
