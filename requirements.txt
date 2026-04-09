@@ -33,3 +33,9 @@ typing_extensions==4.15.0
 urllib3==2.6.3
 uvicorn==0.43.0
 websockets==16.0
+
+# Think Layer — PPO Training Pipeline
+torch==2.6.0
+stable-baselines3==2.4.1
+tensorboard
+pandas
