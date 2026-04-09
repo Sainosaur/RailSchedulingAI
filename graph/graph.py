@@ -49,8 +49,6 @@ class Segment:
     speed_limit: int | None
     hazard: bool
     block_boundaries: list[float] = field(default_factory=list)
-    block_boundaries: list[float] = field(default_factory=list)
-
 
 # ---------------------------------------------------------------------------
 # Hardcoded SH and TH from internal_layers.md §3 (rounded values from doc)
