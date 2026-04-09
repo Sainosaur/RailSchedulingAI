@@ -103,7 +103,8 @@ class ValidationLayer:
 
         DTZ = distance from position *x* to the start of the next
         fixed-block boundary ahead.  Blocks within each segment are
-        spaced SH apart, so DTZ is always ≤ SH.
+        spaced SH apart, so DTZ is always ≤ SH. 
+        #TODO: towards the segment boundary if last zone just before next segment is less than SH, add last two segment together (hard coded?).
 
         Returns
         -------

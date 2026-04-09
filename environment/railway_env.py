@@ -308,7 +308,7 @@ if __name__ == "__main__":
     env.render()
 
     total_r = 0.0
-    for step_i in range(200):
+    for step_i in range(10000):
         # Continuous action: try to accelerate at max (0.5)
         action = np.array([0.5], dtype=np.float32)
         obs, reward, terminated, truncated, info = env.step(action)
