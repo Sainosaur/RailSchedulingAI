@@ -61,30 +61,15 @@ app.add_middleware(
 
 
 # Updates the graph with hazard data and notifies all WebSocket clients
-<<<<<<< HEAD
-@app.post("/api/hazard/{segmentPosition}/{block}/{status}")
-async def hazard(segmentPosition: int, block: int, status: bool):
-=======
 @app.post("/api/hazard/{segmentPosition}/{status}")
 async def hazard(segmentPosition: int, status: bool):
->>>>>>> 2ebbce1 (feat: implement railway reinforcement learning environment with reward function and PPO agent training pipeline)
     nodes = [data["data"] for _, data in g.nodes(data=True)]
     start = next(s for s in nodes if s.position == segmentPosition)
     end = next(s for s in nodes if s.position == segmentPosition + 1)
     edge = g.get_edge_data(start.name, end.name)
-<<<<<<< HEAD
-    edge["data"].block_boundaries[block].hazard = status
-    edge["data"].hazard = any(b.hazard for b in edge["data"].block_boundaries)
-    await manager.broadcast({"type": "graph_update", "graph": serialise_graph(g)})
-    return {
-        "segment": asdict(edge["data"]),
-        "success": edge["data"].block_boundaries[block].hazard == status,
-    }
-=======
     edge["data"].hazard = status
     await manager.broadcast({"type": "graph_update", "graph": serialise_graph(g)})
     return {"segment": asdict(edge["data"]), "success": edge["data"].hazard == status}
->>>>>>> 2ebbce1 (feat: implement railway reinforcement learning environment with reward function and PPO agent training pipeline)
 
 
 # Dashboard Endpoints
