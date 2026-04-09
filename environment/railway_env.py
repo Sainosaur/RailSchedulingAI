@@ -69,7 +69,11 @@ class ModernizedLine104(gym.Env):
         self.vl = ValidationLayer()
 
         # Spaces
-        self.action_space = gym.spaces.Discrete(4)
+        self.action_space = gym.spaces.Box(
+            low=np.array([-1.0], dtype=np.float32),
+            high=np.array([0.5], dtype=np.float32),
+            dtype=np.float32,
+        )
         self.observation_space = gym.spaces.Box(
             low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
             high=np.array([80000.0, 30.0, 80000.0, 3.0, 80000.0, 30.0, 10000.0], dtype=np.float32),
@@ -84,7 +88,7 @@ class ModernizedLine104(gym.Env):
         self.time: float = 0.0
         self.last_station_idx: int = 0
         self.visited_stations: set[int] = set()
-        self.last_action: int = 3  # Track the last *safe* action for jerk calculation
+        self.last_a: float = 0.0  # Track the last *executed* acceleration for jerk calculation
         self.step_count: int = 0
 
     # ------------------------------------------------------------------
@@ -99,7 +103,7 @@ class ModernizedLine104(gym.Env):
         self.time = 0.0
         self.last_station_idx = 0
         self.visited_stations = {0}  # starting station already "visited"
-        self.last_action = 3
+        self.last_a = 0.0
         self.step_count = 0
 
         # Lead train begins ~2 km ahead
@@ -108,59 +112,48 @@ class ModernizedLine104(gym.Env):
 
         return self._get_obs(), {}
 
-    def step(self, action: int):
+    def step(self, action: np.ndarray):
         """
         Execute one environment step:
-            1.  Validate the proposed action through the safety sieve.
-            2.  Apply SUVAT physics.
+            1.  Validate the proposed continuous acceleration through the safety sieve.
+            2.  Apply direct acceleration physics.
             3.  Advance the lead train.
             4.  Compute the reward.
         """
-        # ----- 1. Validation Layer (Layers 1–5) -----
-        safe_action, overridden = self.vl.get_safe_action(
-            action, self.x, self.v, self.dtz,
+        # Ensure action is a float scalar
+        proposed_a = float(action[0])
+
+        # Current signal aspect (derived from distance to lead train)
+        env_aspect = self._get_signal_aspect()
+
+        # ----- 1. Validation Layer (Layers 1–4) -----
+        # VL handles the safety check against the aspect and dtz.
+        safe_a, overridden = self.vl.get_safe_action(
+            proposed_a, env_aspect, self.x, self.v, self.dtz,
         )
 
-        # Jerk tracking: delta of the *physically executed* action
-        action_delta = abs(safe_action - self.last_action)
-        self.last_action = safe_action
+        # Jerk tracking: delta of the *physically executed* acceleration
+        action_delta = abs(safe_a - self.last_a)
+        self.last_a = safe_a
 
-        # Target speed from the validated action (uses the same 1/3, 2/3
-        # fraction logic as the validator so physics and safety stay in sync)
-        seg = self.vl.get_segment(self.x)
-        target_v = self.vl._speed_for_action(safe_action, seg)
-
-        # ----- 2. Physics — two-phase SUVAT update -----
+        # ----- 2. Physics — direct acceleration update -----
         prev_x = self.x
         prev_v = self.v
         
-        if abs(target_v - self.v) < 0.01:
-            # Cruising
-            accel = 0.0
-            self.x += self.v * self.DT
-        else:
-            accel = self.ACCEL if target_v > self.v else self.DECEL
-            t_to_target = (target_v - self.v) / accel   # always > 0
-
-            if self.DT <= t_to_target:
-                # Still accelerating / braking within this timestep
-                self.x += self.v * self.DT + 0.5 * accel * self.DT ** 2
-                self.v += accel * self.DT
-            else:
-                # Reach target partway, cruise the remainder
-                self.x += (
-                    self.v * t_to_target
-                    + 0.5 * accel * t_to_target ** 2
-                    + target_v * (self.DT - t_to_target)
-                )
-                self.v = target_v
-
-        # Clamp: speed cannot be negative, position cannot exceed track
-        self.v = max(0.0, self.v)
+        # SUVAT: v = u + at, s = ut + 0.5at^2
+        self.v += safe_a * self.DT
+        
+        # Speed limits: speed cannot be negative, and shouldn't exceed local limit
+        seg = self.vl.get_segment(self.x)
+        self.v = max(0.0, min(self.v, seg.limit_ms))
+        
+        # Displacement
+        self.x += self.v * self.DT  # Simplified; or use 0.5*a*t^2 for more precision
         self.x = min(self.x, self.TRACK_END)
 
         # Calculate applied traction (positive acceleration only)
-        applied_traction = max(0.0, (self.v - prev_v) / self.DT)
+        # Note: if safe_a was overridden to -1.0, applied_traction is 0.0
+        applied_traction = max(0.0, safe_a)
 
         self.time += self.DT
         self.step_count += 1
@@ -215,7 +208,9 @@ class ModernizedLine104(gym.Env):
 
         info = {
             "overridden": overridden,
-            "safe_action": safe_action,
+            "safe_a": safe_a,
+            "proposed_a": proposed_a,
+            "aspect": env_aspect,
             "time": self.time,
             "segment": seg.id,
             "reward_breakdown": {
@@ -314,15 +309,16 @@ if __name__ == "__main__":
 
     total_r = 0.0
     for step_i in range(200):
-        # Simple heuristic: always request Green
-        action = 3
+        # Continuous action: try to accelerate at max (0.5)
+        action = np.array([0.5], dtype=np.float32)
         obs, reward, terminated, truncated, info = env.step(action)
         total_r += reward
 
         if step_i % 25 == 0:
             env.render()
             print(f"     step {step_i:4d}  reward={reward:+8.3f}  "
-                  f"overridden={info['overridden']}")
+                  f"overridden={info['overridden']}  "
+                  f"safe_a={info['safe_a']:.2f}")
 
         if terminated or truncated:
             print(f"\n--- Episode ended at step {step_i} ---")

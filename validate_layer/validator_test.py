@@ -7,7 +7,11 @@ Run with:   python -m unittest validate_layer/validator_test.py
 
 import os
 import unittest
+import sys
 from pathlib import Path
+
+# Ensure project-root imports work regardless of working directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from graph.graph import VLSegment
 from validate_layer.validator import ValidationLayer
