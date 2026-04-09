@@ -1,18 +1,16 @@
 """
-Draft: 5
-Corrected to match internal_layers.md (draft 4).
+Draft: 8    
 
 validate_layer/validator.py
 
 This module implements a deterministic, safety-critical Validation Layer (VL)
-for a PPO-driven autonomous train agent.  It acts as a 5-Layer "Safety Sieve"
+for a PPO-driven autonomous train agent.  It acts as a 4-Layer Pipeline
 based on ETCS Level 2 Fixed Block (Train-to-Zone) signalling principles.
 
-Layer 1 — Ingestion & Static Limits
-Layer 2 — Simulation  (3-step SUVAT lookahead at T+5, T+10, T+15 s)
-Layer 3 — Multi-Factor Violation Check  (spatial, temporal, segment)
-Layer 4 — Decision Node  (4a pass / 4b sieve)
-Layer 5 — XAI Log  (override_log.csv)
+Layer 1 — Ingestion & Dynamic Limits
+Layer 2 — Kinematic Simulation & Multi-Factor Violation Check
+Layer 3 — The Decision Node (Direct Interceptor)
+Layer 4 — Explainable AI (XAI) Logging
 
 Assume two trains, train 1 and train 2, with train 1 in front of train 2.
 
@@ -23,16 +21,12 @@ DTZ is the *distance* from the train's front to the start of the next
 block boundary ahead.  DTZ is therefore always ≤ SH.
 """
 
-import sys
 import time
-from pathlib import Path
 from typing import Tuple
+import math
 
-# Ensure project-root imports work regardless of working directory
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from graph.graph import VLSegment, build_vl_segments   # noqa: E402
-from validate_layer.log_manager import init_log, append_row  # noqa: E402
+from graph.graph import VLSegment, build_vl_segments
+from validate_layer.log_manager import init_log, append_row
 
 
 # ---------------------------------------------------------------------------
@@ -40,17 +34,18 @@ from validate_layer.log_manager import init_log, append_row  # noqa: E402
 # ---------------------------------------------------------------------------
 
 ACCEL: float = 0.5           # traction acceleration  (m/s²)
-EMERGENCY_DECEL: float = -1.0  # service / emergency braking  (m/s²)
+SERVICE_DECEL: float = -0.5  # comfortable/service braking  (m/s²)
+EMERGENCY_DECEL: float = -1.0  # emergency braking limit  (m/s²)
 TEMPORAL_BUFFER: float = 5.0   # headway reaction buffer  (seconds)
 SIM_STEPS: list[int] = [5, 10, 15]  # simulation lookahead times  (seconds)
 
-# Number of 4-aspect actions per train
-ACTIONS_PER_TRAIN: int = 4
+# AI Action Space (Continuous Throttle)
+# The RL Agent outputs a continuous float representing proposed acceleration:
+# proposed_a ∈ [-1.0, 0.5]
+# Where -1.0 = Emergency Brake, 0.0 = Coast, 0.5 = Max Acceleration
 
-# Action space layout (single flat space for both trains):
-#   0–3 → Train 1 (front)   |   4–7 → Train 2 (rear)
-# Aspect 0 = Red (stop), 1 = Yellow (1/3 limit), 2 = Dbl-Yellow (2/3 limit),
-# 3 = Green (segment limit).
+# The environment independently provides the 4-aspect signal bounding this system:
+# Aspect 0 = Red (stop), 1 = Orange (cautious), 2 = Flashing Green (moderate), 3 = Green (clear).
 
 
 # ---------------------------------------------------------------------------
@@ -59,16 +54,17 @@ ACTIONS_PER_TRAIN: int = 4
 
 class ValidationLayer:
     """
-    5-layer deterministic safety sieve.
+    4-layer deterministic safety pipeline.
 
     Public API
     ----------
-    get_safe_action(proposed_act, x, v, dtz) -> (safe_action, was_overridden)
-    compute_dtz(x)                           -> float  (distance to next block)
+    get_safe_action(proposed_a, env_aspect, x, v, dtz) -> (safe_action, was_overridden)
+    compute_dtz(x)                                     -> float  (distance to next block)
 
-    The action integers follow the combined layout:
-        0–3  →  Train 1       4–7  →  Train 2
-    Internally the per-train action (0–3) is decoded for the sieve.
+    The AI outputs a continuous acceleration parameter `proposed_a` in [-1.0, 0.5].
+    The VL tests this requested physical trajectory directly against the safe dynamic
+    boundaries strictly established by the environment's `env_aspect`.
+    Joint centralized action spaces (e.g. 0-7) are not used.
 
     DTZ is the distance from the train to the next fixed-block boundary.
     It is always ≤ SH for the current segment.
@@ -79,7 +75,7 @@ class ValidationLayer:
         # and cached at module level — no repeated computation.
         self.segments: list[VLSegment] = build_vl_segments()
 
-        # Layer 5 — XAI log (managed by log_manager.py)
+        # Layer 4 — XAI log (managed by log_manager.py)
         init_log()
 
     # ------------------------------------------------------------------
@@ -126,224 +122,175 @@ class ValidationLayer:
         # Beyond all segments — return a large safe value
         return seg.spatial_headway
 
-    @staticmethod
-    def _speed_for_action(action: int, segment: VLSegment) -> float:
-        """
-        Map a per-train 4-aspect action (0–3) to a target speed (m/s).
-
-        The target speeds are proportional to the *current segment's*
-        speed limit so they adapt automatically as the train crosses
-        segment boundaries:
-            0  Red          →  0           (stop)
-            1  Yellow       →  1/3 × limit (cautious approach)
-            2  Double-Yellow→  2/3 × limit (moderate approach)
-            3  Green        →  limit       (full speed)
-        """
-        fractions = {0: 0.0, 1: 1.0 / 3.0, 2: 2.0 / 3.0, 3: 1.0}
-        return fractions.get(action, 0.0) * segment.limit_ms
-
-    @staticmethod
-    def _decode_action(combined_action: int) -> Tuple[int, int]:
-        """
-        Decode a combined action into (train_index, per_train_action).
-
-        Combined layout:  0–3 → Train 1,  4–7 → Train 2.
-        """
-        train_idx = combined_action // ACTIONS_PER_TRAIN
-        per_train = combined_action % ACTIONS_PER_TRAIN
-        return train_idx, per_train
-
     # ------------------------------------------------------------------
-    # Layer 2 — SUVAT Projection
+    # Layer 1 — Ingestion & Dynamic Limits
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _project(x: float, v: float, target_v: float,
+    def _speed_for_aspect(aspect: int, segment: VLSegment, dtz: float) -> Tuple[float, float]:
+        """
+        Map a per-train 4-aspect L2 signal (0-3) to a target speed and available distance.
+        
+        Aspect mapping (Distance to Hazard):
+            0  Red          →  DTZ
+            1  Orange       →  DTZ + 1 * SH
+            2  Flash-Green  →  DTZ + 2 * SH
+            3  Green        →  DTZ + 3 * SH
+        """
+        # Determine the available clear distance based on the signal aspect (0-3)
+        if aspect == 0:
+            distance_available = dtz
+        elif aspect == 1:
+            distance_available = dtz + (1 * segment.spatial_headway)
+        elif aspect == 2:
+            distance_available = dtz + (2 * segment.spatial_headway)
+        else:
+            distance_available = dtz + (3 * segment.spatial_headway)
+
+        a_comfort = abs(SERVICE_DECEL)
+        v_dynamic = math.sqrt(2 * a_comfort * max(0.0, distance_available))
+
+        # Output the minimum of the dynamically derived speed and the segment speed limit
+        target_v = min(v_dynamic, segment.limit_ms)
+
+        return target_v, distance_available
+
+    # ------------------------------------------------------------------
+    # Layer 2 — Kinematic Simulation & Multi-Factor Violation Check
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _project(x: float, v: float, proposed_a: float, limit_v: float,
                  t: float) -> Tuple[float, float]:
         """
         Two-phase SUVAT projection over *t* seconds.
-
-        Phase 1 — accelerate / brake towards *target_v*.
-        Phase 2 — cruise at *target_v* for any remaining time.
-
-        Returns (x_projected, v_projected).
+        Phase 1 — apply `proposed_a` until speed safely reaches `limit_v` (or strictly 0).
+        Phase 2 — coast at `limit_v` (or 0) for any remaining time.
         """
-        if abs(target_v - v) < 0.01:
-            # Already at target → cruise
+        if proposed_a == 0:
             return x + v * t, v
 
-        accel = ACCEL if target_v > v else EMERGENCY_DECEL
-
-        # Time needed to reach target_v from v
-        t_to_target = (target_v - v) / accel       # always positive
-
-        if t <= t_to_target:
-            # The train has NOT yet reached target_v within the
-            # lookahead window, so it is still accelerating or braking
-            # throughout.  We use the *actual* current speed (v) and
-            # the constant acceleration directly in SUVAT — no
-            # "projected / intermediate" values are needed because the
-            # motion is a single constant-acceleration phase from t = 0
-            # to t = t.
-            v_proj = v + accel * t
-            x_proj = x + v * t + 0.5 * accel * t ** 2
+        if proposed_a > 0:
+            if v >= limit_v:
+                return x + v * t, v
+            t_to_limit = (limit_v - v) / proposed_a
         else:
-            # The train reaches target_v at t_to_target, BEFORE the end
-            # of the lookahead window.  After that instant the
-            # acceleration drops to zero and the train cruises.  We
-            # therefore split into two SUVAT phases:
-            #   Phase 1 (0 → t_to_target):  constant accel, uses actual v.
-            #   Phase 2 (t_to_target → t):  zero accel, uses target_v
-            #                                (the "projected" cruise speed).
-            # x_at_target is the position at the moment the train
-            # finishes accelerating / braking; the remaining time is
-            # covered at the constant cruise speed target_v.
-            x_at_target = x + v * t_to_target + 0.5 * accel * t_to_target ** 2
-            x_proj = x_at_target + target_v * (t - t_to_target)
-            v_proj = target_v
+            if v <= 0.0:
+                return x, 0.0
+            t_to_limit = (0.0 - v) / proposed_a
 
-        v_proj = max(0.0, v_proj)        # speed can never go negative
-        return x_proj, v_proj
+        if t <= t_to_limit:
+            v_proj = v + proposed_a * t
+            x_proj = x + v * t + 0.5 * proposed_a * (t ** 2)
+        else:
+            x_at_limit = x + v * t_to_limit + 0.5 * proposed_a * (t_to_limit ** 2)
+            terminal_v = limit_v if proposed_a > 0 else 0.0
+            x_proj = x_at_limit + terminal_v * (t - t_to_limit)
+            v_proj = terminal_v
 
-    # ------------------------------------------------------------------
-    # Layer 1 + 3 — Ingestion, Static Limits & Violation Checks
-    # ------------------------------------------------------------------
+        return max(0.0, x_proj), max(0.0, v_proj)
 
     def _check_action_safety(
         self,
-        action: int,
+        proposed_a: float,
+        env_aspect: int,
         x: float,
         v: float,
         dtz: float,
     ) -> Tuple[bool, str]:
         """
-        Run the 3-step simulation (Layer 2) and perform the multi-factor
-        violation check (Layer 3) for a given per-train *action* (0–3).
-
-        Parameters
-        ----------
-        dtz : float   Distance (metres) from the train to the next
-                       fixed-block boundary.  Always ≤ SH.
-
-        Returns
-        -------
-        (is_safe, constraint_id)
-            constraint_id is "" when safe.
+        Run the 3-step simulation and perform the multi-factor violation 
+        check (Layer 2) for a given continuous proposed acceleration.
         """
         current_seg = self.get_segment(x)
 
-        # Layer 1 — static limit: cap target speed at segment limit
-        target_v = min(
-            self._speed_for_action(action, current_seg),
-            current_seg.limit_ms,
-        )
+        max_safe_v, distance_available = self._speed_for_aspect(env_aspect, current_seg, dtz)
+        boundary_x = x + distance_available
 
-        # Absolute coordinate of the next block boundary
-        boundary_x = x + dtz
+        v_ceiling = min(max_safe_v, current_seg.limit_ms)
 
-        # Layer 2 — simulate at T+5, T+10, T+15
         for t in SIM_STEPS:
-            x_proj, v_proj = self._project(x, v, target_v, t)
+            x_proj, v_proj = self._project(x, v, proposed_a, v_ceiling, t)
 
-            # --- Layer 3a: Spatial Violation ---
-            # Train must not reach or cross the next block boundary
+            # --- Spatial Violation ---
             if x_proj >= boundary_x:
-                return False, "DTZ_Spatial_Violation"
+                return False, "Aspect_Spatial_Violation"
 
-            # --- Layer 3b: Temporal Violation ---
-            # Ensure enough reaction time before reaching the boundary
-            if v_proj > 0.01:                       # avoid div-by-zero
+            # --- Temporal Violation ---
+            if v_proj > 0.01:
                 time_to_zone = (boundary_x - x_proj) / v_proj
                 if time_to_zone < TEMPORAL_BUFFER:
-                    return False, "DTZ_Temporal_Violation"
+                    return False, "Aspect_Temporal_Violation"
+            
+            # --- Dynamic Kinematics Bounds ---
+            if v_proj > max_safe_v + 0.01:
+                return False, "Kinematic_Target_Violation"
 
-            # --- Layer 3c: Segment Violation ---
-            # Projected position may have crossed into a new segment
+            # --- Segment Limit Violation ---
             try:
                 proj_seg = self.get_segment(x_proj)
-                if v_proj > proj_seg.limit_ms + 0.01:   # small tolerance
+                if v_proj > proj_seg.limit_ms + 0.01:
                     return False, f"{proj_seg.id}_Limit"
             except ValueError:
-                # If projected completely off the track, it is inherently unsafe
                 return False, "Track_Bounds_Violation"
 
         return True, ""
 
     # ------------------------------------------------------------------
-    # Layer 4 — Decision Node  (4a / 4b)
+    # Layer 3 — The Decision Node (Direct Interceptor)
     # ------------------------------------------------------------------
 
     def get_safe_action(
         self,
-        proposed_act: int,
+        proposed_a: float,
+        env_aspect: int,
         x: float,
         v: float,
         dtz: float,
-    ) -> Tuple[int, bool]:
+    ) -> Tuple[float, bool]:
         """
-        Layer 4 — The Decision Node.
+        Layer 3 — Continuous Decision Node (Direct Interceptor).
 
-        4a  If the proposed action passes L2/L3 → return it unchanged.
-        4b  Otherwise sieve downward through the action space and return
-            the highest safe action.  Log the override (Layer 5).
+        O(1) execution validating the AI's requested continuous acceleration against 
+        environmental bounds. If unsafe, it throws away the float and returns 
+        the maximum emergency braking float (-1.0).
 
         Parameters
         ----------
-        proposed_act : int   Per-train action (0–3, 4-aspect).
+        proposed_a   : float Continuous AI Throttle Action [-1.0, 0.5].
+        env_aspect   : int   Environmental Signal Boundary (0-3).
         x            : float Current position (m).
         v            : float Current speed (m/s).
-        dtz          : float Distance to the next fixed-block boundary
-                             (m).  Always ≤ SH.
+        dtz          : float Distance to the next fixed-block boundary.
 
-        Returns
+        Return
         -------
-        (safe_action, was_overridden)
+        (safe_action, was_overridden) -> (float, bool)
 
-        Performance note — sieve cost on segments S0 / S1
-        -------------------------------------------------
-        The sieve decrements through at most 4 actions (3 → 2 → 1 → 0),
-        each running 3 SUVAT projections — a worst-case of 12 lightweight
-        arithmetic operations.  On S0/S1 the higher speed limit (90 km/h)
-        does *not* increase the number of iterations; it only makes it
-        more likely that the higher-speed actions violate a constraint
-        and are skipped quickly.
-        
-        Why this is mathematically O(1) (Constant Time):
-        In Big O notation, O(1) means the runtime scales constantly regardless 
-        of dynamic inputs (like track distance `dtz` or speed `v`). 
-        Although increasing the number of physical actions to 160 would make 
-        it run ~40x slower, the runtime bounds are tied to hardcoded system 
-        limits: (Max 4 actions due to the 4-aspect system) × (3 sim steps that is hard coded by us) = 12 maximum SUVAT projections. 
-        Because there is an absolute ceiling of 12 evaluations regardless of 
-        input data size, the computational cost is capped at a strict mathematical 
-        constant. Thus, it is O(1).
         """
-        # 4a — try the proposed action first
-        is_safe, constraint = self._check_action_safety(proposed_act, x, v, dtz)
+        # Clamp proposed acceleration purely to system capability limits
+        proposed_a = max(EMERGENCY_DECEL, min(ACCEL, proposed_a))
+
+        # Absolute check against True environmental bounds
+        is_safe, constraint = self._check_action_safety(proposed_a, env_aspect, x, v, dtz)
+
         if is_safe:
-            return proposed_act, False
+            return proposed_a, False
 
-        # 4b — sieve: decrement through action space
-        original_constraint = constraint       # why the proposal failed
-        for act in range(proposed_act - 1, -1, -1):
-            is_safe, _ = self._check_action_safety(act, x, v, dtz)
-            if is_safe:
-                self._log_override(proposed_act, act, original_constraint)
-                return act, True
-
-        # Emergency-stop fallback
-        self._log_override(proposed_act, 0, original_constraint)
-        return 0, True
+        # Apply absolute emergency deceleration on safety violation
+        self._log_override(proposed_a, float(EMERGENCY_DECEL), constraint)
+        return float(EMERGENCY_DECEL), True
 
     # ------------------------------------------------------------------
-    # Layer 5 — XAI Log  (delegated to log_manager.py)
+    # Layer 4 — Explainable AI (XAI) Logging
     # ------------------------------------------------------------------
 
     @staticmethod
     def _log_override(
-        original: int,
-        corrected: int,
+        original: float,
+        corrected: float,
         constraint_id: str,
     ) -> None:
         """Append one override event row to validate_layer/override_log.csv."""
         append_row(time.time(), original, corrected, constraint_id)
+

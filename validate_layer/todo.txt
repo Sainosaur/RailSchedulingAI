@@ -1,25 +1,8 @@
 TODO 
 
-1.1/ Update Docs about why only 3 blocks in front, and front train position is needed.**
-1.2/ Update Docs about why TH is used clearly.
-1.3/ Update Docs about why VL is used for safety only, 
-     and TL will include punctuality, energy efficiency, and throughput.
-1.4/ Update Docs about why spatial buffer not needed, 
-     as TH does this and scales with speed.
-1.5/ Update Docs about what physics equations are use and why in that branch.
-1.6/ Update Docs about the obervation logs in more detail.
-1.7/ remove the speed limit for the 4 aspect signal, keep the distance to blocked zone for each signal 
-
-
-2/ Update code accordingly to docs. 
-Objectives:
-    Ensure code is efficient as possible.
-    Ensure code is well-tested.
-    Ensure code is well-documented.
-    Ensure code is readable and maintainable.
-    Ensure code is modular and easy to extend.
-Given in order of importance.
-a
+find colours used by poland
+find distances between the ballises on the track
+find justification why level 3 not used
 
 
     
