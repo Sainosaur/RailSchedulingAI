@@ -48,6 +48,8 @@ class Segment:
     gradient: float
     speed_limit: int | None
     hazard: bool
+    block_boundaries: list[float] = field(default_factory=list)
+    block_boundaries: list[float] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -137,23 +139,35 @@ def graph() -> net.Graph:
     ]
 
     # Adding stations and Segments to the graph
-    for station in stations:
+    limits = [90, 90, 60, 30, 30, 30]
+    for i, station in enumerate(stations):
         g.add_node(station.name, data=station)
-        limits = [90, 90, 60, 30, 30, 30]
-        if stations.index(station) < len(stations) - 1:
-            next_station = stations[(stations.index(station)) + 1]
+
+        if i < len(stations) - 1:
+            next_station = stations[i + 1]
+            start_m = round(station.distance * 1000)
+            end_m = round(next_station.distance * 1000)
+            sh, _ = _HEADWAY_TABLE[i]
+            boundaries: list[float] = []
+            pos = float(start_m)
+            while pos < end_m:
+                boundaries.append(pos)
+                pos += sh
+            if boundaries[-1] < end_m:
+                boundaries.append(float(end_m))
             g.add_edge(
                 station.name,
                 next_station.name,
                 data=Segment(
-                    stations.index(station),
+                    i,
                     station,
                     next_station,
                     next_station.distance - station.distance,
                     (next_station.elevation - station.elevation)
                     / (next_station.distance - station.distance),
-                    limits[station.position],
+                    limits[i],
                     False,
+                    boundaries,
                 ),
             )
 
@@ -178,34 +192,23 @@ def build_vl_segments() -> list[VLSegment]:
     g = graph()
     segments: list[VLSegment] = []
 
-    for i, (u, v_node, data) in enumerate(g.edges(data=True)):
+    for _, (_, _, data) in enumerate(g.edges(data=True)):
         edge = data["data"]
         start_m = round(edge.start_station.distance * 1000)  # km → m
         end_m = round(edge.end_station.distance * 1000)
         limit_ms = round(edge.speed_limit / 3.6, 2)  # km/h → m/s
 
-        sh, th = _HEADWAY_TABLE[i]
-
-        # Build fixed-block boundaries within this segment.
-        # Blocks start at segment start and are spaced SH apart.
-        boundaries: list[float] = []
-        pos = float(start_m)
-        while pos < end_m:
-            boundaries.append(pos)
-            pos += sh
-        # The segment end is always a boundary (may be a short final block)
-        if boundaries[-1] < end_m:
-            boundaries.append(float(end_m))
+        sh, th = _HEADWAY_TABLE[edge.position]
 
         segments.append(
             VLSegment(
-                id=f"S{i}",
+                id=f"S{edge.position}",
                 start=float(start_m),
                 end=float(end_m),
                 limit_ms=limit_ms,
                 spatial_headway=sh,
                 temporal_headway=th,
-                block_boundaries=boundaries,
+                block_boundaries=edge.block_boundaries,
             )
         )
 
