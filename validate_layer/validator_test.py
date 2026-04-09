@@ -7,13 +7,13 @@ Run with:   python -m unittest validate_layer/validator_test.py
 
 import os
 import unittest
+import sys
 from pathlib import Path
 
-try:
-    from graph.graph import graph
-except ModuleNotFoundError:
-    from graph import graph
+# Ensure project-root imports work regardless of working directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from graph.graph import VLSegment
 from validate_layer.validator import ValidationLayer
 from validate_layer import log_manager
 
