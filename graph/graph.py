@@ -38,6 +38,13 @@ class Station:
 
 
 @dataclass
+class Block:
+    start: float
+    end: float
+    hazard: bool
+
+
+@dataclass
 class Segment:
     """A Class to represent a segment between two stations."""
 
@@ -48,7 +55,8 @@ class Segment:
     gradient: float
     speed_limit: int | None
     hazard: bool
-    block_boundaries: list[float] = field(default_factory=list)
+    block_boundaries: list[Block] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Hardcoded SH and TH from internal_layers.md §3 (rounded values from doc)
@@ -146,13 +154,17 @@ def graph() -> net.Graph:
             start_m = round(station.distance * 1000)
             end_m = round(next_station.distance * 1000)
             sh, _ = _HEADWAY_TABLE[i]
-            boundaries: list[float] = []
+            boundaries: list[Block] = []
             pos = float(start_m)
             while pos < end_m:
-                boundaries.append(pos)
+                boundaries.append(
+                    Block(start=pos, end=min(pos + sh, float(end_m)), hazard=False)
+                )
                 pos += sh
-            if boundaries[-1] < end_m:
-                boundaries.append(float(end_m))
+            if boundaries[-1].end < end_m:
+                boundaries.append(
+                    Block(start=boundaries[-1].end, end=float(end_m), hazard=False)
+                )
             g.add_edge(
                 station.name,
                 next_station.name,
@@ -198,6 +210,14 @@ def build_vl_segments() -> list[VLSegment]:
 
         sh, th = _HEADWAY_TABLE[edge.position]
 
+        boundaries: list[float] = []
+        pos = float(start_m)
+        while pos < end_m:
+            boundaries.append(pos)
+            pos += sh
+        if boundaries[-1] < end_m:
+            boundaries.append(float(end_m))
+
         segments.append(
             VLSegment(
                 id=f"S{edge.position}",
@@ -206,7 +226,7 @@ def build_vl_segments() -> list[VLSegment]:
                 limit_ms=limit_ms,
                 spatial_headway=sh,
                 temporal_headway=th,
-                block_boundaries=edge.block_boundaries,
+                block_boundaries=boundaries,
             )
         )
 

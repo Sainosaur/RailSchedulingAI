@@ -46,7 +46,7 @@ app = FastAPI()
 g = graph()
 manager = ConnectionManager()
 
-STATUS = "Running"  # Temporary placeholder for /kill endpoints
+KILLED = False  # Temporary placeholder for /kill endpoints
 origins = [
     "http://localhost:5173",
 ]
@@ -100,23 +100,23 @@ async def trains():
 # TODO
 @app.post("/api/dashboard/kill/kill")
 async def kill_system():
-    global STATUS
-    STATUS = "Killed"
-    return {"status": STATUS}
+    global KILLED
+    KILLED = True
+    return {"killed": KILLED, "reason": "Not Implemented"}
 
 
 # TODO
 @app.post("/api/dashboard/kill/restore")
 async def restore_system():
-    global STATUS
-    STATUS = "Running"
-    return {"status": STATUS}
+    global KILLED
+    KILLED = False
+    return {"killed": KILLED, "reason": "Not Implemented"}
 
 
 # TODO
 @app.get("/api/dashboard/kill")
 async def system_status():
-    return {"status": STATUS}
+    return {"killed": KILLED, "reason": "Not Implemented"}
 
 
 # TODO
