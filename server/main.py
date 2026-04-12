@@ -10,6 +10,7 @@ try:
 except ImportError:
     from graph import graph
 from validate_layer import log_manager
+from server.simulation import SimulationRunner
 
 
 def serialise_graph(g) -> dict:
@@ -45,6 +46,7 @@ class ConnectionManager:
 app = FastAPI()
 g = graph()
 manager = ConnectionManager()
+simulation_runner = SimulationRunner(broadcast_callback=manager.broadcast)
 
 KILLED = False  # Temporary placeholder for /kill endpoints
 origins = [
@@ -61,15 +63,16 @@ app.add_middleware(
 
 
 # Updates the graph with hazard data and notifies all WebSocket clients
-@app.post("/api/hazard/{segmentPosition}/{status}")
-async def hazard(segmentPosition: int, status: bool):
+@app.post("/api/hazard/{segmentPosition}/{block}/{status}")
+async def hazard(segmentPosition: int, block: int, status: bool):
     nodes = [data["data"] for _, data in g.nodes(data=True)]
     start = next(s for s in nodes if s.position == segmentPosition)
     end = next(s for s in nodes if s.position == segmentPosition + 1)
     edge = g.get_edge_data(start.name, end.name)
-    edge["data"].hazard = status
+    edge["data"].block_boundaries[block].hazard = status
+    edge["data"].hazard = any(b.hazard for b in edge["data"].block_boundaries)
     await manager.broadcast({"type": "graph_update", "graph": serialise_graph(g)})
-    return {"segment": asdict(edge["data"]), "success": edge["data"].hazard == status}
+    return {"segment": asdict(edge["data"]), "success": edge["data"].block_boundaries[block].hazard == status}
 
 
 # Dashboard Endpoints
@@ -135,3 +138,29 @@ async def graph_updates(websocket: WebSocket):
             await websocket.receive_text()  # keep connection alive
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+@app.websocket("/ws/sim")
+async def sim_updates(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # keep connection alive
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+# Simulation Endpoints
+@app.post("/api/sim/start")
+async def start_sim(lead_speed: float = 20.0):
+    if simulation_runner.model is None or simulation_runner.venv is None:
+        simulation_runner.load_model(lead_train_speed=lead_speed)
+    await simulation_runner.reset()
+    await simulation_runner.start()
+    return {"status": "started"}
+
+
+@app.post("/api/sim/stop")
+async def stop_sim():
+    await simulation_runner.stop()
+    return {"status": "stopped"}

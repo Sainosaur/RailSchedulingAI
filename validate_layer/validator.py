@@ -21,19 +21,22 @@ DTZ is the *distance* from the train's front to the start of the next
 block boundary ahead.  DTZ is therefore always ≤ SH.
 """
 
+import math
 import time
 from typing import Tuple
-import math
 
-from graph.graph import VLSegment, build_vl_segments
-from validate_layer.log_manager import init_log, append_row
+try:
+    from graph.graph import VLSegment, build_vl_segments
+except ImportError:
+    from graph import VLSegment, build_vl_segments
 
+from validate_layer.log_manager import append_row, init_log
 
 # ---------------------------------------------------------------------------
 # Safety constants  (internal_layers.md  §4)
 # ---------------------------------------------------------------------------
 
-ACCEL: float = 0.5           # traction acceleration  (m/s²)
+ACCEL: float = 0.5  # traction acceleration  (m/s²)
 SERVICE_DECEL: float = -0.5  # comfortable/service braking  (m/s²)
 EMERGENCY_DECEL: float = -1.0  # emergency braking limit  (m/s²)
 # Lookahead times are computed per-segment in _check_action_safety,
@@ -51,6 +54,7 @@ EMERGENCY_DECEL: float = -1.0  # emergency braking limit  (m/s²)
 # ---------------------------------------------------------------------------
 # Validation Layer
 # ---------------------------------------------------------------------------
+
 
 class ValidationLayer:
     """
@@ -94,8 +98,10 @@ class ValidationLayer:
         if x == self.segments[-1].end:
             return self.segments[-1]
 
-        raise ValueError(f"Position x={x} is off the track "
-                         f"[{self.segments[0].start}, {self.segments[-1].end}]")
+        raise ValueError(
+            f"Position x={x} is off the track "
+            f"[{self.segments[0].start}, {self.segments[-1].end}]"
+        )
 
     def compute_dtz(self, x: float) -> float:
         """
@@ -128,7 +134,9 @@ class ValidationLayer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _speed_for_aspect(aspect: int, segment: VLSegment, dtz: float) -> Tuple[float, float]:
+    def _speed_for_aspect(
+        aspect: int, segment: VLSegment, dtz: float
+    ) -> Tuple[float, float]:
         """
         Map a per-train 4-aspect L2 signal (0-3) to a target speed and available distance.
 
@@ -161,8 +169,9 @@ class ValidationLayer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _project(x: float, u: float, proposed_a: float, v_ceil: float,
-                 t: float) -> Tuple[float, float]:
+    def _project(
+        x: float, u: float, proposed_a: float, v_ceil: float, t: float
+    ) -> Tuple[float, float]:
         """
         Two-phase SUVAT projection over *t* seconds.
 
@@ -186,9 +195,9 @@ class ValidationLayer:
 
         if t <= t_to_limit:
             v = u + proposed_a * t
-            x_proj = x + u * t + 0.5 * proposed_a * (t ** 2)
+            x_proj = x + u * t + 0.5 * proposed_a * (t**2)
         else:
-            x_at_limit = x + u * t_to_limit + 0.5 * proposed_a * (t_to_limit ** 2)
+            x_at_limit = x + u * t_to_limit + 0.5 * proposed_a * (t_to_limit**2)
             v = v_ceil if proposed_a > 0 else 0.0
             x_proj = x_at_limit + v * (t - t_to_limit)
 
@@ -229,7 +238,9 @@ class ValidationLayer:
         """
         current_seg = self.get_segment(x)
 
-        max_safe_v, distance_available = self._speed_for_aspect(env_aspect, current_seg, dtz)
+        max_safe_v, distance_available = self._speed_for_aspect(
+            env_aspect, current_seg, dtz
+        )
         boundary_x = x + distance_available
 
         v_ceiling = min(max_safe_v, current_seg.limit_ms)
@@ -310,10 +321,12 @@ class ValidationLayer:
         # A PPO action outside [-1.0, 0.5] is physically impossible.
         # If the VL replaces it, that IS an override — the returned value differs from proposed_a.
         clamped_a = max(EMERGENCY_DECEL, min(ACCEL, proposed_a))
-        was_hardware_clamped = (clamped_a != proposed_a)
+        was_hardware_clamped = clamped_a != proposed_a
 
         # Layer 2 check (runs on clamped value)
-        is_safe, constraint = self._check_action_safety(clamped_a, env_aspect, x, u, dtz)
+        is_safe, constraint = self._check_action_safety(
+            clamped_a, env_aspect, x, u, dtz
+        )
 
         if is_safe:
             if was_hardware_clamped:
@@ -330,7 +343,7 @@ class ValidationLayer:
         _, distance_available = self._speed_for_aspect(env_aspect, seg, dtz)
 
         if distance_available > 0.1 and u > 0.01:
-            a_needed = -(u ** 2) / (2.0 * distance_available)
+            a_needed = -(u**2) / (2.0 * distance_available)
             safe_a = float(max(EMERGENCY_DECEL, min(0.0, a_needed)))
         else:
             # Zero available distance or train already stopped — emergency brake
