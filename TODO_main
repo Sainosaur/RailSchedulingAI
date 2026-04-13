@@ -1,11 +1,4 @@
-ding- extend VL
-
-saino- dahsboard (act layer)
-
-ara- update reward function
-
-iva-
-
-barr-
-
-check for licenses, say in report: cybersecurity-protection againts hacking and if internet downs rely on VL and old human practices.
+1/ add timetable
+2/ make better model of ideal front train
+3/ verify code regarding punctuality
+4/ justify the headway variable in reward function
