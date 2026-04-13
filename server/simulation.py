@@ -129,7 +129,10 @@ class SimulationRunner:
                 "proposed_a": 0.0,
                 "safe_a": 0.0,
             },
-            "hazards": len(raw_env.active_hazards),
+            "landslides": [
+                {"position": ls.position, "active": ls.active}
+                for ls in raw_env.landslides
+            ],
             "stations_visited": list(raw_env.visited_stations),
             "done": bool(force_done),
         }
@@ -184,7 +187,10 @@ class SimulationRunner:
                         "proposed_a": float(info.get("proposed_a", 0.0)),
                         "safe_a": float(info.get("safe_a", 0.0)),
                     },
-                    "hazards": int(info.get("active_hazards", 0)),
+                    "landslides": [
+                        {"position": ls.position, "active": ls.active}
+                        for ls in raw_env.landslides
+                    ],
                     "reward": {
                         "total": float(rewards[0]),
                         "breakdown": info.get("reward_breakdown", {}),

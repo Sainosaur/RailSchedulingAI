@@ -6,18 +6,21 @@ Gymnasium environment for a single train traversing Polish Rail Line 104
 
 Convoy model:
     Lead train  — rule-based; cruises at lead_train_speed, decelerates to
-                  stop at every station, dwells for STATION_DWELL_TIME steps,
-                  then re-accelerates.  Station stops propagate to the AI
-                  train naturally via the headway / signal-aspect mechanism.
+                  stop at every station (SUVAT physics, ±0.5 m/s²), dwells
+                  for STATION_DWELL_TIME steps, then re-accelerates.
+                  Station stops propagate to the AI train naturally via the
+                  headway / signal-aspect mechanism.
     AI train    — PPO agent; continuous acceleration in [-1.0, 0.5] m/s².
                   Every action passes through the Validation Layer before
                   physics run.
 
-Transient hazards:
-    N_HAZARDS random speed restrictions are pre-scheduled at episode start.
-    Each is treated as a virtual stopped train at a fixed track position for
-    a short window.  The AI train sees them only through a reduced aspect —
-    no new observation dimensions are required.
+Landslides (operator-configurable):
+    Up to MAX_LANDSLIDES (3) landslides can be placed at arbitrary track
+    positions during a live demo.  Each active landslide is treated as a
+    virtual stopped train; the AI train sees it only through a reduced signal
+    aspect — no new observation dimensions are required.
+    Use set_landslide(), clear_landslide(), and toggle_landslide() to manage
+    them at runtime.
 
 Physics constants match validate_layer/validator.py:
     ACCEL           = +0.5  m/s²
@@ -25,8 +28,8 @@ Physics constants match validate_layer/validator.py:
 """
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
 
 import gymnasium as gym
 import numpy as np
@@ -38,18 +41,18 @@ from reward.reward_function import compute_reward, TrainState  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Lightweight hazard records
+# Landslide — operator-placed track obstruction
 # ---------------------------------------------------------------------------
 
-class _Hazard(NamedTuple):
+@dataclass
+class Landslide:
+    """A landslide blocking the track at a fixed position.
+
+    Treated as a virtual stopped train for signal-aspect calculation.
+    Can be toggled on/off during a live demo without restarting the episode.
+    """
     position: float   # metres along track
-    steps_left: int   # countdown; removed when this reaches zero
-
-
-class _ScheduledHazard(NamedTuple):
-    activate_at: int  # step_count value at which to spawn
-    position: float
-    duration: int
+    active: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -78,12 +81,11 @@ class ModernizedLine104(gym.Env):
 
     # --- Lead train ---
     LEAD_SERVICE_DECEL: float = 0.5   # braking magnitude for station stop (m/s²)
+    LEAD_ACCEL: float = 0.5           # traction magnitude for acceleration (m/s²)
     STATION_DWELL_TIME: int = 30      # steps the lead train waits at each station
 
-    # --- Transient hazards ---
-    N_HAZARDS: int = 3
-    HAZARD_MIN_DURATION: int = 3
-    HAZARD_MAX_DURATION: int = 6
+    # --- Landslides ---
+    MAX_LANDSLIDES: int = 3
 
     # --- Episode limits ---
     MAX_STEPS: int = 10_000
@@ -133,9 +135,8 @@ class ModernizedLine104(gym.Env):
         self.lead_station_idx: int = 0
         self.lead_dwell_timer: int = 0
 
-        # Hazard state (initialised in reset)
-        self.active_hazards: list[_Hazard] = []
-        self.scheduled_hazards: list[_ScheduledHazard] = []
+        # Landslides — persist across resets; managed via public API
+        self.landslides: list[Landslide] = []
 
     # ------------------------------------------------------------------
     # Gymnasium API
@@ -158,9 +159,6 @@ class ModernizedLine104(gym.Env):
         self.lead_v = self.lead_train_speed
         self.lead_station_idx = 0
         self.lead_dwell_timer = 0
-
-        # Hazards
-        self._init_hazards()
 
         self._update_dtz()
         return self._get_obs(), {}
@@ -198,8 +196,7 @@ class ModernizedLine104(gym.Env):
         self._step_lead_train()
         self._update_dtz()
 
-        # ----- 4. Transient hazards -----
-        self._step_hazards()
+        # ----- 4. Landslides (stationary — no step required) -----
 
         # ----- 5. AI train station arrival -----
         reached_new_station = False
@@ -249,9 +246,13 @@ class ModernizedLine104(gym.Env):
             "aspect": env_aspect,
             "time": self.time,
             "segment": seg.id,
+            "lead_x": self.lead_x,
             "lead_v": self.lead_v,
             "lead_dwell": self.lead_dwell_timer,
-            "active_hazards": len(self.active_hazards),
+            "landslides": [
+                {"position": ls.position, "active": ls.active}
+                for ls in self.landslides
+            ],
             "reward_breakdown": {
                 "progress": reward_out.r_progress,
                 "headway": reward_out.r_headway,
@@ -290,19 +291,18 @@ class ModernizedLine104(gym.Env):
 
     def _step_lead_train(self) -> None:
         """
-        Advance the lead train one timestep.
+        Advance the lead train one timestep using SUVAT integration.
 
         State machine:
             DWELL   — timer > 0: count down; position and velocity frozen.
             BRAKE   — within stopping distance of next station: decelerate
-                      at LEAD_SERVICE_DECEL until speed reaches zero.
-            CRUISE  — accelerate toward lead_train_speed if below it,
-                      otherwise coast.
-            DONE    — past the final station: halt at TRACK_END.
+                      at LEAD_SERVICE_DECEL (-0.5 m/s²) until stopped.
+            ACCEL   — below cruise speed: accelerate at LEAD_ACCEL (+0.5 m/s²).
+            CRUISE  — at cruise speed: coast (a = 0).
+            DONE    — past the final station: halt.
 
-        On arrival: snap lead_x to the exact station coordinate, zero
-        velocity, start dwell timer.  Snapping avoids Euler overshoot from
-        accumulating as a permanent position error.
+        SUVAT (s = u·t + ½·a·t²) is used for position, consistent with the
+        AI train.  Arrival snap prevents overshoot accumulation.
         """
         if self.lead_dwell_timer > 0:
             self.lead_dwell_timer -= 1
@@ -317,23 +317,25 @@ class ModernizedLine104(gym.Env):
         target_x = self.STATIONS[next_lead_st]
         dist = target_x - self.lead_x
 
-        # Stopping distance under service braking: s = v² / (2a)
+        # Stopping distance under service braking: s = v² / (2·a)
         stopping_dist = (self.lead_v ** 2) / (2.0 * self.LEAD_SERVICE_DECEL)
 
         if dist <= stopping_dist:
-            lead_a = -self.LEAD_SERVICE_DECEL
+            lead_a = -self.LEAD_SERVICE_DECEL   # -0.5 m/s²
         elif self.lead_v < self.lead_train_speed:
-            lead_a = self.ACCEL
+            lead_a = self.LEAD_ACCEL             # +0.5 m/s²
         else:
             lead_a = 0.0
 
+        # SUVAT — position then velocity (mirrors AI train integration)
+        prev_lead_v = self.lead_v
+        self.lead_x += prev_lead_v * self.DT + 0.5 * lead_a * (self.DT ** 2)
         self.lead_v = float(max(0.0, min(
             self.lead_train_speed,
-            self.lead_v + lead_a * self.DT,
+            prev_lead_v + lead_a * self.DT,
         )))
-        self.lead_x += self.lead_v * self.DT
 
-        # Arrival — snap and start dwell
+        # Arrival — snap to station coordinate and start dwell
         if self.lead_x >= target_x:
             self.lead_x = target_x
             self.lead_v = 0.0
@@ -341,57 +343,40 @@ class ModernizedLine104(gym.Env):
             self.lead_dwell_timer = self.STATION_DWELL_TIME
 
     # ------------------------------------------------------------------
-    # Transient hazards
+    # Landslide control — public API for live-demo use
     # ------------------------------------------------------------------
 
-    def _init_hazards(self) -> None:
+    def set_landslide(self, position: float) -> int:
+        """Place a new active landslide at *position* metres along the track.
+
+        Returns the index of the new landslide so the caller can reference it
+        for later toggle/clear operations.
+
+        Raises ValueError if MAX_LANDSLIDES (3) are already placed.
         """
-        Pre-schedule N_HAZARDS transient hazards for this episode.
-
-        Hazards are spread across three activation bands so that at least
-        one fires even in shorter episodes.  Positions are sampled uniformly
-        along the track, 500 m clear of each endpoint.  Each hazard is
-        invisible to the agent except through its effect on signal aspect.
-        """
-        self.active_hazards = []
-        self.scheduled_hazards = []
-
-        rng = self.np_random
-        bands = [(200, 1200), (1300, 2300), (2400, 3500)]
-
-        for i in range(self.N_HAZARDS):
-            lo, hi = bands[i % len(bands)]
-            activate_at = int(rng.integers(lo, hi + 1))
-            position = float(rng.uniform(
-                self.TRACK_START + 500.0,
-                self.TRACK_END - 500.0,
-            ))
-            duration = int(rng.integers(
-                self.HAZARD_MIN_DURATION,
-                self.HAZARD_MAX_DURATION + 1,
-            ))
-            self.scheduled_hazards.append(
-                _ScheduledHazard(activate_at, position, duration)
+        if len(self.landslides) >= self.MAX_LANDSLIDES:
+            raise ValueError(
+                f"Maximum {self.MAX_LANDSLIDES} landslides already placed. "
+                "Clear one before adding another."
             )
+        self.landslides.append(Landslide(position=position, active=True))
+        return len(self.landslides) - 1
 
-    def _step_hazards(self) -> None:
-        """
-        Activate newly scheduled hazards and tick down active ones.
-        Expired hazards (steps_left == 0) are discarded.
-        """
-        remaining = []
-        for sh in self.scheduled_hazards:
-            if self.step_count >= sh.activate_at:
-                self.active_hazards.append(_Hazard(sh.position, sh.duration))
-            else:
-                remaining.append(sh)
-        self.scheduled_hazards = remaining
+    def clear_landslide(self, idx: int) -> None:
+        """Remove the landslide at *idx* permanently."""
+        if idx < 0 or idx >= len(self.landslides):
+            raise IndexError(f"No landslide at index {idx}.")
+        self.landslides.pop(idx)
 
-        self.active_hazards = [
-            _Hazard(hz.position, hz.steps_left - 1)
-            for hz in self.active_hazards
-            if hz.steps_left > 1
-        ]
+    def toggle_landslide(self, idx: int) -> bool:
+        """Flip the active state of landslide *idx*.
+
+        Returns the new active state (True = blocking, False = cleared).
+        """
+        if idx < 0 or idx >= len(self.landslides):
+            raise IndexError(f"No landslide at index {idx}.")
+        self.landslides[idx].active = not self.landslides[idx].active
+        return self.landslides[idx].active
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -442,10 +427,11 @@ class ModernizedLine104(gym.Env):
 
         aspect = _dist_to_aspect(self.lead_x - self.x)
 
-        for hz in self.active_hazards:
-            dist_to_hz = hz.position - self.x
-            if dist_to_hz > 0.0:
-                aspect = min(aspect, _dist_to_aspect(dist_to_hz))
+        for ls in self.landslides:
+            if ls.active:
+                dist_to_ls = ls.position - self.x
+                if dist_to_ls > 0.0:
+                    aspect = min(aspect, _dist_to_aspect(dist_to_ls))
 
         return aspect
 

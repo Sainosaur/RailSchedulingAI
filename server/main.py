@@ -53,6 +53,15 @@ origins = [
     "http://localhost:5173",
 ]
 
+
+def _get_raw_env():
+    """Unwrap VecNormalize/DummyVecEnv to reach the bare ModernizedLine104."""
+    env = simulation_runner.venv.envs[0]
+    while hasattr(env, "env"):
+        env = env.env
+    return env
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -126,6 +135,57 @@ async def system_status():
 @app.get("/api/dashboard/recommendations")
 async def recommendations():
     return {"recommendations": "Not Implemented"}
+
+
+# Landslide Endpoints (live demo)
+def _landslide_list(raw_env) -> list[dict]:
+    return [{"idx": i, "position": ls.position, "active": ls.active}
+            for i, ls in enumerate(raw_env.landslides)]
+
+
+@app.post("/api/sim/landslide")
+async def add_landslide(position: float):
+    """Place a new landslide at *position* metres along the track (max 3)."""
+    from fastapi import HTTPException
+    if simulation_runner.venv is None:
+        raise HTTPException(status_code=409, detail="Simulation not loaded. Call /api/sim/start first.")
+    raw_env = _get_raw_env()
+    try:
+        idx = raw_env.set_landslide(position)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await manager.broadcast({"type": "landslide_update", "landslides": _landslide_list(raw_env)})
+    return {"idx": idx, "landslides": _landslide_list(raw_env)}
+
+
+@app.delete("/api/sim/landslide/{idx}")
+async def remove_landslide(idx: int):
+    """Permanently remove the landslide at *idx*."""
+    from fastapi import HTTPException
+    if simulation_runner.venv is None:
+        raise HTTPException(status_code=409, detail="Simulation not loaded.")
+    raw_env = _get_raw_env()
+    try:
+        raw_env.clear_landslide(idx)
+    except IndexError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    await manager.broadcast({"type": "landslide_update", "landslides": _landslide_list(raw_env)})
+    return {"landslides": _landslide_list(raw_env)}
+
+
+@app.patch("/api/sim/landslide/{idx}/toggle")
+async def toggle_landslide(idx: int):
+    """Toggle the active/inactive state of landslide *idx*."""
+    from fastapi import HTTPException
+    if simulation_runner.venv is None:
+        raise HTTPException(status_code=409, detail="Simulation not loaded.")
+    raw_env = _get_raw_env()
+    try:
+        new_state = raw_env.toggle_landslide(idx)
+    except IndexError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    await manager.broadcast({"type": "landslide_update", "landslides": _landslide_list(raw_env)})
+    return {"idx": idx, "active": new_state, "landslides": _landslide_list(raw_env)}
 
 
 # Web Sockets
