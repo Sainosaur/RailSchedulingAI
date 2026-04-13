@@ -334,6 +334,15 @@ class ValidationLayer:
                 return clamped_a, True
             return clamped_a, False
 
+        # Already stopped — no braking required.  Short-circuit before the
+        # graduated override to avoid spamming the XAI log every step while
+        # the train is legally waiting at a Red signal.
+        if u <= 0.01:
+            if was_hardware_clamped:
+                self._log_override(proposed_a, 0.0, "Hardware_Limit_Clamp")
+                return 0.0, True
+            return 0.0, False
+
         # Compute the minimum deceleration required to stop within available distance.
         # SUVAT: v² = u² + 2as, with v=0 → a = -u² / (2s)
         # Clamped to [EMERGENCY_DECEL, 0.0]: always decelerative, never exceeds physical limit.
@@ -342,11 +351,11 @@ class ValidationLayer:
         seg = self.get_segment(x)
         _, distance_available = self._speed_for_aspect(env_aspect, seg, dtz)
 
-        if distance_available > 0.1 and u > 0.01:
+        if distance_available > 0.1:
             a_needed = -(u**2) / (2.0 * distance_available)
             safe_a = float(max(EMERGENCY_DECEL, min(0.0, a_needed)))
         else:
-            # Zero available distance or train already stopped — emergency brake
+            # Zero available distance — emergency brake
             safe_a = float(EMERGENCY_DECEL)
 
         self._log_override(proposed_a, safe_a, constraint)
