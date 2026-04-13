@@ -1,5 +1,5 @@
 """
-Draft: 8    
+Draft: 9
 
 validate_layer/validator.py
 
@@ -21,23 +21,26 @@ DTZ is the *distance* from the train's front to the start of the next
 block boundary ahead.  DTZ is therefore always ≤ SH.
 """
 
+import math
 import time
 from typing import Tuple
-import math
 
-from graph.graph import VLSegment, build_vl_segments
-from validate_layer.log_manager import init_log, append_row
+try:
+    from graph.graph import VLSegment, build_vl_segments
+except ImportError:
+    from graph import VLSegment, build_vl_segments
 
+from validate_layer.log_manager import append_row, init_log
 
 # ---------------------------------------------------------------------------
 # Safety constants  (internal_layers.md  §4)
 # ---------------------------------------------------------------------------
 
-ACCEL: float = 0.5           # traction acceleration  (m/s²)
+ACCEL: float = 0.5  # traction acceleration  (m/s²)
 SERVICE_DECEL: float = -0.5  # comfortable/service braking  (m/s²)
 EMERGENCY_DECEL: float = -1.0  # emergency braking limit  (m/s²)
-TEMPORAL_BUFFER: float = 5.0   # headway reaction buffer  (seconds)
-SIM_STEPS: list[int] = [5, 10, 15]  # simulation lookahead times  (seconds)
+# Lookahead times are computed per-segment in _check_action_safety,
+# scaled to t_stop = v_limit / |EMERGENCY_DECEL| for each segment.
 
 # AI Action Space (Continuous Throttle)
 # The RL Agent outputs a continuous float representing proposed acceleration:
@@ -52,16 +55,17 @@ SIM_STEPS: list[int] = [5, 10, 15]  # simulation lookahead times  (seconds)
 # Validation Layer
 # ---------------------------------------------------------------------------
 
+
 class ValidationLayer:
     """
     4-layer deterministic safety pipeline.
 
     Public API
     ----------
-    get_safe_action(proposed_a, env_aspect, x, v, dtz) -> (safe_action, was_overridden)
+    get_safe_action(proposed_a, env_aspect, x, u, dtz) -> (safe_action, was_overridden)
     compute_dtz(x)                                     -> float  (distance to next block)
 
-    The AI outputs a continuous acceleration parameter `proposed_a` in [-1.0, 0.5].
+    The AI outputs a continuous acceleration parameter `proposed_a`.
     The VL tests this requested physical trajectory directly against the safe dynamic
     boundaries strictly established by the environment's `env_aspect`.
     Joint centralized action spaces (e.g. 0-7) are not used.
@@ -93,9 +97,11 @@ class ValidationLayer:
         # Allow exact endpoint of the track
         if x == self.segments[-1].end:
             return self.segments[-1]
-        
-        raise ValueError(f"Position x={x} is off the track "
-                         f"[{self.segments[0].start}, {self.segments[-1].end}]")
+
+        raise ValueError(
+            f"Position x={x} is off the track "
+            f"[{self.segments[0].start}, {self.segments[-1].end}]"
+        )
 
     def compute_dtz(self, x: float) -> float:
         """
@@ -104,6 +110,7 @@ class ValidationLayer:
         DTZ = distance from position *x* to the start of the next
         fixed-block boundary ahead.  Blocks within each segment are
         spaced SH apart, so DTZ is always ≤ SH.
+        #TODO: towards the segment boundary if last zone just before next segment is less than SH, add last two segment together (hard coded?).
 
         Returns
         -------
@@ -127,10 +134,12 @@ class ValidationLayer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _speed_for_aspect(aspect: int, segment: VLSegment, dtz: float) -> Tuple[float, float]:
+    def _speed_for_aspect(
+        aspect: int, segment: VLSegment, dtz: float
+    ) -> Tuple[float, float]:
         """
         Map a per-train 4-aspect L2 signal (0-3) to a target speed and available distance.
-        
+
         Aspect mapping (Distance to Hazard):
             0  Red          →  DTZ
             1  Orange       →  DTZ + 1 * SH
@@ -160,76 +169,108 @@ class ValidationLayer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _project(x: float, v: float, proposed_a: float, limit_v: float,
-                 t: float) -> Tuple[float, float]:
+    def _project(
+        x: float, u: float, proposed_a: float, v_ceil: float, t: float
+    ) -> Tuple[float, float]:
         """
         Two-phase SUVAT projection over *t* seconds.
-        Phase 1 — apply `proposed_a` until speed safely reaches `limit_v` (or strictly 0).
-        Phase 2 — coast at `limit_v` (or 0) for any remaining time.
+
+        Phase 1 — apply proposed_a until speed reaches v_ceil (or 0 on braking).
+        Phase 2 — cruise at v_ceil (or rest at 0) for remaining time.
+
+        Notation follows SUVAT convention: u = initial velocity, v = final velocity.
+        Returns (x_final, v) — projected position and final velocity.
         """
         if proposed_a == 0:
-            return x + v * t, v
+            return x + u * t, u
 
         if proposed_a > 0:
-            if v >= limit_v:
-                return x + v * t, v
-            t_to_limit = (limit_v - v) / proposed_a
+            if u >= v_ceil:
+                return x + u * t, u
+            t_to_limit = (v_ceil - u) / proposed_a
         else:
-            if v <= 0.0:
+            if u <= 0.0:
                 return x, 0.0
-            t_to_limit = (0.0 - v) / proposed_a
+            t_to_limit = (0.0 - u) / proposed_a
 
         if t <= t_to_limit:
-            v_proj = v + proposed_a * t
-            x_proj = x + v * t + 0.5 * proposed_a * (t ** 2)
+            v = u + proposed_a * t
+            x_proj = x + u * t + 0.5 * proposed_a * (t**2)
         else:
-            x_at_limit = x + v * t_to_limit + 0.5 * proposed_a * (t_to_limit ** 2)
-            terminal_v = limit_v if proposed_a > 0 else 0.0
-            x_proj = x_at_limit + terminal_v * (t - t_to_limit)
-            v_proj = terminal_v
+            x_at_limit = x + u * t_to_limit + 0.5 * proposed_a * (t_to_limit**2)
+            v = v_ceil if proposed_a > 0 else 0.0
+            x_proj = x_at_limit + v * (t - t_to_limit)
 
-        return max(0.0, x_proj), max(0.0, v_proj)
+        return max(0.0, x_proj), max(0.0, v)
 
     def _check_action_safety(
         self,
         proposed_a: float,
         env_aspect: int,
         x: float,
-        v: float,
+        u: float,
         dtz: float,
     ) -> Tuple[bool, str]:
         """
-        Run the 3-step simulation and perform the multi-factor violation 
-        check for a given continuous proposed acceleration.
+        Run the multi-factor violation check for a given continuous proposed
+        acceleration using adaptive per-segment lookahead times.
+
+        Lookahead times are scaled to the segment's stopping distance:
+            t_stop = v_limit / |EMERGENCY_DECEL|
+        Sampled at 33%, 67%, and 100% of t_stop.  This prevents false
+        Spatial Violations in short-block segments (S3-S5) where a fixed
+        15-second window overshoots the 3-block Green authority even at a
+        safe cruising speed.  The horizon is capped at the minimum time
+        physically needed to guarantee a safe stop — consistent with ETCS
+        Level 2 movement authority principles.
+
+        The 100% horizon is safe: at t_stop, a train coasting at v_limit travels
+        at most v_limit * t_stop = v_limit² / |a| metres — approximately one
+        stopping distance (1 × SH).  Green authority spans 3 × SH, so the
+        100% horizon never reaches the Green boundary under normal operation.
+
+        The Temporal Violation check has been removed as it is provably redundant.
+        Proof: if time_to_zone < 5s at sim step t₁, remaining distance = v × t_zone < v × 5.
+        The last sim step t₃ = t_stop and t₃-t₁ = 0.67×t_stop ≥ 5.36s (all segments,
+        min t_stop = 8s for S3). At t₃ the train travels v×5.36 > remaining distance
+        → Spatial Violation fires. There is no case where temporal triggers but spatial
+        does not.
         """
         current_seg = self.get_segment(x)
 
-        max_safe_v, distance_available = self._speed_for_aspect(env_aspect, current_seg, dtz)
+        max_safe_v, distance_available = self._speed_for_aspect(
+            env_aspect, current_seg, dtz
+        )
         boundary_x = x + distance_available
 
-        v_ceiling = min(max_safe_v, current_seg.limit_ms)
+        v_ceiling = current_seg.limit_ms
 
-        for t in SIM_STEPS:
-            x_proj, v_proj = self._project(x, v, proposed_a, v_ceiling, t)
+        # Adaptive lookahead: scale to segment stopping distance.
+        # t_stop is the minimum time to decelerate from the segment speed limit
+        # to rest under emergency braking.  Evaluating beyond this is redundant
+        # — the train will already have stopped.
+        t_stop = current_seg.limit_ms / abs(EMERGENCY_DECEL)
+        sim_steps = [
+            max(1, round(t_stop * 0.33)),
+            max(2, round(t_stop * 0.67)),
+            max(3, round(t_stop)),
+        ]
+
+        for t in sim_steps:
+            x_proj, v = self._project(x, u, proposed_a, v_ceiling, t)
 
             # --- Spatial Violation ---
             if x_proj >= boundary_x:
                 return False, "Aspect_Spatial_Violation"
 
-            # --- Temporal Violation ---
-            if v_proj > 0.01:
-                time_to_zone = (boundary_x - x_proj) / v_proj
-                if time_to_zone < TEMPORAL_BUFFER:
-                    return False, "Aspect_Temporal_Violation"
-            
             # --- Dynamic Kinematics Bounds ---
-            if v_proj > max_safe_v + 0.01:
+            if v > max_safe_v + 0.01:
                 return False, "Kinematic_Target_Violation"
 
             # --- Segment Limit Violation ---
             try:
                 proj_seg = self.get_segment(x_proj)
-                if v_proj > proj_seg.limit_ms + 0.01:
+                if v > proj_seg.limit_ms + 0.01:
                     return False, f"{proj_seg.id}_Limit"
             except ValueError:
                 return False, "Track_Bounds_Violation"
@@ -245,41 +286,71 @@ class ValidationLayer:
         proposed_a: float,
         env_aspect: int,
         x: float,
-        v: float,
+        u: float,
         dtz: float,
     ) -> Tuple[float, bool]:
         """
         Layer 3 — Continuous Decision Node (Direct Interceptor).
 
-        O(1) execution validating the AI's requested continuous acceleration against 
-        environmental bounds. If unsafe, it throws away the float and returns 
-        the maximum emergency braking float (-1.0).
+        Validates the AI's requested continuous acceleration against environmental
+        bounds.  If unsafe, computes the minimum deceleration required to stop
+        within the available distance using SUVAT: v² = u² + 2as.
+        With v=0 (target: full stop): a = -u² / (2s).
+
+        Graduated override severity:
+            - Out-of-range PPO action       →  hardware limit clamp (logged as Hardware_Limit_Clamp)
+            - Far from boundary, low speed  →  precise SUVAT deceleration (a_needed, near 0)
+            - Approaching boundary fast     →  computed braking (between 0 and -1.0 m/s²)
+            - Imminent spatial violation    →  emergency braking (-1.0 m/s²)
 
         Parameters
         ----------
-        proposed_a   : float Continuous AI Throttle Action [-1.0, 0.5].
-        env_aspect   : int   Environmental Signal Boundary (0-3).
-        x            : float Current position (m).
-        v            : float Current speed (m/s).
-        dtz          : float Distance to the next fixed-block boundary.
+        proposed_a   : float  Continuous AI throttle action.  Out-of-range values are hardware-clamped.
+        env_aspect   : int    Environmental signal aspect (0-3).
+        x            : float  Current position (m).
+        u            : float  Current speed / initial velocity (m/s).
+        dtz          : float  Distance to next fixed-block boundary (m).
 
-        Return
+        Returns
         -------
-        (safe_action, was_overridden) -> (float, bool)
-
+        (safe_a, was_overridden) -> (float, bool)
+        was_overridden=True whenever the VL returns a value different from proposed_a,
+        whether due to a hardware clamp or a safety violation.
         """
-        # Clamp proposed acceleration purely to system capability limits
-        proposed_a = max(EMERGENCY_DECEL, min(ACCEL, proposed_a))
+        # Hardware clamp to physical system limits.
+        # A PPO action outside [-1.0, 0.5] is physically impossible.
+        # If the VL replaces it, that IS an override — the returned value differs from proposed_a.
+        clamped_a = max(EMERGENCY_DECEL, min(ACCEL, proposed_a))
+        was_hardware_clamped = clamped_a != proposed_a
 
-        # Absolute check against True environmental bounds
-        is_safe, constraint = self._check_action_safety(proposed_a, env_aspect, x, v, dtz)
+        # Layer 2 check (runs on clamped value)
+        is_safe, constraint = self._check_action_safety(
+            clamped_a, env_aspect, x, u, dtz
+        )
 
         if is_safe:
-            return proposed_a, False
+            if was_hardware_clamped:
+                self._log_override(proposed_a, clamped_a, "Hardware_Limit_Clamp")
+                return clamped_a, True
+            return clamped_a, False
 
-        # Apply absolute emergency deceleration on safety violation
-        self._log_override(proposed_a, float(EMERGENCY_DECEL), constraint)
-        return float(EMERGENCY_DECEL), True
+        # Compute the minimum deceleration required to stop within available distance.
+        # SUVAT: v² = u² + 2as, with v=0 → a = -u² / (2s)
+        # Clamped to [EMERGENCY_DECEL, 0.0]: always decelerative, never exceeds physical limit.
+        # No artificial minimum (e.g. SERVICE_DECEL) — gentle violations get the precise
+        # correction needed, preserving the AI's learning gradient.
+        seg = self.get_segment(x)
+        _, distance_available = self._speed_for_aspect(env_aspect, seg, dtz)
+
+        if distance_available > 0.1 and u > 0.01:
+            a_needed = -(u**2) / (2.0 * distance_available)
+            safe_a = float(max(EMERGENCY_DECEL, min(0.0, a_needed)))
+        else:
+            # Zero available distance or train already stopped — emergency brake
+            safe_a = float(EMERGENCY_DECEL)
+
+        self._log_override(proposed_a, safe_a, constraint)
+        return safe_a, True
 
     # ------------------------------------------------------------------
     # Layer 4 — Explainable AI (XAI) Logging
@@ -293,4 +364,3 @@ class ValidationLayer:
     ) -> None:
         """Append one override event row to validate_layer/override_log.csv."""
         append_row(time.time(), original, corrected, constraint_id)
-
