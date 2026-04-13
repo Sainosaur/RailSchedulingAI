@@ -36,7 +36,10 @@ class RewardConfig:
     
     # New addition: Behavioral and Operational penalties
     heartbeat_penalty: float = -0.1          # penalty applied every step to prevent stalling
-    override_penalty: float = -500.0         # penalty when the Validation Layer intervenes
+    # BUG 10 FIX: -500 wiped out ~100 station arrivals per override, making the
+    # reward signal indistinguishable from noise.  Overrides are *correct*
+    # safety behaviour; this should be a mild discouragement, not a catastrophe.
+    override_penalty: float = -5.0           # penalty when the Validation Layer intervenes
     jerk_penalty: float = -20.0               # penalty for flip-flopping actions abruptly
     energy_penalty_weight: float = -5.0      # penalty for positive traction use
     
@@ -75,7 +78,9 @@ class TrainState:
     
     # Validation / Smoothing (Defaults set to safe values so the environment won't break until we integrate them)
     overridden: bool = False
-    action_delta: int = 0  # Magnitude of change (e.g. 0 to 3)
+    # BUG 11/21 FIX: action_delta is the absolute difference between two
+    # continuous accelerations — a float in [0.0, 1.5], not a discrete int.
+    action_delta: float = 0.0  # |safe_a - last_a|  (m/s²)
     applied_traction: float = 0.0  # Positive throttle applied by agent (m/s²), defaults to 0
 
 
@@ -98,13 +103,27 @@ def _compute_progress_reward(state: TrainState, config: RewardConfig) -> float:
 
 
 def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
-    
+    """Monotonically increasing penalty as headway shrinks toward the violation
+    threshold.  Scaled from 0 at the warning threshold to -k_h at the violation
+    threshold.
+
+    BUG 8 FIX: the previous formula used a downward-opening parabola
+    (-k_h * h * (warning_thresh - h) / 1000) which was *maximally* punishing
+    at the midpoint of the warning zone and got weaker as the train approached
+    the danger zone — exactly backwards.  Replaced with a linear ramp:
+        t = 0  at warning_thresh (no penalty)
+        t = 1  at violation_thresh (full penalty = -k_h)
+    """
     warning_thresh = state.temporal_headway * config.headway_warning_multiplier
     violation_thresh = state.temporal_headway * config.headway_violation_multiplier
     h = state.headway
-    
+
     if violation_thresh < h < warning_thresh:
-        return -config.k_h * (h * (warning_thresh - h)) / 1000.0
+        zone_width = warning_thresh - violation_thresh
+        if zone_width <= 0:
+            return 0.0
+        t = (warning_thresh - h) / zone_width  # 0 → 1 as h drops to violation_thresh
+        return -config.k_h * t
     return 0.0
 
 
@@ -145,12 +164,18 @@ def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
     return config.station_reward if state.reached_new_station else 0.0 
  
 def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> float:
-    
+    """Penalty for arriving at a station outside the on-time tolerance window.
+
+    BUG 13 FIX: previously always returned 0 because scheduled/actual arrival
+    times were never set by the environment.  The environment now passes
+    actual_arrival_time=self.time and scheduled_arrival_time computed from
+    the expected journey time at lead_train_speed. 
+    """
     if not state.reached_new_station:
         return 0.0
     if state.scheduled_arrival_time is None or state.actual_arrival_time is None:
         return 0.0
-    
+
     deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
     excess = max(0.0, deviation - config.punctuality_tolerance)
     return -config.punctuality_factor * excess

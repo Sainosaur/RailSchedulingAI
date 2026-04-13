@@ -156,8 +156,12 @@ class ValidationLayer:
         else:
             distance_available = dtz + (3 * segment.spatial_headway)
 
-        a_comfort = abs(SERVICE_DECEL)
-        v_dynamic = math.sqrt(2 * a_comfort * max(0.0, distance_available))
+        # BUG 4/5 FIX: Use EMERGENCY_DECEL (1.0 m/s²) — the train's actual
+        # braking capability — not SERVICE_DECEL (0.5 m/s²).  Using 0.5 made
+        # the VL compute a safe-speed ceiling only half what the train can
+        # actually achieve, causing spurious overrides throughout training.
+        a_brake = abs(EMERGENCY_DECEL)
+        v_dynamic = math.sqrt(2 * a_brake * max(0.0, distance_available))
 
         # Output the minimum of the dynamically derived speed and the segment speed limit
         target_v = min(v_dynamic, segment.limit_ms)
@@ -186,7 +190,9 @@ class ValidationLayer:
 
         if proposed_a > 0:
             if u >= v_ceil:
-                return x + u * t, u
+                # BUG 6 FIX: coast at the ceiling, not at u (which may be
+                # above v_ceil due to a prior segment with a higher limit).
+                return x + v_ceil * t, v_ceil 
             t_to_limit = (v_ceil - u) / proposed_a
         else:
             if u <= 0.0:
@@ -201,7 +207,11 @@ class ValidationLayer:
             v = v_ceil if proposed_a > 0 else 0.0
             x_proj = x_at_limit + v * (t - t_to_limit)
 
-        return max(0.0, x_proj), max(0.0, v)
+        # BUG 19 FIX: do not clamp x_proj to 0.  A projected position going
+        # negative is physically impossible in normal operation; if it occurs
+        # it indicates a numerical edge case that should surface as a
+        # Track_Bounds_Violation via get_segment(), not be silently hidden.
+        return x_proj, max(0.0, v)
 
     def _check_action_safety(
         self,
@@ -249,15 +259,29 @@ class ValidationLayer:
         # t_stop is the minimum time to decelerate from the segment speed limit
         # to rest under emergency braking.  Evaluating beyond this is redundant
         # — the train will already have stopped.
+        # BUG 17 FIX: use floor() not round(); round() can produce t > t_stop
+        # (e.g. round(8.5) = 9 when t_stop=8.33), projecting past the safe
+        # stop horizon.
         t_stop = current_seg.limit_ms / abs(EMERGENCY_DECEL)
         sim_steps = [
-            max(1, round(t_stop * 0.33)),
-            max(2, round(t_stop * 0.67)),
-            max(3, round(t_stop)),
+            max(1, math.floor(t_stop * 0.33)),
+            max(2, math.floor(t_stop * 0.67)),
+            max(3, math.floor(t_stop)),
         ]
 
         for t in sim_steps:
             x_proj, v = self._project(x, u, proposed_a, v_ceiling, t)
+
+            # BUG 7 FIX: update v_ceiling after each projection step so that
+            # if the train crosses into a slower segment the remaining
+            # projections use the tighter limit.  This prevents the validator
+            # from modelling the train as coasting at the old (higher) ceiling
+            # through a segment with a lower speed limit.
+            try:
+                proj_seg = self.get_segment(x_proj)
+                v_ceiling = min(v_ceiling, proj_seg.limit_ms)
+            except ValueError:
+                return False, "Track_Bounds_Violation"
 
             # --- Spatial Violation ---
             if x_proj >= boundary_x:
@@ -268,12 +292,8 @@ class ValidationLayer:
                 return False, "Kinematic_Target_Violation"
 
             # --- Segment Limit Violation ---
-            try:
-                proj_seg = self.get_segment(x_proj)
-                if v > proj_seg.limit_ms + 0.01:
-                    return False, f"{proj_seg.id}_Limit"
-            except ValueError:
-                return False, "Track_Bounds_Violation"
+            if v > proj_seg.limit_ms + 0.01:
+                return False, f"{proj_seg.id}_Limit"
 
         return True, ""
 

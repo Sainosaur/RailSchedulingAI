@@ -111,26 +111,27 @@ async def trains():
     return {"trains": "Not Implemented"}
 
 
-# TODO
+# BUG 15 FIX: Wire up the kill/restore endpoints directly to the
+# simulation runner instead of just flipping a cosmetic 'KILLED' flag.
 @app.post("/api/dashboard/kill/kill")
 async def kill_system():
     global KILLED
     KILLED = True
-    return {"killed": KILLED, "reason": "Not Implemented"}
+    await simulation_runner.stop()
+    return {"killed": KILLED, "reason": "Simulation stopped by kill switch."}
 
 
-# TODO
 @app.post("/api/dashboard/kill/restore")
 async def restore_system():
     global KILLED
     KILLED = False
-    return {"killed": KILLED, "reason": "Not Implemented"}
+    await simulation_runner.start()
+    return {"killed": KILLED, "reason": "Simulation restored."}
 
 
-# TODO
 @app.get("/api/dashboard/kill")
 async def system_status():
-    return {"killed": KILLED, "reason": "Not Implemented"}
+    return {"killed": KILLED, "reason": ""}
 
 
 # TODO

@@ -199,11 +199,20 @@ class ModernizedLine104(gym.Env):
         # ----- 4. Station arrival check -----
         reached_new_station = False
         next_st_idx = self.last_station_idx + 1
+        scheduled_arrival_time = None
+        actual_arrival_time = None
+        
         if next_st_idx < len(self.STATIONS):
             if self.x >= self.STATIONS[next_st_idx]:
                 reached_new_station = True
                 self.last_station_idx = next_st_idx
                 self.visited_stations.add(next_st_idx)
+                
+                # BUG 13 FIX: Supply arrival times to TrainState so the
+                # punctuality penalty is actually calculated.
+                actual_arrival_time = self.time
+                dist_from_start = self.STATIONS[next_st_idx] - self.TRACK_START
+                scheduled_arrival_time = dist_from_start / self.lead_train_speed
 
         # ----- 5. Reward computation -----
         last_st_pos = self.STATIONS[self.last_station_idx]
@@ -226,6 +235,8 @@ class ModernizedLine104(gym.Env):
             speed_limit=seg.limit_ms,
             headway=headway,
             reached_new_station=reached_new_station,
+            scheduled_arrival_time=scheduled_arrival_time,
+            actual_arrival_time=actual_arrival_time,
             collision=(self.x >= self.lead_x),
             temporal_headway=seg.temporal_headway,
             overridden=overridden,

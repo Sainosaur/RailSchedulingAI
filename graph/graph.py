@@ -20,10 +20,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import networkx as net
 
-try:
-    from graph.utils.station_detail import get_station_elevation
-except ModuleNotFoundError:
-    from utils.station_detail import get_station_elevation
+# Elevations (metres, SRTM30m via opentopodata) — hardcoded to avoid live
+# HTTP calls on every import.  These are geographic constants for a fixed
+# railway line and do not need to be fetched at runtime.
+_STATION_ELEVATIONS: dict[str, float] = {
+    "Dworzec Chabówka PKP":          553.0,
+    "Dworzec Rabka-Zdrój PKP":       508.0,
+    "Przebudowa Mszana Dolna":        363.0,
+    "Dworzec PKP Tymbark":            312.0,
+    "Dworzec Limanowa PKP":           313.0,
+    "Dworzec Marcinkowice PKP":       292.0,
+    "Dworzec Nowy Sącz PKP":          292.0,
+}
 
 
 @dataclass
@@ -104,33 +112,33 @@ def graph() -> net.Graph:
 
     # Stations
     chabowka = Station(
-        "Chabówka", 0, 0.582, get_station_elevation("Dworzec Chabówka PKP"), True
+        "Chabówka", 0, 0.582, _STATION_ELEVATIONS["Dworzec Chabówka PKP"], True
     )
     rabka_zdroj = Station(
-        "Rabka-Zdrój", 1, 5.481, get_station_elevation("Dworzec Rabka-Zdrój PKP"), False
+        "Rabka-Zdrój", 1, 5.481, _STATION_ELEVATIONS["Dworzec Rabka-Zdrój PKP"], False
     )
     mszana_dolna = Station(
         "Mszana Dolna",
         2,
         14.951,
-        get_station_elevation("Przebudowa Mszana Dolna"),
+        _STATION_ELEVATIONS["Przebudowa Mszana Dolna"],
         True,
     )
     tymbark = Station(
-        "Tymbark", 3, 37.160, get_station_elevation("Dworzec PKP Tymbark"), False
+        "Tymbark", 3, 37.160, _STATION_ELEVATIONS["Dworzec PKP Tymbark"], False
     )
     limanowa = Station(
-        "Limanowa", 4, 47.017, get_station_elevation("Dworzec Limanowa PKP"), True
+        "Limanowa", 4, 47.017, _STATION_ELEVATIONS["Dworzec Limanowa PKP"], True
     )
     marcinkowice = Station(
         "Marcinkowice",
         5,
         67.394,
-        get_station_elevation("Dworzec Marcinkowice PKP"),
+        _STATION_ELEVATIONS["Dworzec Marcinkowice PKP"],
         False,
     )
     nowy_sacz = Station(
-        "Nowy Sącz", 6, 76.651, get_station_elevation("Dworzec Nowy Sącz PKP"), True
+        "Nowy Sącz", 6, 76.651, _STATION_ELEVATIONS["Dworzec Nowy Sącz PKP"], True
     )
 
     # Turning stations into an array
