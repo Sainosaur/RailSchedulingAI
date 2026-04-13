@@ -1,14 +1,16 @@
 import csv
 import os
+import sys
 from dataclasses import asdict
+from pathlib import Path
+
+# Ensure project-root imports work regardless of working directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-try:
-    from graph.graph import graph
-except ImportError:
-    from graph import graph
+from graph.graph import graph
 from validate_layer import log_manager
 from server.simulation import SimulationRunner
 

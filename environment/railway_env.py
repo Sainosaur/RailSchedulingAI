@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import gymnasium as gym
+import bisect
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -137,6 +138,9 @@ class ModernizedLine104(gym.Env):
 
         # Landslides — persist across resets; managed via public API
         self.landslides: list[Landslide] = []
+
+        # Pre-compute unified block boundaries for RBC signal calculation
+        self._all_boundaries = self._build_unified_boundaries()
 
     # ------------------------------------------------------------------
     # Gymnasium API
@@ -274,7 +278,8 @@ class ModernizedLine104(gym.Env):
         if self.render_mode == "human":
             seg = self.vl.get_segment(self.x)
             dwell = f"  [DWELL {self.lead_dwell_timer}s]" if self.lead_dwell_timer > 0 else ""
-            hz = f"  hazards={len(self.active_hazards)}" if self.active_hazards else ""
+            active_ls = [ls for ls in self.landslides if ls.active]
+            hz = f"  hazards={len(active_ls)}" if active_ls else ""
             print(
                 f"t={self.time:7.1f}s | "
                 f"x={self.x:8.1f}m | "
@@ -396,42 +401,60 @@ class ModernizedLine104(gym.Env):
             return min((self.lead_x - self.x) / self.v, 10_000.0)
         return 10_000.0
 
+    def _build_unified_boundaries(self) -> list[float]:
+        """Build a sorted, deduplicated list of every fixed-block boundary
+        on the track.  Two consecutive entries define one block.
+        Called once in __init__; the result is cached in self._all_boundaries.
+        """
+        boundaries: set[float] = set()
+        for seg in self.vl.segments:
+            boundaries.update(seg.block_boundaries)
+        return sorted(boundaries)
+
+    def _find_block_index(self, position: float) -> int:
+        """Return the index of the block containing *position*.
+        Block *i* spans [_all_boundaries[i], _all_boundaries[i+1]).
+        Uses binary search for O(log n) performance.
+        """
+        idx = bisect.bisect_right(self._all_boundaries, position) - 1
+        return max(0, min(idx, len(self._all_boundaries) - 2))
+
     def _get_signal_aspect(self) -> int:
         """
-        Derive the 4-aspect ETCS signal.
+        Derive the 4-aspect ETCS signal using Radio Block Centre (RBC) logic.
 
-        Two restriction sources are evaluated independently; the most
-        restrictive (lowest) aspect is returned:
+        Instead of using raw continuous distance, this simulates an RBC that
+        reports which fixed block ahead is occupied.  The aspect is determined
+        by counting the number of free (unoccupied) blocks between the AI
+        train's current block and the nearest occupied block.
 
-            1. Lead train — distance keyed to current segment SH.
-            2. Active hazards — each treated as a virtual stopped train
-               at its fixed position.  Hazards behind the AI train are
-               ignored.
+        Two occupancy sources are evaluated; the most restrictive (lowest)
+        aspect is returned:
 
-        Aspect mapping (both sources use the same thresholds):
-            dist > 3 × SH  →  Green  (3)
-            dist > 2 × SH  →  Double-Yellow (2)
-            dist > 1 × SH  →  Yellow (1)
-            dist ≤ 1 × SH  →  Red    (0)
+            1. Lead train — occupies the block containing lead_x.
+            2. Active landslides — each occupies the block at its position.
+               Landslides behind the AI train are ignored.
+
+        Aspect mapping (number of free blocks between AI and obstacle):
+            3+ free blocks  →  Green  (3)
+            2 free blocks   →  Double-Yellow (2)
+            1 free block    →  Yellow (1)
+            0 free blocks   →  Red    (0)
         """
-        sh = self.vl.get_segment(self.x).spatial_headway
+        ai_block = self._find_block_index(self.x)
 
-        def _dist_to_aspect(dist: float) -> int:
-            if dist > 3 * sh:
-                return 3
-            if dist > 2 * sh:
-                return 2
-            if dist > sh:
-                return 1
-            return 0
+        # Lead train occupancy
+        lead_block = self._find_block_index(self.lead_x)
+        free_blocks = lead_block - ai_block - 1
+        aspect = max(0, min(3, free_blocks))
 
-        aspect = _dist_to_aspect(self.lead_x - self.x)
-
+        # Landslide occupancy — each active landslide ahead is a virtual
+        # stopped train; take the most restrictive signal.
         for ls in self.landslides:
-            if ls.active:
-                dist_to_ls = ls.position - self.x
-                if dist_to_ls > 0.0:
-                    aspect = min(aspect, _dist_to_aspect(dist_to_ls))
+            if ls.active and ls.position > self.x:
+                ls_block = self._find_block_index(ls.position)
+                ls_free = ls_block - ai_block - 1
+                aspect = min(aspect, max(0, min(3, ls_free)))
 
         return aspect
 

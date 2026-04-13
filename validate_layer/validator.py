@@ -243,7 +243,7 @@ class ValidationLayer:
         )
         boundary_x = x + distance_available
 
-        v_ceiling = min(max_safe_v, current_seg.limit_ms)
+        v_ceiling = current_seg.limit_ms
 
         # Adaptive lookahead: scale to segment stopping distance.
         # t_stop is the minimum time to decelerate from the segment speed limit
