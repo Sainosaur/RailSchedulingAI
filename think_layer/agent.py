@@ -35,7 +35,7 @@ def make_env(
     """
 
     def _init() -> gym.Env:
-        env = ModernizedLine104(lead_train_speed=lead_train_speed)
+        env = ModernizedLine104(lead_train_speed=lead_train_speed, training_mode=True)
         # Wrap in TimeLimit for episode truncation
         env = gym.wrappers.TimeLimit(env, max_episode_steps=max_episode_steps)
         env = Monitor(env)

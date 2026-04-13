@@ -83,7 +83,17 @@ class ModernizedLine104(gym.Env):
     # --- Lead train ---
     LEAD_SERVICE_DECEL: float = 0.5   # braking magnitude for station stop (m/s²)
     LEAD_ACCEL: float = 0.5           # traction magnitude for acceleration (m/s²)
-    STATION_DWELL_TIME: int = 30      # steps the lead train waits at each station
+    STATION_DWELL_TIME: int = 30      # steps the lead train waits at each station (deterministic)
+
+    # --- Lead train randomisation (training mode only) ---
+    LEAD_SPEED_MIN: float = 15.0      # m/s
+    LEAD_SPEED_MAX: float = 25.0      # m/s
+    DWELL_MIN: int = 20               # steps
+    DWELL_MAX: int = 60               # steps
+    SLOWDOWN_SPEED_MIN: float = 5.0   # m/s
+    SLOWDOWN_SPEED_MAX: float = 12.0  # m/s
+    SLOWDOWN_DURATION_MIN: int = 30   # steps
+    SLOWDOWN_DURATION_MAX: int = 120  # steps
 
     # --- Landslides ---
     MAX_LANDSLIDES: int = 3
@@ -102,10 +112,13 @@ class ModernizedLine104(gym.Env):
         self,
         lead_train_speed: float = 20.0,
         render_mode: str | None = None,
+        training_mode: bool = False,
     ):
         super().__init__()
         self.render_mode = render_mode
         self.lead_train_speed = lead_train_speed
+        self._base_lead_speed = lead_train_speed  # preserved for reset in sim mode
+        self.training_mode = training_mode
 
         self.vl = ValidationLayer()
 
@@ -139,8 +152,15 @@ class ModernizedLine104(gym.Env):
         # Landslides — persist across resets; managed via public API
         self.landslides: list[Landslide] = []
 
+<<<<<<< HEAD
         # Pre-compute unified block boundaries for RBC signal calculation
         self._all_boundaries = self._build_unified_boundaries()
+=======
+        # Lead train slowdown state — set via set_lead_slowdown() or scheduled in training
+        self.lead_slow_until: int = 0    # step_count at which slowdown ends
+        self.lead_slow_speed: float = 0.0  # target speed during slowdown
+        self._scheduled_slowdowns: list[tuple[int, int, float]] = []  # (activate_at, duration, speed)
+>>>>>>> 415f571 (Changes...)
 
     # ------------------------------------------------------------------
     # Gymnasium API
@@ -159,10 +179,24 @@ class ModernizedLine104(gym.Env):
         self.step_count = 0
 
         # Lead train — starts 2 km ahead, already at cruise speed
+        if self.training_mode:
+            self.lead_train_speed = float(self.np_random.uniform(
+                self.LEAD_SPEED_MIN, self.LEAD_SPEED_MAX
+            ))
+        else:
+            self.lead_train_speed = self._base_lead_speed
+
         self.lead_x = self.TRACK_START + 2000.0
         self.lead_v = self.lead_train_speed
         self.lead_station_idx = 0
         self.lead_dwell_timer = 0
+
+        # Slowdown state
+        self.lead_slow_until = 0
+        self.lead_slow_speed = 0.0
+        self._scheduled_slowdowns = []
+        if self.training_mode:
+            self._schedule_lead_slowdowns()
 
         self._update_dtz()
         return self._get_obs(), {}
@@ -278,8 +312,12 @@ class ModernizedLine104(gym.Env):
         if self.render_mode == "human":
             seg = self.vl.get_segment(self.x)
             dwell = f"  [DWELL {self.lead_dwell_timer}s]" if self.lead_dwell_timer > 0 else ""
+<<<<<<< HEAD
             active_ls = [ls for ls in self.landslides if ls.active]
             hz = f"  hazards={len(active_ls)}" if active_ls else ""
+=======
+            hz = f"  landslides={len(self.landslides)}" if self.landslides else ""
+>>>>>>> 415f571 (Changes...)
             print(
                 f"t={self.time:7.1f}s | "
                 f"x={self.x:8.1f}m | "
@@ -322,13 +360,32 @@ class ModernizedLine104(gym.Env):
         target_x = self.STATIONS[next_lead_st]
         dist = target_x - self.lead_x
 
+        # Activate any scheduled slowdowns
+        remaining = []
+        for activate_at, duration, speed in self._scheduled_slowdowns:
+            if self.step_count >= activate_at:
+                self.lead_slow_until = self.step_count + duration
+                self.lead_slow_speed = speed
+            else:
+                remaining.append((activate_at, duration, speed))
+        self._scheduled_slowdowns = remaining
+
+        # Cruise target — reduced during an active slowdown
+        cruise_target = (
+            self.lead_slow_speed
+            if self.step_count < self.lead_slow_until
+            else self.lead_train_speed
+        )
+
         # Stopping distance under service braking: s = v² / (2·a)
         stopping_dist = (self.lead_v ** 2) / (2.0 * self.LEAD_SERVICE_DECEL)
 
         if dist <= stopping_dist:
-            lead_a = -self.LEAD_SERVICE_DECEL   # -0.5 m/s²
-        elif self.lead_v < self.lead_train_speed:
-            lead_a = self.LEAD_ACCEL             # +0.5 m/s²
+            lead_a = -self.LEAD_SERVICE_DECEL
+        elif self.lead_v < cruise_target:
+            lead_a = self.LEAD_ACCEL
+        elif self.lead_v > cruise_target:
+            lead_a = -self.LEAD_SERVICE_DECEL
         else:
             lead_a = 0.0
 
@@ -345,7 +402,39 @@ class ModernizedLine104(gym.Env):
             self.lead_x = target_x
             self.lead_v = 0.0
             self.lead_station_idx = next_lead_st
-            self.lead_dwell_timer = self.STATION_DWELL_TIME
+            self.lead_dwell_timer = (
+                int(self.np_random.integers(self.DWELL_MIN, self.DWELL_MAX + 1))
+                if self.training_mode
+                else self.STATION_DWELL_TIME
+            )
+
+    # ------------------------------------------------------------------
+    # Lead train slowdown — public API for live-demo use
+    # ------------------------------------------------------------------
+
+    def set_lead_slowdown(self, speed: float, duration: int) -> None:
+        """Immediately slow the lead train to *speed* m/s for *duration* steps.
+
+        Intended for frontend-triggered demo scenarios.
+        Speed is clamped to [0, lead_train_speed].
+        """
+        self.lead_slow_until = self.step_count + duration
+        self.lead_slow_speed = max(0.0, min(float(speed), self.lead_train_speed))
+
+    def _schedule_lead_slowdowns(self) -> None:
+        """Pre-schedule 1–2 random slowdowns for the episode (training only)."""
+        n = int(self.np_random.integers(1, 3))
+        bands = [(300, 1200), (1500, 3000)]
+        for i in range(n):
+            lo, hi = bands[i % len(bands)]
+            activate_at = int(self.np_random.integers(lo, hi + 1))
+            duration = int(self.np_random.integers(
+                self.SLOWDOWN_DURATION_MIN, self.SLOWDOWN_DURATION_MAX + 1
+            ))
+            speed = float(self.np_random.uniform(
+                self.SLOWDOWN_SPEED_MIN, self.SLOWDOWN_SPEED_MAX
+            ))
+            self._scheduled_slowdowns.append((activate_at, duration, speed))
 
     # ------------------------------------------------------------------
     # Landslide control — public API for live-demo use
