@@ -2,4 +2,4 @@
 2/ make better model of ideal front train
 3/ verify code regarding punctuality
 4/ justify the headway variable in reward function
-5/update docs and unit tests
+5/ update docs and unit tests
