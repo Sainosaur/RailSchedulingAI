@@ -67,7 +67,7 @@ def evaluate(
 
     # Build evaluation environment
     def _make_eval_env():
-        env = ModernizedLine104(lead_train_speed=config.lead_train_speed)
+        env = ModernizedLine104(lead_train_speed=config.lead_train_speed, training_mode=False)
         return env
 
     venv = DummyVecEnv([_make_eval_env])

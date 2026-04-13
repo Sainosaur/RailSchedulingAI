@@ -18,7 +18,7 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 500_000
+    total_timesteps: int = 5_000_000
     learning_rate: float = 3e-4
     n_steps: int = 2048          # rollout buffer size per update
     batch_size: int = 64         # SGD minibatch size
@@ -36,7 +36,7 @@ class TrainConfig:
     value_net: list[int] = field(default_factory=lambda: [64, 64])
 
     # ── Environment ──────────────────────────────────────────────────
-    lead_train_speed: float = 20.0  # m/s — fixed for Phase 1
+    lead_train_speed: float = 20.0  # m/s — midpoint; randomised per episode in training_mode
     max_episode_steps: int = 15_000  # truncation safety net
 
     # ── Normalisation ────────────────────────────────────────────────
