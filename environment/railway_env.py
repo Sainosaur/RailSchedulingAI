@@ -152,15 +152,13 @@ class ModernizedLine104(gym.Env):
         # Landslides — persist across resets; managed via public API
         self.landslides: list[Landslide] = []
 
-<<<<<<< HEAD
-        # Pre-compute unified block boundaries for RBC signal calculation
-        self._all_boundaries = self._build_unified_boundaries()
-=======
         # Lead train slowdown state — set via set_lead_slowdown() or scheduled in training
         self.lead_slow_until: int = 0    # step_count at which slowdown ends
         self.lead_slow_speed: float = 0.0  # target speed during slowdown
         self._scheduled_slowdowns: list[tuple[int, int, float]] = []  # (activate_at, duration, speed)
->>>>>>> 415f571 (Changes...)
+
+        # Pre-compute unified block boundaries for RBC signal calculation
+        self._all_boundaries = self._build_unified_boundaries()
 
     # ------------------------------------------------------------------
     # Gymnasium API
@@ -312,12 +310,8 @@ class ModernizedLine104(gym.Env):
         if self.render_mode == "human":
             seg = self.vl.get_segment(self.x)
             dwell = f"  [DWELL {self.lead_dwell_timer}s]" if self.lead_dwell_timer > 0 else ""
-<<<<<<< HEAD
             active_ls = [ls for ls in self.landslides if ls.active]
-            hz = f"  hazards={len(active_ls)}" if active_ls else ""
-=======
-            hz = f"  landslides={len(self.landslides)}" if self.landslides else ""
->>>>>>> 415f571 (Changes...)
+            hz = f"  landslides={len(active_ls)}" if active_ls else ""
             print(
                 f"t={self.time:7.1f}s | "
                 f"x={self.x:8.1f}m | "
