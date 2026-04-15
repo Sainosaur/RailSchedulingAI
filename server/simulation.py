@@ -101,19 +101,30 @@ class SimulationRunner:
         
         # Read direct from raw_env for UN-NORMALISED raw stats
         segment = raw_env.vl.get_segment(raw_env.x)
+        progress = (raw_env.x - segment.start) / (segment.end - segment.start)
         next_st_idx = min(raw_env.last_station_idx + 1, len(raw_env.STATIONS) - 1)
         next_st_pos = raw_env.STATIONS[next_st_idx]
+        
+        signal_aspect = raw_env._get_signal_aspect()
+        if signal_aspect == 3:
+            signal = "green"
+        elif signal_aspect == 2:
+            signal = "double-amber"
+        elif signal_aspect == 1:
+            signal = "amber"
+        else:
+            signal = "red"
         
         state = {
             "type": "sim_update",
             "step": raw_env.step_count,
             "time": raw_env.time,
             "ai": {
-                "position": float(raw_env.x),
+                "progress": float(progress),
                 "speed_ms": float(raw_env.v),
                 "speed_kmh": float(raw_env.v) * 3.6,
                 "dtz": float(raw_env.dtz),
-                "signal_aspect": int(raw_env._get_signal_aspect()),
+                "signal": signal,
                 "dist_to_next_station": float(next_st_pos - raw_env.x),
                 "speed_limit_ms": float(segment.limit_ms),
                 "headway": float((raw_env.lead_x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0),
@@ -155,19 +166,30 @@ class SimulationRunner:
                     raw_env = raw_env.env
                     
                 segment = raw_env.vl.get_segment(raw_env.x)
+                progress = (raw_env.x - segment.start) / (segment.end - segment.start)
                 next_st_idx = min(raw_env.last_station_idx + 1, len(raw_env.STATIONS) - 1)
                 next_st_pos = raw_env.STATIONS[next_st_idx]
+                
+                signal_aspect = info.get("aspect", raw_env._get_signal_aspect())
+                if signal_aspect == 3:
+                    signal = "green"
+                elif signal_aspect == 2:
+                    signal = "double-amber"
+                elif signal_aspect == 1:
+                    signal = "amber"
+                else:
+                    signal = "red"
                 
                 state = {
                     "type": "sim_update",
                     "step": raw_env.step_count,
                     "time": info.get("time", 0.0),
                     "ai": {
-                        "position": float(raw_env.x),
+                        "progress": float(progress),
                         "speed_ms": float(raw_env.v),
                         "speed_kmh": float(raw_env.v) * 3.6,
                         "dtz": float(raw_env.dtz),
-                        "signal_aspect": int(info.get("aspect", raw_env._get_signal_aspect())),
+                        "signal": signal,
                         "dist_to_next_station": float(next_st_pos - raw_env.x),
                         "speed_limit_ms": float(segment.limit_ms),
                         "headway": float((raw_env.lead_x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0),

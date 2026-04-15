@@ -105,46 +105,6 @@ async def log():
         return {"logs": list(reader)}
 
 
-# Trains list endpoint
-@app.websocket("/ws/dashboard/trains")
-async def trains(ws: WebSocket):
-    await manager.connect(ws)
-    try:
-        if simulation_runner.venv is None:
-            await ws.send_json({"trains": None})
-        else:
-            raw_env = _get_raw_env()
-            segment = raw_env.vl.get_segment(raw_env.x)
-            next_st_idx = min(raw_env.last_station_idx + 1, len(raw_env.STATIONS) - 1)
-            next_st_pos = raw_env.STATIONS[next_st_idx]
-            headway = float((raw_env.lead_x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0)
-            
-            await ws.send_json({
-                "type": "trains_init",
-                "trains": {
-                    "ai": {
-                        "position": float(raw_env.x),
-                        "speed_ms": float(raw_env.v),
-                        "speed_kmh": float(raw_env.v) * 3.6,
-                        "dtz": float(raw_env.dtz),
-                        "signal_aspect": int(raw_env._get_signal_aspect()),
-                        "dist_to_next_station": float(next_st_pos - raw_env.x),
-                        "headway": headway,
-                        "speed_limit_ms": float(segment.limit_ms),
-                        "segment": segment.id,
-                    },
-                    "lead": {
-                        "position": float(raw_env.lead_x),
-                        "speed_ms": float(raw_env.lead_train_speed),
-                    }
-                }
-            })
-            
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        manager.disconnect(ws)
-
 
 # BUG 15 FIX: Wire up the kill/restore endpoints directly to the
 # simulation runner instead of just flipping a cosmetic 'KILLED' flag.
@@ -191,6 +151,51 @@ async def graph_updates(websocket: WebSocket):
 async def sim_updates(websocket: WebSocket):
     await manager.connect(websocket)
     try:
+        if simulation_runner.venv is not None:
+            raw_env = _get_raw_env()
+            segment = raw_env.vl.get_segment(raw_env.x)
+            progress = (raw_env.x - segment.start) / (segment.end - segment.start)
+            next_st_idx = min(raw_env.last_station_idx + 1, len(raw_env.STATIONS) - 1)
+            next_st_pos = raw_env.STATIONS[next_st_idx]
+            headway = float((raw_env.lead_x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0)
+            signal_aspect = raw_env._get_signal_aspect()
+            if signal_aspect == 3:
+                 signal = "green"
+            elif signal_aspect == 2:
+                signal = "double-amber"
+            elif signal_aspect == 1:
+                signal = "amber"
+            else:
+                signal = "red"
+            await websocket.send_json({
+                "type": "sim_update",
+                "step": raw_env.step_count,
+                "time": raw_env.time,
+                "ai": {
+                    "progress": float(progress),
+                    "speed_ms": float(raw_env.v),
+                    "speed_kmh": float(raw_env.v) * 3.6,
+                    "dtz": float(raw_env.dtz),
+                    "signal": signal,
+                    "dist_to_next_station": float(next_st_pos - raw_env.x),
+                    "speed_limit_ms": float(segment.limit_ms),
+                    "headway": headway,
+                    "segment": segment.id,
+                },
+                "lead": {
+                    "position": float(raw_env.lead_x),
+                    "speed_ms": float(raw_env.lead_train_speed),
+                    "dwell_timer": 0,
+                },
+                "override": {
+                    "active": False,
+                    "proposed_a": 0.0,
+                    "safe_a": 0.0,
+                },
+                "stations_visited": list(raw_env.visited_stations),
+                "done": False,
+            })
+
         while True:
             await websocket.receive_text()  # keep connection alive
     except WebSocketDisconnect:

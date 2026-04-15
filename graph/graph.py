@@ -228,7 +228,7 @@ def build_vl_segments() -> list[VLSegment]:
 
         segments.append(
             VLSegment(
-                id=f"S{edge.position}",
+                id=edge.position,
                 start=float(start_m),
                 end=float(end_m),
                 limit_ms=limit_ms,
