@@ -48,8 +48,9 @@ class ConnectionManager:
 
 app = FastAPI()
 g = graph()
-manager = ConnectionManager()
-simulation_runner = SimulationRunner(broadcast_callback=manager.broadcast)
+graph_manager = ConnectionManager()
+sim_manager = ConnectionManager()
+simulation_runner = SimulationRunner(broadcast_callback=sim_manager.broadcast)
 
 KILLED = False  # Temporary placeholder for /kill endpoints
 origins = [
@@ -82,7 +83,7 @@ async def hazard(segmentPosition: int, block: int, status: bool):
     edge = g.get_edge_data(start.name, end.name)
     edge["data"].block_boundaries[block].hazard = status
     edge["data"].hazard = any(b.hazard for b in edge["data"].block_boundaries)
-    await manager.broadcast({"type": "graph_update", "graph": serialise_graph(g)})
+    await graph_manager.broadcast({"type": "graph_update", "graph": serialise_graph(g)})
     return {"segment": asdict(edge["data"]), "success": edge["data"].block_boundaries[block].hazard == status}
 
 
@@ -138,18 +139,18 @@ async def recommendations():
 # Web Sockets
 @app.websocket("/ws/graph")
 async def graph_updates(websocket: WebSocket):
-    await manager.connect(websocket)
+    await graph_manager.connect(websocket)
     await websocket.send_json({"type": "graph_update", "graph": serialise_graph(g)})
     try:
         while True:
             await websocket.receive_text()  # keep connection alive
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        graph_manager.disconnect(websocket)
 
 
 @app.websocket("/ws/sim")
 async def sim_updates(websocket: WebSocket):
-    await manager.connect(websocket)
+    await sim_manager.connect(websocket)
     try:
         if simulation_runner.venv is not None:
             raw_env = _get_raw_env()
@@ -167,6 +168,10 @@ async def sim_updates(websocket: WebSocket):
                 signal = "amber"
             else:
                 signal = "red"
+                
+            lead_segment = raw_env.vl.get_segment(raw_env.lead_x)
+            lead_progress = (raw_env.lead_x - lead_segment.start) / (lead_segment.end - lead_segment.start)
+            
             await websocket.send_json({
                 "type": "sim_update",
                 "step": raw_env.step_count,
@@ -183,8 +188,11 @@ async def sim_updates(websocket: WebSocket):
                     "segment": segment.id,
                 },
                 "lead": {
-                    "position": float(raw_env.lead_x),
+                    "progress": float(lead_progress),
                     "speed_ms": float(raw_env.lead_train_speed),
+                    "speed_kmh": float(raw_env.lead_train_speed) * 3.6,
+                    "signal": "green",
+                    "segment": lead_segment.id,
                     "dwell_timer": 0,
                 },
                 "override": {
@@ -195,11 +203,11 @@ async def sim_updates(websocket: WebSocket):
                 "stations_visited": list(raw_env.visited_stations),
                 "done": False,
             })
-
+            await asyncio.sleep(0.5)
         while True:
             await websocket.receive_text()  # keep connection alive
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        sim_manager.disconnect(websocket)
 
 
 # Simulation Endpoints

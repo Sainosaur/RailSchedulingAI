@@ -23,6 +23,7 @@ import networkx as net
 # Elevations (metres, SRTM30m via opentopodata) — hardcoded to avoid live
 # HTTP calls on every import.  These are geographic constants for a fixed
 # railway line and do not need to be fetched at runtime.
+# TODO: Revert this hardcoding and restore the live REST API calls for elevation data
 _STATION_ELEVATIONS: dict[str, float] = {
     "Dworzec Chabówka PKP":          553.0,
     "Dworzec Rabka-Zdrój PKP":       508.0,

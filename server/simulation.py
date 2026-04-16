@@ -114,6 +114,9 @@ class SimulationRunner:
             signal = "amber"
         else:
             signal = "red"
+            
+        lead_segment = raw_env.vl.get_segment(raw_env.lead_x)
+        lead_progress = (raw_env.lead_x - lead_segment.start) / (lead_segment.end - lead_segment.start)
         
         state = {
             "type": "sim_update",
@@ -131,8 +134,11 @@ class SimulationRunner:
                 "segment": segment.id,
             },
             "lead": {
-                "position": float(raw_env.lead_x),
+                "progress": float(lead_progress),
                 "speed_ms": float(raw_env.lead_train_speed),
+                "speed_kmh": float(raw_env.lead_train_speed) * 3.6,
+                "signal": "green",
+                "segment": lead_segment.id,
                 "dwell_timer": 0,
             },
             "override": {
@@ -180,6 +186,9 @@ class SimulationRunner:
                 else:
                     signal = "red"
                 
+                lead_segment = raw_env.vl.get_segment(raw_env.lead_x)
+                lead_progress = (raw_env.lead_x - lead_segment.start) / (lead_segment.end - lead_segment.start)
+                
                 state = {
                     "type": "sim_update",
                     "step": raw_env.step_count,
@@ -196,8 +205,11 @@ class SimulationRunner:
                         "segment": info.get("segment", segment.id),
                     },
                     "lead": {
-                        "position": float(raw_env.lead_x),
+                        "progress": float(lead_progress),
                         "speed_ms": float(raw_env.lead_train_speed),
+                        "speed_kmh": float(raw_env.lead_train_speed) * 3.6,
+                        "signal": "green",
+                        "segment": lead_segment.id,
                         "dwell_timer": 0,
                     },
                     "override": {
