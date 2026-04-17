@@ -13,6 +13,8 @@ physics update runs.
 import sys
 from pathlib import Path
 
+import math
+
 import gymnasium as gym
 import numpy as np
 
@@ -44,13 +46,14 @@ class ModernizedLine104(gym.Env):
 
     metadata = {"render_modes": ["human"]}
     
-    # --- Lead train behaviour --- ﹀
-    LEAD_DWELL_TIME: int = 30  # seconds stopped at each station } ﹀
+    # --- Lead train behaviour ---
+    LEAD_DWELL_RANGE: tuple[int, int] = (15, 60)  # random dwell bounds (seconds)
+    LEAD_SERVICE_DECEL: float = -0.5  # comfortable service braking for lead (m/s²)
 
     # --- Physics ---
     DT: float = 1.0      # timestep  (seconds)
     ACCEL: float = 0.5    # traction acceleration  (m/s²)
-    DECEL: float = -1.0   # service braking  (m/s²)
+    DECEL: float = -1.0   # emergency braking  (m/s²)
 
     # --- Episode limits ---
     MAX_STEPS: int = 10_000  # ~2.8 hours simulated at DT=1.0
@@ -105,6 +108,11 @@ class ModernizedLine104(gym.Env):
         self.visited_stations: set[int] = set()
         self.last_a: float = 0.0  # Track the last *executed* acceleration for jerk calculation
         self.step_count: int = 0
+        self.lead_stalled: bool = False   # external stall command (frontend)
+        self.lead_held: bool = False      # external hold at station (frontend)
+
+        # Pre-compute ideal arrival times for punctuality tracking
+        self._ideal_schedule = self._compute_ideal_schedule()
 
     # ------------------------------------------------------------------
     # Gymnasium API
@@ -125,8 +133,11 @@ class ModernizedLine104(gym.Env):
 
         # Lead train begins ~2 km ahead
         self.lead_x = self.TRACK_START + 2000.0
-        self.lead_v = self.lead_train_speed  # current speed ﹀
-        self.landslides = [] # Clear landslides on reset ﹀
+        lead_seg = self.vl.get_segment(self.lead_x)
+        self.lead_v = lead_seg.limit_ms   # ideal train cruises at segment limit
+        self.lead_stalled = False
+        self.lead_held = False
+        self.landslides = []
         self._update_dtz()
 
         return self._get_obs(), {"overridden": False} # ﹀
@@ -211,34 +222,8 @@ class ModernizedLine104(gym.Env):
         self.time += self.DT
         self.step_count += 1
 
-        # ----- 3. Lead train state machine ----- ﹀
-        if self.lead_dwell_timer > 0:
-            self.lead_dwell_timer -= 1
-            if self.lead_dwell_timer == 0:
-                # Only depart if not at the final station
-                if self.lead_station_idx < len(self.STATIONS) - 1:
-                    self.lead_v = self.lead_train_speed
-                    self.lead_station_idx += 1
-                # else: final station — lead_v stays 0, train parks permanently
-                else:
-                    # Final station dwell complete — pull forward to TRACK_END
-                    self.lead_x = self.STATIONS[-1] + 34.7  # one S5 block ahead
-                    self.lead_v = 0.0
-
-        elif self.lead_station_idx < len(self.STATIONS):  # ← restored to original
-            next_station_pos = self.STATIONS[self.lead_station_idx]
-            dist_to_station = next_station_pos - self.lead_x
-            braking_distance = (self.lead_v ** 2) / (2 * abs(self.DECEL))
-
-            if dist_to_station <= braking_distance and self.lead_v > 0.0:
-                self.lead_v = max(0.0, self.lead_v + self.DECEL * self.DT)
-                self.lead_x += self.lead_v * self.DT
-                if self.lead_x >= next_station_pos or self.lead_v == 0.0:
-                    self.lead_x = next_station_pos
-                    self.lead_v = 0.0
-                    self.lead_dwell_timer = self.LEAD_DWELL_TIME
-            else:
-                self.lead_x += self.lead_v * self.DT
+        # ----- 3. Lead train (ideal, respects segment speed limits) -----
+        self._advance_lead_train()
         self._update_dtz()
 
         # ----- 4. Station arrival check -----
@@ -256,8 +241,7 @@ class ModernizedLine104(gym.Env):
                 # BUG 13 FIX: Supply arrival times to TrainState so the
                 # punctuality penalty is actually calculated.
                 actual_arrival_time = self.time
-                dist_from_start = self.STATIONS[next_st_idx] - self.TRACK_START
-                scheduled_arrival_time = dist_from_start / self.lead_train_speed
+                scheduled_arrival_time = self._ideal_schedule[next_st_idx]
 
         # ----- 5. Reward computation -----
         last_st_pos = self.STATIONS[self.last_station_idx]
@@ -375,7 +359,148 @@ class ModernizedLine104(gym.Env):
         if self.v > 0.01:
             return (self.lead_x - self.x) / self.v
         return 9999.0
-    
+
+    def _compute_ideal_schedule(self) -> list[float]:
+        """Pre-compute ideal travel times to each station (seconds).
+
+        Uses segment speed limits with no dwell — the fastest physically
+        possible arrival at each station.  Used by the punctuality reward.
+        """
+        times = [0.0]
+        cumulative = 0.0
+        for seg in self.vl.segments:
+            dist = seg.end - seg.start
+            cumulative += dist / seg.limit_ms
+            times.append(cumulative)
+        return times
+
+    def _advance_lead_train(self) -> None:
+        """Advance the lead train one timestep with realistic physics.
+
+        The lead train is an *ideal* driver: it targets the segment
+        speed limit, brakes smoothly for station stops and speed-limit
+        transitions, and accelerates at the standard traction rate.
+
+        External controls:
+            lead_stalled  — forces emergency braking to a full stop
+            lead_held     — freezes the dwell timer at a station
+        """
+        # --- Stall override: emergency brake to stop ---
+        if self.lead_stalled:
+            if self.lead_v > 0:
+                self.lead_v = max(0.0, self.lead_v + self.DECEL * self.DT)
+                self.lead_x += self.lead_v * self.DT
+            return
+
+        # --- Dwelling at station ---
+        if self.lead_dwell_timer > 0:
+            if not self.lead_held:
+                self.lead_dwell_timer -= 1
+            if self.lead_dwell_timer == 0 and not self.lead_held:
+                if self.lead_station_idx < len(self.STATIONS) - 1:
+                    self.lead_station_idx += 1
+                else:
+                    # Final station — pull forward one block and park
+                    self.lead_x = self.STATIONS[-1] + 34.7
+                    self.lead_v = 0.0
+                    self.lead_station_idx = len(self.STATIONS)  # mark done
+            return
+
+        # --- Past all stations ---
+        if self.lead_station_idx >= len(self.STATIONS):
+            return
+
+        # --- Moving: determine speed ceiling from constraints ---
+        seg = self.vl.get_segment(self.lead_x)
+        seg_limit = seg.limit_ms
+        brake_a = abs(self.LEAD_SERVICE_DECEL)
+
+        # Constraint 1: must be able to stop at next station
+        d_station = max(0.01, self.STATIONS[self.lead_station_idx] - self.lead_x)
+        v_ceil_station = math.sqrt(2 * brake_a * d_station)
+
+        # Constraint 2: must be able to slow for a slower upcoming segment
+        v_ceil_seg = float('inf')
+        seg_idx = self.vl.segments.index(seg)
+        if seg_idx + 1 < len(self.vl.segments):
+            next_seg = self.vl.segments[seg_idx + 1]
+            if next_seg.limit_ms < seg_limit:
+                d_boundary = max(0.01, seg.end - self.lead_x)
+                v_ceil_seg = math.sqrt(
+                    next_seg.limit_ms ** 2 + 2 * brake_a * d_boundary
+                )
+
+        # Effective ceiling: lowest of all constraints
+        v_ceil = min(seg_limit, v_ceil_station, v_ceil_seg)
+
+        # --- Choose acceleration ---
+        if self.lead_v > v_ceil + 0.01:
+            a = self.LEAD_SERVICE_DECEL          # brake
+        elif self.lead_v < v_ceil - 0.01:
+            a = self.ACCEL                       # accelerate
+        else:
+            a = 0.0                              # coast
+
+        # --- Two-phase SUVAT position update ---
+        prev_v = self.lead_v
+        if a == 0.0:
+            self.lead_v = min(prev_v, v_ceil)
+            dx = self.lead_v * self.DT
+        elif a > 0:
+            if prev_v >= v_ceil:
+                self.lead_v = v_ceil
+                dx = v_ceil * self.DT
+            else:
+                t_to_ceil = (v_ceil - prev_v) / a
+                if self.DT <= t_to_ceil:
+                    self.lead_v = prev_v + a * self.DT
+                    dx = prev_v * self.DT + 0.5 * a * self.DT ** 2
+                else:
+                    dx = (prev_v * t_to_ceil
+                          + 0.5 * a * t_to_ceil ** 2
+                          + v_ceil * (self.DT - t_to_ceil))
+                    self.lead_v = v_ceil
+        else:  # braking
+            if prev_v <= v_ceil:
+                self.lead_v = max(0.0, v_ceil)
+                dx = self.lead_v * self.DT
+            else:
+                t_to_ceil = (prev_v - v_ceil) / abs(a)
+                if self.DT <= t_to_ceil:
+                    self.lead_v = prev_v + a * self.DT
+                    dx = prev_v * self.DT + 0.5 * a * self.DT ** 2
+                else:
+                    dx = (prev_v * t_to_ceil
+                          + 0.5 * a * t_to_ceil ** 2
+                          + v_ceil * (self.DT - t_to_ceil))
+                    self.lead_v = v_ceil
+
+        self.lead_v = max(0.0, self.lead_v)
+        self.lead_x += max(0.0, dx)
+
+        # --- Snap to station on arrival ---
+        if self.lead_station_idx < len(self.STATIONS):
+            next_station = self.STATIONS[self.lead_station_idx]
+            if self.lead_x >= next_station:
+                self.lead_x = next_station
+                self.lead_v = 0.0
+                self.lead_dwell_timer = self.np_random.integers(
+                    self.LEAD_DWELL_RANGE[0], self.LEAD_DWELL_RANGE[1]
+                )
+
+    def stall_lead(self) -> None:
+        """External command: force the lead train to emergency brake."""
+        self.lead_stalled = True
+
+    def release_lead(self) -> None:
+        """External command: release the stall / hold on the lead train."""
+        self.lead_stalled = False
+        self.lead_held = False
+
+    def hold_lead(self) -> None:
+        """External command: freeze the lead train at its current station."""
+        self.lead_held = True
+
     def _get_obs(self) -> np.ndarray:
         """Build the observation vector (7 values)."""
         aspect = self._get_signal_aspect()

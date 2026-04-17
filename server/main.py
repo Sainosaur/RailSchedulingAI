@@ -131,6 +131,50 @@ async def system_status():
     return {"killed": KILLED, "reason": ""}
 
 
+# Lead train controls
+@app.post("/api/sim/lead/stall")
+async def stall_lead():
+    """Force the lead train to emergency brake and stop."""
+    if simulation_runner.venv is None:
+        return {"error": "Simulation not loaded", "stalled": False}
+    raw_env = _get_raw_env()
+    raw_env.stall_lead()
+    return {"stalled": True}
+
+
+@app.post("/api/sim/lead/release")
+async def release_lead():
+    """Release the lead train stall/hold."""
+    if simulation_runner.venv is None:
+        return {"error": "Simulation not loaded", "stalled": False}
+    raw_env = _get_raw_env()
+    raw_env.release_lead()
+    return {"stalled": False}
+
+
+@app.post("/api/sim/lead/hold")
+async def hold_lead():
+    """Hold the lead train at its current station."""
+    if simulation_runner.venv is None:
+        return {"error": "Simulation not loaded", "held": False}
+    raw_env = _get_raw_env()
+    raw_env.hold_lead()
+    return {"held": True}
+
+
+@app.get("/api/sim/lead/status")
+async def lead_status():
+    if simulation_runner.venv is None:
+        return {"error": "Simulation not loaded"}
+    raw_env = _get_raw_env()
+    return {
+        "stalled": raw_env.lead_stalled,
+        "held": raw_env.lead_held,
+        "speed_ms": float(raw_env.lead_v),
+        "dwell_timer": int(raw_env.lead_dwell_timer),
+    }
+
+
 # TODO
 @app.get("/api/dashboard/recommendations")
 async def recommendations():
@@ -170,7 +214,7 @@ async def sim_updates(websocket: WebSocket):
             else:
                 signal = "red"
                 
-            lead_segment = raw_env.vl.get_segment(raw_env.lead_x)
+            lead_segment = raw_env.vl.get_segment(min(raw_env.lead_x, raw_env.TRACK_END))
             lead_progress = (raw_env.lead_x - lead_segment.start) / (lead_segment.end - lead_segment.start)
             
             await websocket.send_json({
@@ -190,11 +234,13 @@ async def sim_updates(websocket: WebSocket):
                 },
                 "lead": {
                     "progress": float(lead_progress),
-                    "speed_ms": float(raw_env.lead_train_speed),
-                    "speed_kmh": float(raw_env.lead_train_speed) * 3.6,
+                    "speed_ms": float(raw_env.lead_v),
+                    "speed_kmh": float(raw_env.lead_v) * 3.6,
                     "signal": "green",
                     "segment": lead_segment.id,
-                    "dwell_timer": 0,
+                    "dwell_timer": int(raw_env.lead_dwell_timer),
+                    "stalled": raw_env.lead_stalled,
+                    "held": raw_env.lead_held,
                 },
                 "override": {
                     "active": False,

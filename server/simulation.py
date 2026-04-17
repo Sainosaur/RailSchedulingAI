@@ -115,7 +115,7 @@ class SimulationRunner:
         else:
             signal = "red"
             
-        lead_segment = raw_env.vl.get_segment(raw_env.lead_x)
+        lead_segment = raw_env.vl.get_segment(min(raw_env.lead_x, raw_env.TRACK_END))
         lead_progress = (raw_env.lead_x - lead_segment.start) / (lead_segment.end - lead_segment.start)
         
         state = {
@@ -135,11 +135,13 @@ class SimulationRunner:
             },
             "lead": {
                 "progress": float(lead_progress),
-                "speed_ms": float(raw_env.lead_train_speed),
-                "speed_kmh": float(raw_env.lead_train_speed) * 3.6,
+                "speed_ms": float(raw_env.lead_v),
+                "speed_kmh": float(raw_env.lead_v) * 3.6,
                 "signal": "green",
                 "segment": lead_segment.id,
-                "dwell_timer": 0,
+                "dwell_timer": int(raw_env.lead_dwell_timer),
+                "stalled": raw_env.lead_stalled,
+                "held": raw_env.lead_held,
             },
             "override": {
                 "active": False,
@@ -186,7 +188,7 @@ class SimulationRunner:
                 else:
                     signal = "red"
                 
-                lead_segment = raw_env.vl.get_segment(raw_env.lead_x)
+                lead_segment = raw_env.vl.get_segment(min(raw_env.lead_x, raw_env.TRACK_END))
                 lead_progress = (raw_env.lead_x - lead_segment.start) / (lead_segment.end - lead_segment.start)
                 
                 state = {
@@ -206,11 +208,13 @@ class SimulationRunner:
                     },
                     "lead": {
                         "progress": float(lead_progress),
-                        "speed_ms": float(raw_env.lead_train_speed),
-                        "speed_kmh": float(raw_env.lead_train_speed) * 3.6,
+                        "speed_ms": float(raw_env.lead_v),
+                        "speed_kmh": float(raw_env.lead_v) * 3.6,
                         "signal": "green",
                         "segment": lead_segment.id,
-                        "dwell_timer": 0,
+                        "dwell_timer": int(raw_env.lead_dwell_timer),
+                        "stalled": raw_env.lead_stalled,
+                        "held": raw_env.lead_held,
                     },
                     "override": {
                         "active": info.get("overridden", False),
