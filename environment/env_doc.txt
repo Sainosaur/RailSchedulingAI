@@ -50,7 +50,23 @@ The environment applies the safe acceleration using a two-phase kinematic model 
 This ensures the safety projection and actual physics are consistent — what the VL predicts is exactly what happens.
 
 PHASE 3: Lead Train Advancement
-The dummy lead train simply glides forward (`lead_speed * DT`). The environment then re-calculates the AI's `dtz` boundaries based on the new distance to the lead train.
+The lead train advances through three states each timestep:
+
+- DWELLING: If lead_dwell_timer > 0, the train is stopped at a station. The 
+  timer counts down by 1 each step (LEAD_DWELL_TIME = 30 seconds). When it 
+  reaches 0, the train departs — restoring lead_v to lead_train_speed and 
+  advancing lead_station_idx to the next target station. At the final station 
+  (Nowy Sącz), the train instead pulls forward one spatial headway block (34.7m) 
+  past the station and parks permanently with lead_v = 0.
+
+- BRAKING: If the lead train is within its SUVAT braking distance of the next 
+  station (braking_distance = lead_v² / 2|DECEL|), it decelerates by DECEL 
+  each step. When it reaches the station position or lead_v hits 0, it snaps 
+  cleanly to the station coordinate and starts the dwell timer.
+
+- CRUISING: Otherwise, the lead train advances at lead_v * DT.
+
+After all state transitions, dtz is always recalculated via _update_dtz() regardless of which branch executed.
 
 PHASE 4: Station Checkmarks
 If the AI Train's position crosses the coordinate boundary of the next target station, the station index shifts, unlocking the "Arrival Reward".

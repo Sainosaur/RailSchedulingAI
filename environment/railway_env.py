@@ -21,6 +21,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from validate_layer.validator import ValidationLayer   # noqa: E402
 from reward.reward_function import compute_reward, TrainState  # noqa: E402
+from dataclasses import dataclass
+
+@dataclass
+class Landslide:
+    position: float
+    active: bool
 
 
 class ModernizedLine104(gym.Env):
@@ -37,6 +43,9 @@ class ModernizedLine104(gym.Env):
     """
 
     metadata = {"render_modes": ["human"]}
+    
+    # --- Lead train behaviour --- ﹀
+    LEAD_DWELL_TIME: int = 30  # seconds stopped at each station } ﹀
 
     # --- Physics ---
     DT: float = 1.0      # timestep  (seconds)
@@ -60,10 +69,13 @@ class ModernizedLine104(gym.Env):
         self,
         lead_train_speed: float = 20.0,
         render_mode: str | None = None,
+        training_mode: bool = False,
     ):
         super().__init__()
         self.render_mode = render_mode
         self.lead_train_speed = lead_train_speed
+        self.training_mode = training_mode
+        self.landslides: list = []
 
         # Validation Layer (safety sieve)
         self.vl = ValidationLayer()
@@ -84,8 +96,11 @@ class ModernizedLine104(gym.Env):
         self.x: float = self.TRACK_START
         self.v: float = 0.0
         self.dtz: float = 0.0
-        self.lead_x: float = 0.0
+        self.lead_x: float = 0.0 
+        self.lead_v: float = self.lead_train_speed # current speed ﹀
         self.time: float = 0.0
+        self.lead_dwell_timer: int = 0 # seconds remaining at station ﹀ 
+        self.lead_station_idx: int = 1 # which station the lead is targeting next ﹀
         self.last_station_idx: int = 0
         self.visited_stations: set[int] = set()
         self.last_a: float = 0.0  # Track the last *executed* acceleration for jerk calculation
@@ -101,6 +116,8 @@ class ModernizedLine104(gym.Env):
         self.x = self.TRACK_START
         self.v = 0.0
         self.time = 0.0
+        self.lead_dwell_timer = 0 # seconds remaining at station ﹀
+        self.lead_station_idx = 1 # which station the lead is targeting next ﹀
         self.last_station_idx = 0
         self.visited_stations = {0}  # starting station already "visited"
         self.last_a = 0.0
@@ -108,9 +125,11 @@ class ModernizedLine104(gym.Env):
 
         # Lead train begins ~2 km ahead
         self.lead_x = self.TRACK_START + 2000.0
+        self.lead_v = self.lead_train_speed  # current speed ﹀
+        self.landslides = [] # Clear landslides on reset ﹀
         self._update_dtz()
 
-        return self._get_obs(), {}
+        return self._get_obs(), {"overridden": False} # ﹀
 
     def step(self, action: np.ndarray):
         """
@@ -192,8 +211,34 @@ class ModernizedLine104(gym.Env):
         self.time += self.DT
         self.step_count += 1
 
-        # ----- 3. Lead train moves forward -----
-        self.lead_x += self.lead_train_speed * self.DT
+        # ----- 3. Lead train state machine ----- ﹀
+        if self.lead_dwell_timer > 0:
+            self.lead_dwell_timer -= 1
+            if self.lead_dwell_timer == 0:
+                # Only depart if not at the final station
+                if self.lead_station_idx < len(self.STATIONS) - 1:
+                    self.lead_v = self.lead_train_speed
+                    self.lead_station_idx += 1
+                # else: final station — lead_v stays 0, train parks permanently
+                else:
+                    # Final station dwell complete — pull forward to TRACK_END
+                    self.lead_x = self.STATIONS[-1] + 34.7  # one S5 block ahead
+                    self.lead_v = 0.0
+
+        elif self.lead_station_idx < len(self.STATIONS):  # ← restored to original
+            next_station_pos = self.STATIONS[self.lead_station_idx]
+            dist_to_station = next_station_pos - self.lead_x
+            braking_distance = (self.lead_v ** 2) / (2 * abs(self.DECEL))
+
+            if dist_to_station <= braking_distance and self.lead_v > 0.0:
+                self.lead_v = max(0.0, self.lead_v + self.DECEL * self.DT)
+                self.lead_x += self.lead_v * self.DT
+                if self.lead_x >= next_station_pos or self.lead_v == 0.0:
+                    self.lead_x = next_station_pos
+                    self.lead_v = 0.0
+                    self.lead_dwell_timer = self.LEAD_DWELL_TIME
+            else:
+                self.lead_x += self.lead_v * self.DT
         self._update_dtz()
 
         # ----- 4. Station arrival check -----
@@ -221,10 +266,7 @@ class ModernizedLine104(gym.Env):
         ]
 
         # Temporal headway: time gap to the lead train (seconds)
-        headway = (
-            (self.lead_x - self.x) / self.v
-            if self.v > 0.01 else 9999.0
-        )
+        headway = self._compute_headway() # ﹀
 
         state = TrainState(
             current_position=self.x,
@@ -324,6 +366,16 @@ class ModernizedLine104(gym.Env):
             return 1
         return 0
 
+    def _compute_headway(self) -> float: # ﹀
+        """
+        Temporal headway — time gap in seconds between the AI train
+        and the lead train, based on current AI speed.
+        Returns 9999.0 when the AI is stationary to avoid division by zero.
+        """
+        if self.v > 0.01:
+            return (self.lead_x - self.x) / self.v
+        return 9999.0
+    
     def _get_obs(self) -> np.ndarray:
         """Build the observation vector (7 values)."""
         aspect = self._get_signal_aspect()
@@ -332,15 +384,32 @@ class ModernizedLine104(gym.Env):
             min(self.last_station_idx + 1, len(self.STATIONS) - 1)
         ]
         dist_to_next_station = max(0.0, next_st_pos - self.x)
-        headway = (
-            (self.lead_x - self.x) / self.v
-            if self.v > 0.01 else 9999.0
-        )
+        headway = self._compute_headway() # ﹀
         return np.array(
             [self.x, self.v, self.dtz, float(aspect),
              dist_to_next_station, seg.limit_ms, min(headway, 9999.0)],
             dtype=np.float32,
         )
+        
+    def set_landslide(self, position: float) -> int: # ﹀
+        """Add a landslide at position. Max 3 allowed. Returns its index."""
+        if len(self.landslides) >= 3:
+            raise ValueError("Maximum of 3 landslides allowed.")
+        self.landslides.append(Landslide(position=position, active=True))
+        return len(self.landslides) - 1
+
+    def toggle_landslide(self, idx: int) -> bool: # ﹀
+        """Toggle active state. Returns new state."""
+        if idx >= len(self.landslides):
+            raise IndexError(f"No landslide at index {idx}.")
+        self.landslides[idx].active = not self.landslides[idx].active
+        return self.landslides[idx].active
+
+    def clear_landslide(self, idx: int) -> None: # ﹀
+        """Permanently remove landslide at idx."""
+        if idx >= len(self.landslides):
+            raise IndexError(f"No landslide at index {idx}.")
+        self.landslides.pop(idx)
 
 
 # -----------------------------------------------------------------------
@@ -368,6 +437,10 @@ if __name__ == "__main__":
         if terminated or truncated:
             print(f"\n--- Episode ended at step {step_i} ---")
             break
+        
+        if step_i % 100 == 0:
+            print(f"  lead_x={env.lead_x:.1f}  lead_v={env.lead_v:.2f}  "
+                f"dwell={env.lead_dwell_timer}  lead_target_st={env.lead_station_idx}")
 
     env.render()
     print(f"\nTotal reward: {total_r:+.2f}")
