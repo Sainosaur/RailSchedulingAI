@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from stable_baselines3.common.vec_env import VecNormalize
 
 from graph.graph import graph
 from validate_layer import log_manager
@@ -57,7 +58,6 @@ origins = [
 
 
 def _get_raw_env():
-    """Unwrap VecNormalize/DummyVecEnv to reach the bare ModernizedLine104."""
     env = simulation_runner.venv.envs[0]
     while hasattr(env, "env"):
         env = env.env
@@ -105,10 +105,31 @@ async def log():
         return {"logs": list(reader)}
 
 
-# TODO
+# Trains list endpoint
 @app.get("/api/dashboard/trains")
 async def trains():
-    return {"trains": "Not Implemented"}
+    if simulation_runner.venv is None:
+        return {"trains": None}
+    
+    raw_env = _get_raw_env()
+    segment = raw_env.vl.get_segment(raw_env.x)
+    headway = float((raw_env.lead_x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0)
+    
+    return {
+        "trains": {
+            "ai": {
+                "position": float(raw_env.x),
+                "speed_ms": float(raw_env.v),
+                "speed_kmh": float(raw_env.v) * 3.6,
+                "headway": headway,
+                "speed_limit_ms": float(segment.limit_ms),
+            },
+            "lead": {
+                "position": float(raw_env.lead_x),
+                "speed_ms": float(raw_env.lead_train_speed),
+            }
+        }
+    }
 
 
 # BUG 15 FIX: Wire up the kill/restore endpoints directly to the

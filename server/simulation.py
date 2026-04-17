@@ -116,25 +116,21 @@ class SimulationRunner:
                 "signal_aspect": int(raw_env._get_signal_aspect()),
                 "dist_to_next_station": float(next_st_pos - raw_env.x),
                 "speed_limit_ms": float(segment.limit_ms),
-                "headway": float(raw_env._compute_headway()),
+                "headway": float((raw_env.lead_x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0),
                 "segment": segment.id,
             },
             "lead": {
                 "position": float(raw_env.lead_x),
-                "speed_ms": float(raw_env.lead_v),
-                "dwell_timer": int(raw_env.lead_dwell_timer),
+                "speed_ms": float(raw_env.lead_train_speed),
+                "dwell_timer": 0,
             },
             "override": {
                 "active": False,
                 "proposed_a": 0.0,
                 "safe_a": 0.0,
             },
-            "landslides": [
-                {"position": ls.position, "active": ls.active}
-                for ls in raw_env.landslides
-            ],
             "stations_visited": list(raw_env.visited_stations),
-            "done": bool(force_done),
+            "done": bool(force_done), 
         }
         
         await self.broadcast_callback(state)
@@ -174,23 +170,19 @@ class SimulationRunner:
                         "signal_aspect": int(info.get("aspect", raw_env._get_signal_aspect())),
                         "dist_to_next_station": float(next_st_pos - raw_env.x),
                         "speed_limit_ms": float(segment.limit_ms),
-                        "headway": float(raw_env._compute_headway()),
+                        "headway": float((raw_env.lead_x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0),
                         "segment": info.get("segment", segment.id),
                     },
                     "lead": {
                         "position": float(raw_env.lead_x),
-                        "speed_ms": float(raw_env.lead_v),
-                        "dwell_timer": int(raw_env.lead_dwell_timer),
+                        "speed_ms": float(raw_env.lead_train_speed),
+                        "dwell_timer": 0,
                     },
                     "override": {
                         "active": info.get("overridden", False),
                         "proposed_a": float(info.get("proposed_a", 0.0)),
                         "safe_a": float(info.get("safe_a", 0.0)),
                     },
-                    "landslides": [
-                        {"position": ls.position, "active": ls.active}
-                        for ls in raw_env.landslides
-                    ],
                     "reward": {
                         "total": float(rewards[0]),
                         "breakdown": info.get("reward_breakdown", {}),
