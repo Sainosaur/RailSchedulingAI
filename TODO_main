@@ -7,3 +7,4 @@
 7/ Server: kill/restore endpoint broken due to environment related issues
 8/ Ensure server files correctly work with the upgraded enviroment
 9/ Replace hardcoded station elevations in graph.py with live OpenTopoData API calls
+10/ Add support for websocket based lead train status communication
