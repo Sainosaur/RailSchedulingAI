@@ -3,6 +3,7 @@ import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
+import asyncio
 
 # Ensure project-root imports work regardless of working directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -224,3 +225,7 @@ async def start_sim(lead_speed: float = 20.0):
 async def stop_sim():
     await simulation_runner.stop()
     return {"status": "stopped"}
+
+@app.get("/api/sim/status")
+async def sim_status():
+    return {"status": simulation_runner.is_running}
