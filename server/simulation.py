@@ -149,6 +149,7 @@ class SimulationRunner:
                 "safe_a": 0.0,
             },
             "stations_visited": list(raw_env.visited_stations),
+            "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
             "done": bool(force_done), 
         }
         
@@ -226,6 +227,7 @@ class SimulationRunner:
                         "breakdown": info.get("reward_breakdown", {}),
                     },
                     "stations_visited": list(raw_env.visited_stations),
+                    "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
                     "done": bool(done),
                 }
                 

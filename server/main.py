@@ -52,6 +52,7 @@ g = graph()
 graph_manager = ConnectionManager()
 sim_manager = ConnectionManager()
 simulation_runner = SimulationRunner(broadcast_callback=sim_manager.broadcast)
+lead_status_manager = ConnectionManager()
 
 KILLED = False  # Temporary placeholder for /kill endpoints
 origins = [
@@ -84,6 +85,11 @@ async def hazard(segmentPosition: int, block: int, status: bool):
     edge = g.get_edge_data(start.name, end.name)
     edge["data"].block_boundaries[block].hazard = status
     edge["data"].hazard = any(b.hazard for b in edge["data"].block_boundaries)
+    # Propagate hazard to the running simulation environment
+    if simulation_runner.venv is not None:
+        raw_env = _get_raw_env()
+        block_obj = edge["data"].block_boundaries[block]
+        raw_env.set_block_hazard(block_obj.start, block_obj.end, status)
     await graph_manager.broadcast({"type": "graph_update", "graph": serialise_graph(g)})
     return {"segment": asdict(edge["data"]), "success": edge["data"].block_boundaries[block].hazard == status}
 
@@ -132,6 +138,17 @@ async def system_status():
 
 
 # Lead train controls
+async def _broadcast_lead_status():
+    """Push lead train state to all /ws/lead/status clients."""
+    raw_env = _get_raw_env()
+    await lead_status_manager.broadcast({
+        "stalled": raw_env.lead_stalled,
+        "held": raw_env.lead_held,
+        "speed_ms": float(raw_env.lead_v),
+        "dwell_timer": int(raw_env.lead_dwell_timer),
+    })
+
+
 @app.post("/api/sim/lead/stall")
 async def stall_lead():
     """Force the lead train to emergency brake and stop."""
@@ -139,6 +156,7 @@ async def stall_lead():
         return {"error": "Simulation not loaded", "stalled": False}
     raw_env = _get_raw_env()
     raw_env.stall_lead()
+    await _broadcast_lead_status()
     return {"stalled": True}
 
 
@@ -149,6 +167,7 @@ async def release_lead():
         return {"error": "Simulation not loaded", "stalled": False}
     raw_env = _get_raw_env()
     raw_env.release_lead()
+    await _broadcast_lead_status()
     return {"stalled": False}
 
 
@@ -159,21 +178,26 @@ async def hold_lead():
         return {"error": "Simulation not loaded", "held": False}
     raw_env = _get_raw_env()
     raw_env.hold_lead()
+    await _broadcast_lead_status()
     return {"held": True}
 
-
-@app.get("/api/sim/lead/status")
-async def lead_status():
-    if simulation_runner.venv is None:
-        return {"error": "Simulation not loaded"}
-    raw_env = _get_raw_env()
-    return {
-        "stalled": raw_env.lead_stalled,
-        "held": raw_env.lead_held,
-        "speed_ms": float(raw_env.lead_v),
-        "dwell_timer": int(raw_env.lead_dwell_timer),
-    }
-
+@app.websocket("/ws/lead/status")
+async def lead_status(websocket: WebSocket):
+    await lead_status_manager.connect(websocket)
+    
+    if simulation_runner.venv is not None:
+        raw_env = _get_raw_env()
+        await websocket.send_json({
+            "stalled": raw_env.lead_stalled,
+            "held": raw_env.lead_held,
+        })
+    else:
+        await websocket.send_json(None)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        lead_status_manager.disconnect(websocket)
 
 # TODO
 @app.get("/api/dashboard/recommendations")
@@ -248,6 +272,7 @@ async def sim_updates(websocket: WebSocket):
                     "safe_a": 0.0,
                 },
                 "stations_visited": list(raw_env.visited_stations),
+                "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
                 "done": False,
             })
             await asyncio.sleep(0.5)
@@ -264,6 +289,7 @@ async def start_sim(lead_speed: float = 20.0):
         simulation_runner.load_model(lead_train_speed=lead_speed)
     await simulation_runner.reset()
     await simulation_runner.start()
+    await _broadcast_lead_status()
     return {"status": "started"}
 
 

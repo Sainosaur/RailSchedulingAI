@@ -25,11 +25,6 @@ from validate_layer.validator import ValidationLayer   # noqa: E402
 from reward.reward_function import compute_reward, TrainState  # noqa: E402
 from dataclasses import dataclass
 
-@dataclass
-class Landslide:
-    position: float
-    active: bool
-
 
 class ModernizedLine104(gym.Env):
     """
@@ -78,7 +73,7 @@ class ModernizedLine104(gym.Env):
         self.render_mode = render_mode
         self.lead_train_speed = lead_train_speed
         self.training_mode = training_mode
-        self.landslides: list = []
+        self.active_hazards: set[tuple[float, float]] = set()  # {(block_start, block_end), ...}
 
         # Validation Layer (safety sieve)
         self.vl = ValidationLayer()
@@ -137,7 +132,9 @@ class ModernizedLine104(gym.Env):
         self.lead_v = lead_seg.limit_ms   # ideal train cruises at segment limit
         self.lead_stalled = False
         self.lead_held = False
-        self.landslides = []
+        # Note: active_hazards are NOT cleared on reset — hazards persist
+        # across episodes because they represent external physical events
+        # injected via the API, not simulation state.
         self._update_dtz()
 
         return self._get_obs(), {"overridden": False} # ﹀
@@ -327,26 +324,43 @@ class ModernizedLine104(gym.Env):
         """
         self.dtz = self.vl.compute_dtz(self.x)
 
+    def _nearest_obstruction(self, from_x: float) -> float:
+        """Return position of the nearest obstruction ahead of *from_x*.
+
+        Obstructions are:
+            1. The lead train (at self.lead_x)
+            2. Any active hazard block whose start is ahead of *from_x*
+
+        Returns the position (metres) of the closest one.
+        """
+        nearest = self.lead_x
+        for h_start, _h_end in self.active_hazards:
+            if h_start > from_x:
+                nearest = min(nearest, h_start)
+        return nearest
+
     def _get_signal_aspect(self) -> int:
         """
-        Derive the 4-aspect signal from the distance to the lead train
-        and the current segment's spatial headway (SH).
+        Derive the 4-aspect signal from the distance to the nearest
+        obstruction (lead train OR hazard block) and the current
+        segment's spatial headway (SH).
 
-        The lead train's distance determines how many blocks ahead are
+        The nearest obstruction determines how many blocks ahead are
         clear.  SH is the block length:
             Green  (3) — next 3 blocks clear    (dist > 3 × SH)
             DblYlw (2) — next 2 blocks clear    (dist > 2 × SH)
             Yellow (1) — next 1 block  clear     (dist > 1 × SH)
             Red    (0) — next block occupied     (dist ≤ 1 × SH)
         """
-        dist_to_lead = self.lead_x - self.x
+        nearest = self._nearest_obstruction(self.x)
+        dist_to_obstruction = nearest - self.x
         sh = self.vl.get_segment(self.x).spatial_headway
 
-        if dist_to_lead > 3 * sh:
+        if dist_to_obstruction > 3 * sh:
             return 3
-        if dist_to_lead > 2 * sh:
+        if dist_to_obstruction > 2 * sh:
             return 2
-        if dist_to_lead > sh:
+        if dist_to_obstruction > sh:
             return 1
         return 0
 
@@ -430,8 +444,17 @@ class ModernizedLine104(gym.Env):
                     next_seg.limit_ms ** 2 + 2 * brake_a * d_boundary
                 )
 
+        # Constraint 3: must be able to stop before any hazard block ahead
+        # Use >= so that a train parked exactly AT the hazard boundary
+        # gets v_ceil=0 and stays stopped (d_hazard=0 → v_ceil=0).
+        v_ceil_hazard = float('inf')
+        for h_start, _h_end in self.active_hazards:
+            if h_start >= self.lead_x:
+                d_hazard = h_start - self.lead_x  # 0 when parked at boundary
+                v_ceil_hazard = min(v_ceil_hazard, math.sqrt(2 * brake_a * max(0.0, d_hazard)))
+
         # Effective ceiling: lowest of all constraints
-        v_ceil = min(seg_limit, v_ceil_station, v_ceil_seg)
+        v_ceil = min(seg_limit, v_ceil_station, v_ceil_seg, v_ceil_hazard)
 
         # --- Choose acceleration ---
         if self.lead_v > v_ceil + 0.01:
@@ -476,7 +499,15 @@ class ModernizedLine104(gym.Env):
                     self.lead_v = v_ceil
 
         self.lead_v = max(0.0, self.lead_v)
+        prev_lead_x = self.lead_x  # position before this step's move
         self.lead_x += max(0.0, dx)
+
+        # --- Snap to hazard block boundary if reached ---
+        for h_start, _h_end in self.active_hazards:
+            if prev_lead_x < h_start <= self.lead_x:
+                self.lead_x = h_start
+                self.lead_v = 0.0
+                return  # parked at hazard — skip station snap
 
         # --- Snap to station on arrival ---
         if self.lead_station_idx < len(self.STATIONS):
@@ -516,25 +547,22 @@ class ModernizedLine104(gym.Env):
             dtype=np.float32,
         )
         
-    def set_landslide(self, position: float) -> int: # ﹀
-        """Add a landslide at position. Max 3 allowed. Returns its index."""
-        if len(self.landslides) >= 3:
-            raise ValueError("Maximum of 3 landslides allowed.")
-        self.landslides.append(Landslide(position=position, active=True))
-        return len(self.landslides) - 1
+    def set_block_hazard(self, start: float, end: float, active: bool) -> None:
+        """Set or clear a hazard on the block spanning [start, end).
 
-    def toggle_landslide(self, idx: int) -> bool: # ﹀
-        """Toggle active state. Returns new state."""
-        if idx >= len(self.landslides):
-            raise IndexError(f"No landslide at index {idx}.")
-        self.landslides[idx].active = not self.landslides[idx].active
-        return self.landslides[idx].active
+        When active, this block acts as a virtual obstruction:
+        both the AI and lead trains will see a degraded signal aspect
+        and brake before entering the block.
+        """
+        key = (start, end)
+        if active:
+            self.active_hazards.add(key)
+        else:
+            self.active_hazards.discard(key)
 
-    def clear_landslide(self, idx: int) -> None: # ﹀
-        """Permanently remove landslide at idx."""
-        if idx >= len(self.landslides):
-            raise IndexError(f"No landslide at index {idx}.")
-        self.landslides.pop(idx)
+    def clear_all_hazards(self) -> None:
+        """Remove all active hazards."""
+        self.active_hazards.clear()
 
 
 # -----------------------------------------------------------------------
