@@ -150,7 +150,9 @@ class SimulationRunner:
             },
             "stations_visited": list(raw_env.visited_stations),
             "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
-            "done": bool(force_done), 
+            "done": bool(force_done),
+            "timetable": raw_env.timetable.to_dict(),
+            "punctuality": raw_env.get_punctuality_status(), 
         }
         
         await self.broadcast_callback(state)
@@ -229,6 +231,8 @@ class SimulationRunner:
                     "stations_visited": list(raw_env.visited_stations),
                     "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
                     "done": bool(done),
+                    "timetable": raw_env.timetable.to_dict(),
+                    "punctuality": raw_env.get_punctuality_status(),
                 }
                 
                 if self.broadcast_callback:

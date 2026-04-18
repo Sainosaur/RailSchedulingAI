@@ -204,6 +204,14 @@ async def lead_status(websocket: WebSocket):
 async def recommendations():
     return {"recommendations": "Not Implemented"}
 
+@app.get("/api/sim/timetable")
+async def get_timetable():
+    """Return the currently loaded timetable."""
+    if simulation_runner.venv is None:
+        return {"error": "Simulation not loaded", "timetable": []}
+    raw_env = _get_raw_env()
+    return raw_env.timetable.to_dict()
+
 
 # Web Sockets
 @app.websocket("/ws/graph")
@@ -274,6 +282,8 @@ async def sim_updates(websocket: WebSocket):
                 "stations_visited": list(raw_env.visited_stations),
                 "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
                 "done": False,
+                "timetable": raw_env.timetable.to_dict(),
+                "punctuality": raw_env.get_punctuality_status(),
             })
             await asyncio.sleep(0.5)
         while True:

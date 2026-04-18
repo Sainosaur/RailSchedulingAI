@@ -10,6 +10,7 @@ action each timestep; the Validation Layer ensures safety before the
 physics update runs.
 """
 
+from __future__ import annotations
 import sys
 from pathlib import Path
 
@@ -23,6 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from validate_layer.validator import ValidationLayer   # noqa: E402
 from reward.reward_function import compute_reward, TrainState  # noqa: E402
+from environment.timetable import (                             # noqa: E402
+    Timetable, generate_timetable, compute_eta_to_station,
+    STATION_NAMES,
+)
 from dataclasses import dataclass
 
 
@@ -109,6 +114,15 @@ class ModernizedLine104(gym.Env):
         # Pre-compute ideal arrival times for punctuality tracking
         self._ideal_schedule = self._compute_ideal_schedule()
 
+        # Timetable — richer schedule with dwell, used for API/dashboard
+        self.timetable: Timetable = generate_timetable(
+            segments=self.vl.segments,
+            station_positions=self.STATIONS,
+            dwell_seconds=float(self.LEAD_DWELL_RANGE[1]),  # max dwell
+        )
+        # Actual arrival timestamps — populated as stations are reached
+        self.ai_arrival_times: dict[int, float] = {}
+
     # ------------------------------------------------------------------
     # Gymnasium API
     # ------------------------------------------------------------------
@@ -137,7 +151,13 @@ class ModernizedLine104(gym.Env):
         # injected via the API, not simulation state.
         self._update_dtz()
 
-        return self._get_obs(), {"overridden": False} # ﹀
+        # Reset arrival tracking
+        self.ai_arrival_times = {}
+
+        return self._get_obs(), {
+            "overridden": False,
+            "timetable": self.timetable.to_dict(),
+        }
 
     def step(self, action: np.ndarray):
         """
@@ -240,6 +260,9 @@ class ModernizedLine104(gym.Env):
                 actual_arrival_time = self.time
                 scheduled_arrival_time = self._ideal_schedule[next_st_idx]
 
+                # Record AI arrival for timetable punctuality tracking
+                self.ai_arrival_times[next_st_idx] = self.time
+
         # ----- 5. Reward computation -----
         last_st_pos = self.STATIONS[self.last_station_idx]
         next_st_pos = self.STATIONS[
@@ -294,6 +317,7 @@ class ModernizedLine104(gym.Env):
                 "violation": reward_out.r_violation,
                 "collision": reward_out.r_collision,
             },
+            "punctuality_status": self.get_punctuality_status(),
         }
 
         return self._get_obs(), total_reward, terminated, truncated, info
@@ -564,6 +588,96 @@ class ModernizedLine104(gym.Env):
         """Remove all active hazards."""
         self.active_hazards.clear()
 
+    # ------------------------------------------------------------------
+    # Timetable & Punctuality
+    # ------------------------------------------------------------------
+
+    def _train_punctuality(
+        self,
+        position: float,
+        last_visited_idx: int,
+        arrival_log: dict[int, float],
+    ) -> dict:
+        """Compute live punctuality for one train.
+
+        Parameters
+        ----------
+        position         : Current position in metres.
+        last_visited_idx : Index of the last station this train visited.
+        arrival_log      : Dict mapping station_idx → actual arrival time.
+
+        Returns
+        -------
+        dict with keys: next_station_idx, next_station_name, scheduled_arrival,
+                        eta, slack_seconds, status, arrival_log.
+        """
+        next_idx = last_visited_idx + 1
+        if next_idx >= len(self.STATIONS):
+            # Past all stations — journey complete
+            return {
+                "next_station_idx": None,
+                "next_station_name": None,
+                "scheduled_arrival": None,
+                "eta": None,
+                "slack_seconds": None,
+                "status": "arrived",
+                "arrival_log": {
+                    str(k): round(v, 1) for k, v in arrival_log.items()
+                },
+            }
+
+        entry = self.timetable.get_entry(next_idx)
+        if entry is None:
+            return {
+                "next_station_idx": next_idx,
+                "next_station_name": STATION_NAMES[next_idx] if next_idx < len(STATION_NAMES) else f"Station {next_idx}",
+                "scheduled_arrival": None,
+                "eta": None,
+                "slack_seconds": None,
+                "status": "unknown",
+                "arrival_log": {
+                    str(k): round(v, 1) for k, v in arrival_log.items()
+                },
+            }
+
+        # ETA: segment-aware with accel/decel buffer
+        remaining_travel = compute_eta_to_station(
+            position, entry.position_m, self.vl.segments,
+        )
+        eta = self.time + remaining_travel
+
+        slack = entry.scheduled_arrival - eta  # positive = ahead, negative = behind
+
+        if abs(slack) <= 60.0:
+            status = "on_time"
+        elif slack > 0:
+            status = "early"
+        else:
+            status = "late"
+
+        return {
+            "next_station_idx": next_idx,
+            "next_station_name": entry.station_name,
+            "scheduled_arrival": round(entry.scheduled_arrival, 1),
+            "eta": round(eta, 1),
+            "slack_seconds": round(slack, 1),
+            "status": status,
+            "arrival_log": {
+                str(k): round(v, 1) for k, v in arrival_log.items()
+            },
+        }
+
+    def get_punctuality_status(self) -> dict:
+        """Compute live schedule status for the AI train.
+
+        Returns a dict suitable for JSON serialisation and WebSocket broadcast.
+        """
+        return {
+            "sim_time": round(self.time, 1),
+            "ai": self._train_punctuality(
+                self.x, self.last_station_idx, self.ai_arrival_times
+            ),
+        }
 
 # -----------------------------------------------------------------------
 # Quick smoke-test
