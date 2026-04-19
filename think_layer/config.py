@@ -18,7 +18,7 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 5_000_000
+    total_timesteps: int = 1_000_000
     learning_rate: float = 3e-4
     n_steps: int = 2048          # rollout buffer size per update
     batch_size: int = 64         # SGD minibatch size
@@ -49,8 +49,8 @@ class TrainConfig:
     seed: int = 42
 
     # ── Checkpointing & Evaluation ───────────────────────────────────
-    checkpoint_freq: int = 10_000    # save a checkpoint every N steps
-    eval_freq: int = 10_000          # run evaluation every N steps
+    checkpoint_freq: int = 250_000   # save a checkpoint every N steps
+    eval_freq: int = 50_000          # run evaluation every N steps
     eval_episodes: int = 5           # episodes per evaluation round
 
     # ── Paths ────────────────────────────────────────────────────────

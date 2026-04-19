@@ -110,6 +110,7 @@ class ModernizedLine104(gym.Env):
         self.step_count: int = 0
         self.lead_stalled: bool = False   # external stall command (frontend)
         self.lead_held: bool = False      # external hold at station (frontend)
+        self.random_stall_timer: int = 0  # mid-track random stalls during training
 
         # Pre-compute ideal arrival times for punctuality tracking
         self._ideal_schedule = self._compute_ideal_schedule()
@@ -146,6 +147,7 @@ class ModernizedLine104(gym.Env):
         self.lead_v = lead_seg.limit_ms   # ideal train cruises at segment limit
         self.lead_stalled = False
         self.lead_held = False
+        self.random_stall_timer = 0
         # Note: active_hazards are NOT cleared on reset — hazards persist
         # across episodes because they represent external physical events
         # injected via the API, not simulation state.
@@ -258,7 +260,11 @@ class ModernizedLine104(gym.Env):
                 # BUG 13 FIX: Supply arrival times to TrainState so the
                 # punctuality penalty is actually calculated.
                 actual_arrival_time = self.time
-                scheduled_arrival_time = self._ideal_schedule[next_st_idx]
+                
+                # Grade against the simulated timetable (which includes dwells), 
+                # rather than the physically 'ideal' no-stops schedule.
+                entry = self.timetable.get_entry(next_st_idx)
+                scheduled_arrival_time = entry.scheduled_arrival if entry else self._ideal_schedule[next_st_idx]
 
                 # Record AI arrival for timetable punctuality tracking
                 self.ai_arrival_times[next_st_idx] = self.time
@@ -423,8 +429,16 @@ class ModernizedLine104(gym.Env):
             lead_stalled  — forces emergency braking to a full stop
             lead_held     — freezes the dwell timer at a station
         """
+        # --- Random Stalls for Training Mode ---
+        if self.training_mode and self.lead_dwell_timer == 0 and not self.lead_stalled and not self.lead_held:
+            # 0.1% chance per step (~7 expected stalls per trip) to trigger a random mid-track stall
+            if self.np_random.random() < 0.001:
+                self.random_stall_timer = self.np_random.integers(15, 60)  # stall for 15-60 seconds
+
         # --- Stall override: emergency brake to stop ---
-        if self.lead_stalled:
+        if self.lead_stalled or self.random_stall_timer > 0:
+            if self.random_stall_timer > 0:
+                self.random_stall_timer -= 1
             if self.lead_v > 0:
                 self.lead_v = max(0.0, self.lead_v + self.DECEL * self.DT)
                 self.lead_x += self.lead_v * self.DT
