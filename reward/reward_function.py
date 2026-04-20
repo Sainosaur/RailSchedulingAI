@@ -18,8 +18,8 @@ import math
 @dataclass
 class RewardConfig:
     """Hyperparameters for the reward function."""
-    k_p: float = 5.0 # incremental progress reward scale
-    station_reward: float = 5.0
+    k_p: float = 15.0 # incremental progress reward scale
+    station_reward: float = 25.0
     punctuality_factor: float = 0.5       # penalty per second *outside* tolerance
     punctuality_tolerance: float = 60.0   # seconds, "on time" window
     
@@ -28,20 +28,20 @@ class RewardConfig:
     headway_violation_multiplier: float = 1.0  # e.g., 1x TH is hard safety limit
     
     k_over: float = 0.5  # overspeed penalty weight  (quadratic)
-    k_under: float = 0.0  # underspeed penalty weight (linear, default 0)
+    k_under: float = 0.3  # underspeed penalty weight (linear)
     
     # Kinematic Comfort Limits
     comfortable_acceleration: float = 0.5  # m/s²
     comfortable_deceleration: float = 0.5  # m/s²
     
     # New addition: Behavioral and Operational penalties
-    heartbeat_penalty: float = -0.1          # penalty applied every step to prevent stalling
+    heartbeat_penalty: float = -0.005         # penalty applied every step to prevent stalling
     # BUG 10 FIX: -500 wiped out ~100 station arrivals per override, making the
     # reward signal indistinguishable from noise.  Overrides are *correct*
     # safety behaviour; this should be a mild discouragement, not a catastrophe.
-    override_penalty: float = -5.0           # penalty when the Validation Layer intervenes
-    jerk_penalty: float = -20.0               # penalty for flip-flopping actions abruptly
-    energy_penalty_weight: float = -5.0      # penalty for positive traction use
+    override_penalty: float = -1.0            # penalty when the Validation Layer intervenes
+    jerk_penalty: float = -0.5                # penalty for flip-flopping actions abruptly
+    energy_penalty_weight: float = -0.05     # penalty for positive traction use
     
     headway_violation_penalty: float = -150.0
     collision_penalty: float = -200.0
@@ -138,7 +138,11 @@ def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     v_accel = math.sqrt(2 * config.comfortable_acceleration * d_from)
     v_brake = math.sqrt(2 * config.comfortable_deceleration * d_to)
     
-    v_target: float = min(v_max, v_accel, v_brake)
+    # Floor of 1.0 m/s: the trapezoidal profile correctly gives v_target=0
+    # at stations (d_from=0), but that eliminates the underspeed penalty
+    # and removes any incentive to depart.  A 1 m/s floor says "you should
+    # at least be creeping forward" without the harsh 25 m/s jump.
+    v_target: float = max(1.0, min(v_max, v_accel, v_brake))
     
     overspeed: float = max(0.0, v - v_target)
     underspeed: float = max(0.0, v_target - v)
