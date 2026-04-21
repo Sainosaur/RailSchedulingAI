@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from think_layer.config import TrainConfig  # noqa: E402
 from think_layer.agent import build_agent, make_env  # noqa: E402
+from think_layer.callbacks import RewardBreakdownCallback  # noqa: E402
 
 
 def train(config: TrainConfig) -> None:
@@ -86,7 +87,9 @@ def train(config: TrainConfig) -> None:
         verbose=1,
     )
 
-    callbacks = CallbackList([checkpoint_cb, eval_cb])
+    reward_breakdown_cb = RewardBreakdownCallback()
+
+    callbacks = CallbackList([checkpoint_cb, eval_cb, reward_breakdown_cb])
 
     # 3. Train
     print("\nStarting training...\n")

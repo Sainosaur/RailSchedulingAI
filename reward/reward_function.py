@@ -18,33 +18,34 @@ import math
 @dataclass
 class RewardConfig:
     """Hyperparameters for the reward function."""
-    k_p: float = 15.0 # incremental progress reward scale
+    k_p: float = 0.1  # per-metre progress reward scale (≈ 0.0015 reward per metre → ~1.5/km)
     station_reward: float = 25.0
     punctuality_factor: float = 0.5       # penalty per second *outside* tolerance
     punctuality_tolerance: float = 60.0   # seconds, "on time" window
-    
+
     k_h: float = 3.0  # HEADWAY_WARNING_SCALE
     headway_warning_multiplier: float = 3.0  # e.g., 3x TH starts warning zone
     headway_violation_multiplier: float = 1.0  # e.g., 1x TH is hard safety limit
-    
-    k_over: float = 0.5  # overspeed penalty weight  (quadratic)
-    k_under: float = 0.3  # underspeed penalty weight (linear)
-    
+
+    k_over: float = 0.05  # overspeed penalty weight (quadratic, vs. segment limit only)
+    k_under: float = 0.0  # underspeed penalty weight (linear) — disabled: progress reward carries departure signal
+
     # Kinematic Comfort Limits
     comfortable_acceleration: float = 0.5  # m/s²
     comfortable_deceleration: float = 0.5  # m/s²
-    
-    # New addition: Behavioral and Operational penalties
-    heartbeat_penalty: float = -0.005         # penalty applied every step to prevent stalling
-    # BUG 10 FIX: -500 wiped out ~100 station arrivals per override, making the
-    # reward signal indistinguishable from noise.  Overrides are *correct*
-    # safety behaviour; this should be a mild discouragement, not a catastrophe.
-    override_penalty: float = -1.0            # penalty when the Validation Layer intervenes
-    jerk_penalty: float = -0.5                # penalty for flip-flopping actions abruptly
-    energy_penalty_weight: float = -0.05     # penalty for positive traction use
-    
-    headway_violation_penalty: float = -150.0
-    collision_penalty: float = -200.0
+
+    # Behavioural and Operational penalties
+    heartbeat_penalty: float = -0.05          # per-step cost of doing nothing
+    override_penalty: float = 0.0             # overrides are correct safety behaviour, not an agent failure
+    # jerk penalty must be small: early Gaussian exploration naturally swings
+    # action by ~1.5 per step, so -0.5 × 1.5² = -1.125/step (~-600/rollout)
+    # teaches PPO to pick a constant action — which collapses to full brake.
+    jerk_penalty: float = -0.01               # penalty for flip-flopping actions abruptly
+    energy_penalty_weight: float = -0.05      # penalty for positive traction use
+
+    # Safety costs — non-terminal so the agent can recover and learn.
+    headway_violation_penalty: float = -10.0
+    collision_penalty: float = -20.0
 
 DEFAULT_CONFIG = RewardConfig()
 
@@ -88,18 +89,10 @@ class TrainState:
 
 
 def _compute_progress_reward(state: TrainState, config: RewardConfig) -> float:
-    
-    span = state.next_station_position - state.last_station_position
-    if span <= 0:
-        return 0.0
-
-    p_current = (state.current_position - state.last_station_position) / span
-    p_previous = (state.previous_position - state.last_station_position) / span
-
-    p_current = max(0.0, min(1.0, p_current))  # clamp to [0,1]
-    p_previous = max(0.0, min(1.0, p_previous))  # clamp to [0,1]
-
-    return config.k_p * (p_current - p_previous)
+    # Per-metre progress reward — uniform across spans of wildly different lengths
+    # (5 km vs. 22 km) so the per-step signal is comparable throughout the line.
+    delta_m = max(0.0, state.current_position - state.previous_position)
+    return config.k_p * delta_m
 
 
 def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
@@ -128,24 +121,17 @@ def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
 
 
 def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
-    
+    # Penalise only overspeed above the posted segment limit.  The earlier
+    # kinematic v_accel/v_brake profile created a catastrophic trap: post-
+    # station, d_from resets to 0 so v_accel ≈ 0 and any cruising speed
+    # looks like massive overspeed.  Safe braking into a station is
+    # enforced by the Validation Layer and by the collision/headway
+    # penalties — the reward does not need to re-encode it.
     v: float = state.current_speed
     v_max: float = state.speed_limit
-    d_from: float = max(0.0, state.current_position - state.last_station_position)
-    d_to: float = max(0.0, state.next_station_position - state.current_position)
 
-    # Kinematic dynamic bounds (v^2 = u^2 + 2as => v = sqrt(2as))
-    v_accel = math.sqrt(2 * config.comfortable_acceleration * d_from)
-    v_brake = math.sqrt(2 * config.comfortable_deceleration * d_to)
-    
-    # Floor of 1.0 m/s: the trapezoidal profile correctly gives v_target=0
-    # at stations (d_from=0), but that eliminates the underspeed penalty
-    # and removes any incentive to depart.  A 1 m/s floor says "you should
-    # at least be creeping forward" without the harsh 25 m/s jump.
-    v_target: float = max(1.0, min(v_max, v_accel, v_brake))
-    
-    overspeed: float = max(0.0, v - v_target)
-    underspeed: float = max(0.0, v_target - v)
+    overspeed: float = max(0.0, v - v_max)
+    underspeed: float = max(0.0, v_max - v)  # only used if k_under > 0
 
     return -(config.k_over * overspeed**2) - (config.k_under * underspeed)
 
@@ -185,17 +171,17 @@ def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> flo
     return -config.punctuality_factor * excess
 
 def _compute_headway_violation(state: TrainState, config: RewardConfig) -> tuple[float, bool]:
-
+    # Non-terminal: apply the cost but let the episode continue so the agent
+    # can experience recovery. Episode only truncates on MAX_STEPS or TRACK_END.
     violation_thresh = state.temporal_headway * config.headway_violation_multiplier
     if state.headway <= violation_thresh:
-        return config.headway_violation_penalty, True
-    
+        return config.headway_violation_penalty, False
     return 0.0, False
 
 def _compute_collision_penalty(state: TrainState, config: RewardConfig) -> tuple[float, bool]:
-   
+    # Non-terminal: see _compute_headway_violation note.
     if state.collision:
-        return config.collision_penalty, True
+        return config.collision_penalty, False
     return 0.0, False
 
 # Main reward function
