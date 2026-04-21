@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from stable_baselines3.common.vec_env import VecNormalize
 
 from graph.graph import graph
-from validate_layer import log_manager
+from validate_layer import log_manager as vl_log_manager
 from server.simulation import SimulationRunner
 
 
@@ -53,6 +53,7 @@ graph_manager = ConnectionManager()
 sim_manager = ConnectionManager()
 simulation_runner = SimulationRunner(broadcast_callback=sim_manager.broadcast)
 lead_status_manager = ConnectionManager()
+log_manager = ConnectionManager()
 
 KILLED = False  # Temporary placeholder for /kill endpoints
 origins = [
@@ -74,6 +75,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def watch_logs():
+    last_mtime = 0
+    last_size = 0
+    while True:
+        log_path = vl_log_manager.get_log_path()
+        if os.path.exists(log_path):
+            stat = os.stat(log_path)
+            if stat.st_size != last_size or stat.st_mtime != last_mtime:
+                last_size = stat.st_size
+                last_mtime = stat.st_mtime
+                
+                try:
+                    with open(log_path, "r", newline="") as fh:
+                        reader = csv.DictReader(fh)
+                        logs = list(reader)
+                        if logs:
+                            await log_manager.broadcast({"type": "log_update", "logs": logs})
+                except Exception as e:
+                    print(f"Error reading logs: {e}")
+        await asyncio.sleep(0.5)
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(watch_logs())
+
 
 
 # Updates the graph with hazard data and notifies all WebSocket clients
@@ -103,15 +132,14 @@ async def root():
 
 
 # Returns the logs to front end client
-@app.get("/api/dashboard/logs")
-async def log():
-    path = log_manager.get_log_path()
-    if not os.path.exists(path):
-        return {"logs": []}
-    with open(path, "r") as f:
-        reader = csv.DictReader(f)
-        return {"logs": list(reader)}
-
+@app.websocket("/ws/logs")
+async def log_updates(websocket: WebSocket):
+    await log_manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # keep connection alive
+    except WebSocketDisconnect:
+        log_manager.disconnect(websocket)
 
 
 # BUG 15 FIX: Wire up the kill/restore endpoints directly to the

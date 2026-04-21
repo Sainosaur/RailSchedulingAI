@@ -20,3 +20,4 @@
 | #15 | 🔴 Open | 🟡 Medium | Validate Layer | DTZ computation: towards segment boundary, if last zone before next segment is < SH, merge last two segments together (may need hard-coded handling). | validate_layer/validator.py:113 |
 | #16 | 🔴 Open | 🟡 Medium | Server | Implement /api/dashboard/recommendations endpoint — currently returns "Not Implemented". | server/main.py:202 |
 | #17 | 🔴 Open | 🟡 Medium | Server | Revise Kill/Restore behaviour — endpoints currently just pause/unpause the simulation loop, which doesn't reflect a true emergency killswitch (should reset or force abort). | server/main.py:120 |
+| #18 | 🔴 Open | 🟡 Medium | Reward | Reintroduce `jerk_penalty` and `energy_penalty_weight` in `reward_function.py` once the agent successfully learns base movement and station stopping logic. | think_layer/reward_function.py:42 |
