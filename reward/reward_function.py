@@ -20,6 +20,8 @@ class RewardConfig:
     """Hyperparameters for the reward function."""
     k_p: float = 0.1  # per-metre progress reward scale (≈ 0.0015 reward per metre → ~1.5/km)
     station_reward: float = 25.0
+    station_overshoot_penalty: float = -25.0  # penalty for blasting through station at speed
+    station_arrival_speed_limit: float = 2.0  # m/s — max speed to qualify for station reward
     punctuality_factor: float = 0.5       # penalty per second *outside* tolerance
     punctuality_tolerance: float = 60.0   # seconds, "on time" window
 
@@ -27,8 +29,9 @@ class RewardConfig:
     headway_warning_multiplier: float = 3.0  # e.g., 3x TH starts warning zone
     headway_violation_multiplier: float = 1.0  # e.g., 1x TH is hard safety limit
 
+    k_vel: float = 0.5   # velocity bonus weight (continuous positive reward for speed)
     k_over: float = 0.05  # overspeed penalty weight (quadratic, vs. segment limit only)
-    k_under: float = 0.0  # underspeed penalty weight (linear) — disabled: progress reward carries departure signal
+    k_under: float = 0.0  # underspeed penalty weight — disabled: progress + velocity bonus carry departure signal
 
     # Kinematic Comfort Limits
     comfortable_acceleration: float = 0.5  # m/s²
@@ -83,6 +86,8 @@ class TrainState:
     # continuous accelerations — a float in [0.0, 1.5], not a discrete int.
     action_delta: float = 0.0  # |safe_a - last_a|  (m/s²)
     applied_traction: float = 0.0  # Positive throttle applied by agent (m/s²), defaults to 0
+    dwelling: bool = False  # True when the environment is enforcing a station dwell
+    arrival_speed: Optional[float] = None  # speed when crossing station (before snap to 0)
 
 
 # Reward components
@@ -120,6 +125,18 @@ def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
     return 0.0
 
 
+def _compute_velocity_bonus(state: TrainState, config: RewardConfig) -> float:
+    """Continuous positive reward proportional to speed / speed_limit.
+
+    This replaces the underspeed penalty with a direct incentive:
+    faster = more reward.  Suppressed during environment-enforced
+    station dwells so the agent isn't punished for physics it can't control.
+    """
+    if state.dwelling or state.speed_limit <= 0:
+        return 0.0
+    return config.k_vel * (state.current_speed / state.speed_limit)
+
+
 def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     # Penalise only overspeed above the posted segment limit.  The earlier
     # kinematic v_accel/v_brake profile created a catastrophic trap: post-
@@ -150,8 +167,18 @@ def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.jerk_penalty * (state.action_delta ** 2)
 
 def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
+    """Station arrival reward — conditional on arrival speed.
     
-    return config.station_reward if state.reached_new_station else 0.0 
+    +station_reward  if the train arrives slowly (< station_arrival_speed_limit)
+    +overshoot_penalty if the train blasts through at high speed
+    """
+    if not state.reached_new_station:
+        return 0.0
+    # Use arrival_speed (pre-snap) if available, otherwise current_speed
+    check_speed = state.arrival_speed if state.arrival_speed is not None else state.current_speed
+    if check_speed <= config.station_arrival_speed_limit:
+        return config.station_reward
+    return config.station_overshoot_penalty
  
 def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> float:
     """Penalty for arriving at a station outside the on-time tolerance window.
@@ -194,6 +221,7 @@ class RewardOutput:
     r_headway: float
     r_speed: float
     r_heartbeat: float
+    r_velocity: float
     # Event
     r_station: float
     r_time: float
@@ -225,6 +253,7 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
     r_headway   = _compute_headway_penalty(state, config)
     r_speed     = _compute_speed_reward(state, config)
     r_heartbeat = _compute_heartbeat_penalty(state, config)
+    r_velocity  = _compute_velocity_bonus(state, config)
  
     # --- Event ---
     r_station   = _compute_station_reward(state, config)
@@ -238,7 +267,7 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
     r_collision, terminate_collision = _compute_collision_penalty(state, config)
  
     # Aggregates
-    r_continuous = r_progress + r_headway + r_speed + r_heartbeat
+    r_continuous = r_progress + r_headway + r_speed + r_heartbeat + r_velocity
     r_event      = r_station + r_time + r_override + r_jerk + r_energy
     r_terminal   = r_violation + r_collision
     r_total      = r_continuous + r_event + r_terminal
@@ -249,6 +278,7 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
         r_headway=r_headway,
         r_speed=r_speed,
         r_heartbeat=r_heartbeat,
+        r_velocity=r_velocity,
         r_station=r_station,
         r_time=r_time,
         r_override=r_override,

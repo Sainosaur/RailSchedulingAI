@@ -52,6 +52,9 @@ class ModernizedLine104(gym.Env):
     LEAD_DWELL_RANGE: tuple[int, int] = (15, 60)  # random dwell bounds (seconds)
     LEAD_SERVICE_DECEL: float = -0.5  # comfortable service braking for lead (m/s²)
 
+    # --- AI train dwell ---
+    AI_DWELL_TIME: int = 30  # seconds the AI train dwells at each station
+
     # --- Physics ---
     DT: float = 1.0      # timestep  (seconds)
     ACCEL: float = 0.5    # traction acceleration  (m/s²)
@@ -120,6 +123,7 @@ class ModernizedLine104(gym.Env):
         self.visited_stations: set[int] = set()
         self.last_a: float = 0.0  # Track the last *executed* acceleration for jerk calculation
         self.step_count: int = 0
+        self.ai_dwell_timer: int = 0  # seconds remaining at station (AI train)
         self.lead_stalled: bool = False   # external stall command (frontend)
         self.lead_held: bool = False      # external hold at station (frontend)
         self.random_stall_timer: int = 0  # mid-track random stalls during training
@@ -152,6 +156,7 @@ class ModernizedLine104(gym.Env):
         self.visited_stations = {0}  # starting station already "visited"
         self.last_a = 0.0
         self.step_count = 0
+        self.ai_dwell_timer = 0
 
         # Lead train begins ~2 km ahead
         self.lead_x = self.TRACK_START + 2000.0
@@ -193,99 +198,117 @@ class ModernizedLine104(gym.Env):
         # Current signal aspect (derived from distance to lead train)
         env_aspect = self._get_signal_aspect()
 
-        # ----- 1. Validation Layer (Layers 1–4) -----
-        # VL handles the safety check against the aspect and dtz.
-        safe_a, overridden = self.vl.get_safe_action(
-            proposed_a, env_aspect, self.x, self.v, self.dtz,
-        )
+        # ----- 0. AI Dwell: train is physically stopped at a station -----
+        dwelling = self.ai_dwell_timer > 0
+        if dwelling:
+            self.ai_dwell_timer -= 1
+            # Train cannot move during dwell — ignore agent action
+            safe_a = 0.0
+            overridden = False
+            action_delta = abs(0.0 - self.last_a)
+            self.last_a = 0.0
+            prev_x = self.x
+            prev_v = self.v
+            self.v = 0.0
+            applied_traction = 0.0
+            seg = self.vl.get_segment(self.x)
 
-        # Jerk tracking: delta of the *physically executed* acceleration
-        action_delta = abs(safe_a - self.last_a)
-        self.last_a = safe_a
+            self.time += self.DT
+            self.step_count += 1
 
-        # ----- 2. Physics — two-phase SUVAT update -----
-        # Matches validator._project() so safety projection and actual
-        # kinematics use the same model.
-        prev_x = self.x
-        prev_v = self.v
+            # Lead train still advances during AI dwell
+            self._advance_lead_train()
+            self._update_dtz()
 
-        seg = self.vl.get_segment(self.x)
-        limit_v = seg.limit_ms
+            # No station arrival during dwell
+            reached_new_station = False
+            arrival_speed = None
+            scheduled_arrival_time = None
+            actual_arrival_time = None
 
-        if safe_a == 0.0:
-            # Coasting at current speed (capped at segment limit)
-            self.v = min(prev_v, limit_v)
-            dx = self.v * self.DT
-        elif safe_a > 0.0:
-            if prev_v >= limit_v:
-                # Already at limit — coast
-                self.v = limit_v
-                dx = limit_v * self.DT
-            else:
-                t_to_limit = (limit_v - prev_v) / safe_a
-                if self.DT <= t_to_limit:
-                    # Full acceleration phase
-                    self.v = prev_v + safe_a * self.DT
-                    dx = prev_v * self.DT + 0.5 * safe_a * self.DT ** 2
-                else:
-                    # Accelerate to limit, then coast for remainder
-                    dx = (prev_v * t_to_limit
-                          + 0.5 * safe_a * t_to_limit ** 2
-                          + limit_v * (self.DT - t_to_limit))
+        else:
+            # ----- 1. Validation Layer (Layers 1–4) -----
+            safe_a, overridden = self.vl.get_safe_action(
+                proposed_a, env_aspect, self.x, self.v, self.dtz,
+            )
+
+            # Jerk tracking: delta of the *physically executed* acceleration
+            action_delta = abs(safe_a - self.last_a)
+            self.last_a = safe_a
+
+            # ----- 2. Physics — two-phase SUVAT update -----
+            prev_x = self.x
+            prev_v = self.v
+
+            seg = self.vl.get_segment(self.x)
+            limit_v = seg.limit_ms
+
+            if safe_a == 0.0:
+                self.v = min(prev_v, limit_v)
+                dx = self.v * self.DT
+            elif safe_a > 0.0:
+                if prev_v >= limit_v:
                     self.v = limit_v
-        else:  # safe_a < 0
-            if prev_v <= 0.0:
-                # Already stopped
-                self.v = 0.0
-                dx = 0.0
-            else:
-                t_to_zero = prev_v / abs(safe_a)
-                if self.DT <= t_to_zero:
-                    # Full braking phase
-                    self.v = prev_v + safe_a * self.DT
-                    dx = prev_v * self.DT + 0.5 * safe_a * self.DT ** 2
+                    dx = limit_v * self.DT
                 else:
-                    # Brake to stop, then stationary for remainder
-                    dx = prev_v * t_to_zero + 0.5 * safe_a * t_to_zero ** 2
+                    t_to_limit = (limit_v - prev_v) / safe_a
+                    if self.DT <= t_to_limit:
+                        self.v = prev_v + safe_a * self.DT
+                        dx = prev_v * self.DT + 0.5 * safe_a * self.DT ** 2
+                    else:
+                        dx = (prev_v * t_to_limit
+                              + 0.5 * safe_a * t_to_limit ** 2
+                              + limit_v * (self.DT - t_to_limit))
+                        self.v = limit_v
+            else:  # safe_a < 0
+                if prev_v <= 0.0:
                     self.v = 0.0
+                    dx = 0.0
+                else:
+                    t_to_zero = prev_v / abs(safe_a)
+                    if self.DT <= t_to_zero:
+                        self.v = prev_v + safe_a * self.DT
+                        dx = prev_v * self.DT + 0.5 * safe_a * self.DT ** 2
+                    else:
+                        dx = prev_v * t_to_zero + 0.5 * safe_a * t_to_zero ** 2
+                        self.v = 0.0
 
-        self.v = max(0.0, self.v)
-        self.x = min(prev_x + max(0.0, dx), self.TRACK_END)
+            self.v = max(0.0, self.v)
+            self.x = min(prev_x + max(0.0, dx), self.TRACK_END)
 
-        # Calculate applied traction (positive acceleration only)
-        # Note: if safe_a was overridden to -1.0, applied_traction is 0.0
-        applied_traction = max(0.0, safe_a)
+            applied_traction = max(0.0, safe_a)
 
-        self.time += self.DT
-        self.step_count += 1
+            self.time += self.DT
+            self.step_count += 1
 
-        # ----- 3. Lead train (ideal, respects segment speed limits) -----
-        self._advance_lead_train()
-        self._update_dtz()
+            # ----- 3. Lead train -----
+            self._advance_lead_train()
+            self._update_dtz()
 
-        # ----- 4. Station arrival check -----
-        reached_new_station = False
-        next_st_idx = self.last_station_idx + 1
-        scheduled_arrival_time = None
-        actual_arrival_time = None
-        
-        if next_st_idx < len(self.STATIONS):
-            if self.x >= self.STATIONS[next_st_idx]:
-                reached_new_station = True
-                self.last_station_idx = next_st_idx
-                self.visited_stations.add(next_st_idx)
-                
-                # BUG 13 FIX: Supply arrival times to TrainState so the
-                # punctuality penalty is actually calculated.
-                actual_arrival_time = self.time
-                
-                # Grade against the simulated timetable (which includes dwells), 
-                # rather than the physically 'ideal' no-stops schedule.
-                entry = self.timetable.get_entry(next_st_idx)
-                scheduled_arrival_time = entry.scheduled_arrival if entry else self._ideal_schedule[next_st_idx]
+            # ----- 4. Station arrival check -----
+            reached_new_station = False
+            arrival_speed = None
+            scheduled_arrival_time = None
+            actual_arrival_time = None
+            next_st_idx = self.last_station_idx + 1
 
-                # Record AI arrival for timetable punctuality tracking
-                self.ai_arrival_times[next_st_idx] = self.time
+            if next_st_idx < len(self.STATIONS):
+                if self.x >= self.STATIONS[next_st_idx]:
+                    reached_new_station = True
+                    arrival_speed = prev_v  # record speed BEFORE snap
+                    self.last_station_idx = next_st_idx
+                    self.visited_stations.add(next_st_idx)
+
+                    actual_arrival_time = self.time
+                    entry = self.timetable.get_entry(next_st_idx)
+                    scheduled_arrival_time = entry.scheduled_arrival if entry else self._ideal_schedule[next_st_idx]
+                    self.ai_arrival_times[next_st_idx] = self.time
+
+                    # Snap to station and begin dwell (not at final station)
+                    self.x = self.STATIONS[next_st_idx]
+                    self.v = 0.0
+                    if next_st_idx < len(self.STATIONS) - 1:
+                        self.ai_dwell_timer = self.AI_DWELL_TIME
 
         # ----- 5. Reward computation -----
         last_st_pos = self.STATIONS[self.last_station_idx]
@@ -293,8 +316,7 @@ class ModernizedLine104(gym.Env):
             min(self.last_station_idx + 1, len(self.STATIONS) - 1)
         ]
 
-        # Temporal headway: time gap to the lead train (seconds)
-        headway = self._compute_headway() # ﹀
+        headway = self._compute_headway()
 
         state = TrainState(
             current_position=self.x,
@@ -312,6 +334,8 @@ class ModernizedLine104(gym.Env):
             overridden=overridden,
             action_delta=action_delta,
             applied_traction=applied_traction,
+            dwelling=dwelling,
+            arrival_speed=arrival_speed,
         )
 
         reward_out = compute_reward(state)
@@ -333,6 +357,7 @@ class ModernizedLine104(gym.Env):
                 "headway": reward_out.r_headway,
                 "speed": reward_out.r_speed,
                 "heartbeat": reward_out.r_heartbeat,
+                "velocity": reward_out.r_velocity,
                 "station": reward_out.r_station,
                 "punctuality": reward_out.r_time,
                 "override": reward_out.r_override,
@@ -401,16 +426,25 @@ class ModernizedLine104(gym.Env):
             Red    (0) — next block occupied     (dist ≤ 1 × SH)
         """
         nearest = self._nearest_obstruction(self.x)
-        dist_to_obstruction = nearest - self.x
         sh = self.vl.get_segment(self.x).spatial_headway
+        next_boundary = self.x + self.dtz
+        
+        clear_distance_after_boundary = nearest - next_boundary
+        
+        if clear_distance_after_boundary <= 0:
+            # The obstruction is in the current block or the very next block boundary!
+            blocks_clear = 0
+        else:
+            blocks_clear = int(clear_distance_after_boundary // sh)
 
-        if dist_to_obstruction > 3 * sh:
-            return 3
-        if dist_to_obstruction > 2 * sh:
-            return 2
-        if dist_to_obstruction > sh:
-            return 1
-        return 0
+        if blocks_clear >= 3:
+            return 3  # Green
+        if blocks_clear == 2:
+            return 2  # Double Yellow
+        if blocks_clear == 1:
+            return 1  # Yellow
+            
+        return 0  # Red
 
     def _compute_headway(self) -> float:
         """Temporal headway — seconds until we reach the lead at current speed.
