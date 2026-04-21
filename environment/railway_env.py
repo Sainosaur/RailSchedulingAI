@@ -36,8 +36,10 @@ class ModernizedLine104(gym.Env):
     Gymnasium environment — Line 104 single-train convoy.
 
     Observation  (Box, shape=(7,)):
-        [position, speed, dtz, signal_aspect,
+        [dist_from_last_station, speed, dtz, signal_aspect,
          distance_to_next_station, speed_limit, headway]
+    Note: absolute position is deliberately excluded so the policy is
+    translation-invariant along the line.
 
     Action (Discrete(4)):
         0 = Red (stop)          1 = Yellow (1/3 limit)
@@ -73,25 +75,35 @@ class ModernizedLine104(gym.Env):
         lead_train_speed: float = 20.0,
         render_mode: str | None = None,
         training_mode: bool = False,
+        enable_random_stalls: bool = False,
     ):
         super().__init__()
         self.render_mode = render_mode
         self.lead_train_speed = lead_train_speed
         self.training_mode = training_mode
+        # Gate non-stationarity behind an explicit flag — keep off until the
+        # agent has a working baseline policy on a deterministic lead train.
+        self.enable_random_stalls = enable_random_stalls
         self.active_hazards: set[tuple[float, float]] = set()  # {(block_start, block_end), ...}
 
         # Validation Layer (safety sieve)
         self.vl = ValidationLayer()
 
-        # Spaces
+        # Spaces.  Symmetric action in [-1, +1] is mapped piecewise-linearly
+        # inside step() to a physical acceleration in [-1.0, +0.5] m/s² so
+        # action=0 always means "coast" (not "brake halfway"). An asymmetric
+        # action space makes fresh Gaussian policies brake on average — a
+        # trap the agent never escapes.
         self.action_space = gym.spaces.Box(
             low=np.array([-1.0], dtype=np.float32),
-            high=np.array([0.5], dtype=np.float32),
+            high=np.array([1.0], dtype=np.float32),
             dtype=np.float32,
         )
+        # Max dist_from_last_station / distance_to_next_station bounded by the
+        # longest inter-station span on Line 104 (~22 km). 30 km gives margin.
         self.observation_space = gym.spaces.Box(
             low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
-            high=np.array([80000.0, 30.0, 80000.0, 3.0, 80000.0, 30.0, 10000.0], dtype=np.float32),
+            high=np.array([30000.0, 30.0, 80000.0, 3.0, 30000.0, 30.0, 10000.0], dtype=np.float32),
             dtype=np.float32,
         )
 
@@ -169,8 +181,14 @@ class ModernizedLine104(gym.Env):
             3.  Advance the lead train.
             4.  Compute the reward.
         """
-        # Ensure action is a float scalar
-        proposed_a = float(action[0])
+        # Map symmetric action [-1, +1] to physical acceleration.
+        # +1 → +0.5 m/s² (max throttle),  0 → 0 (coast),  -1 → -1.0 m/s² (emergency brake).
+        raw_action = float(action[0])
+        raw_action = max(-1.0, min(1.0, raw_action))
+        if raw_action >= 0.0:
+            proposed_a = raw_action * self.ACCEL          # [0, +0.5]
+        else:
+            proposed_a = raw_action * abs(self.DECEL)     # [-1.0, 0]
 
         # Current signal aspect (derived from distance to lead train)
         env_aspect = self._get_signal_aspect()
@@ -394,15 +412,14 @@ class ModernizedLine104(gym.Env):
             return 1
         return 0
 
-    def _compute_headway(self) -> float: # ﹀
+    def _compute_headway(self) -> float:
+        """Temporal headway — seconds until we reach the lead at current speed.
+
+        Divides by max(v, 1.0) instead of returning a sentinel so the value
+        still reflects distance when stationary (effectively metres), and
+        correctly reports ≤0 in a collision state.
         """
-        Temporal headway — time gap in seconds between the AI train
-        and the lead train, based on current AI speed.
-        Returns 9999.0 when the AI is stationary to avoid division by zero.
-        """
-        if self.v > 0.01:
-            return (self.lead_x - self.x) / self.v
-        return 9999.0
+        return (self.lead_x - self.x) / max(self.v, 1.0)
 
     def _compute_ideal_schedule(self) -> list[float]:
         """Pre-compute ideal travel times to each station (seconds).
@@ -429,8 +446,11 @@ class ModernizedLine104(gym.Env):
             lead_stalled  — forces emergency braking to a full stop
             lead_held     — freezes the dwell timer at a station
         """
-        # --- Random Stalls for Training Mode ---
-        if self.training_mode and self.lead_dwell_timer == 0 and not self.lead_stalled and not self.lead_held:
+        # --- Random Stalls for Training Mode (opt-in via enable_random_stalls) ---
+        if (
+            self.training_mode and self.enable_random_stalls
+            and self.lead_dwell_timer == 0 and not self.lead_stalled and not self.lead_held
+        ):
             # 0.1% chance per step (~7 expected stalls per trip) to trigger a random mid-track stall
             if self.np_random.random() < 0.001:
                 self.random_stall_timer = self.np_random.integers(15, 60)  # stall for 15-60 seconds
@@ -574,14 +594,17 @@ class ModernizedLine104(gym.Env):
         """Build the observation vector (7 values)."""
         aspect = self._get_signal_aspect()
         seg = self.vl.get_segment(self.x)
+        last_st_pos = self.STATIONS[self.last_station_idx]
         next_st_pos = self.STATIONS[
             min(self.last_station_idx + 1, len(self.STATIONS) - 1)
         ]
+        dist_from_last_station = max(0.0, self.x - last_st_pos)
         dist_to_next_station = max(0.0, next_st_pos - self.x)
-        headway = self._compute_headway() # ﹀
+        headway = self._compute_headway()
+        obs_headway = float(np.clip(headway, 0.0, 10000.0))
         return np.array(
-            [self.x, self.v, self.dtz, float(aspect),
-             dist_to_next_station, seg.limit_ms, min(headway, 9999.0)],
+            [dist_from_last_station, self.v, self.dtz, float(aspect),
+             dist_to_next_station, seg.limit_ms, obs_headway],
             dtype=np.float32,
         )
         

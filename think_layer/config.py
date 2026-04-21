@@ -19,16 +19,16 @@ class TrainConfig:
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 1_000_000
-    learning_rate: float = 3e-4
-    n_steps: int = 2048          # rollout buffer size per update
-    batch_size: int = 64         # SGD minibatch size
-    n_epochs: int = 10           # PPO clipping epochs per update
-    gamma: float = 0.99          # discount factor
-    gae_lambda: float = 0.95     # GAE advantage estimator
-    clip_range: float = 0.2      # PPO surrogate clip
-    ent_coef: float = 0.01       # entropy bonus for exploration
-    vf_coef: float = 0.5         # value function loss weight
-    max_grad_norm: float = 0.5   # gradient clipping
+    learning_rate: float = 1e-4   # lowered from 3e-4: PPO was finding good policies and then losing them
+    n_steps: int = 4096           # larger rollouts → more stable advantage estimates
+    batch_size: int = 128         # scale minibatch with n_steps
+    n_epochs: int = 10            # PPO clipping epochs per update
+    gamma: float = 0.99           # discount factor
+    gae_lambda: float = 0.95      # GAE advantage estimator
+    clip_range: float = 0.2       # PPO surrogate clip
+    ent_coef: float = 0.02        # increased: keep exploration alive so the agent doesn't collapse to brake
+    vf_coef: float = 0.5          # value function loss weight
+    max_grad_norm: float = 0.5    # gradient clipping
 
     # ── Network Architecture ─────────────────────────────────────────
     # Two hidden layers for both policy and value networks
@@ -41,7 +41,7 @@ class TrainConfig:
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True
-    normalize_reward: bool = True
+    normalize_reward: bool = False  # raw reward needed to diagnose signal health
     norm_obs_clip: float = 10.0
     norm_reward_clip: float = 10.0
 
