@@ -31,7 +31,7 @@ from think_layer.agent import build_agent, make_env
 _HPO_TOTAL_TIMESTEPS = 100_000   # short trial budget
 _HPO_N_ENVS          = 12         # fewer workers → less SubprocVecEnv IPC overhead
                                   # for short trials the spawn cost dominates at 16
-_HPO_MAX_EP_STEPS    = 5_000     # cap episode length so trials don't stall on one ep
+_HPO_MAX_EP_STEPS    = 20_000     # cap episode length so trials don't stall on one ep
 _HPO_N_EVAL_EPS      = 1         # sequential eval is the bottleneck; 1 ep is enough
 _HPO_TB_PREFIX       = "PPO"     # saved as PPO_1, PPO_2 … never PPO_Line104_x
 
