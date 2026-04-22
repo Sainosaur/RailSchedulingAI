@@ -190,9 +190,8 @@ class ModernizedLine104(gym.Env):
         if self.ai_dwell_timer > 0:
             self.ai_dwell_timer -= 1
             proposed_a = 0.0  # override AI request
-        elif self.ai_dwell_timer == 0 and self.v == 0.0 and env_aspect < 3:
-            # Dwell finished but signal is not green — stay stopped
-            proposed_a = 0.0
+        # REMOVED: The environment should NOT forcefully lock the AI at 0.0 just because the signal isn't completely green!
+        # The AI is perfectly allowed to depart on Orange (1) or FlashGreen (2) — the Validation Layer will securely cap its speed.
 
         # ----- 1. Validation Layer (Layers 1–4) -----
         # VL handles the safety check against the aspect and dtz.

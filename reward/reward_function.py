@@ -73,7 +73,7 @@ class RewardConfig:
 
     # Signal compliance — teaches AI to match speed to signal aspect
     signal_compliance_bonus: float = 0.3      # reward for speed matching signal expectation
-    energy_penalty_weight: float = -0.1       # mild traction efficiency signal
+    energy_penalty_weight: float = 0.0        # disabled: previously swallowed progress rewards, trapping AI in cowardice
 
     headway_violation_penalty: float = -300.0 # terminal — exceeds best journey
     collision_penalty: float = -500.0         # terminal — exceeds best journey
