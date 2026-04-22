@@ -58,7 +58,7 @@ class RewardConfig:
     headway_violation_multiplier: float = 1.0 # 1× TH is hard safety limit
 
     k_over: float = 0.5                       # overspeed penalty weight (quadratic)
-    k_under: float = 0.0                      # underspeed penalty weight (linear)
+    k_under: float = 0.1                      # underspeed penalty weight (linear) — non-zero to discourage cowardice
 
     # Kinematic Comfort Limits
     comfortable_acceleration: float = 0.5     # m/s²
@@ -109,6 +109,11 @@ class TrainState:
     # continuous accelerations — a float in [0.0, 1.5], not a discrete int.
     action_delta: float = 0.0  # |safe_a - last_a|  (m/s²)
     applied_traction: float = 0.0  # Positive throttle applied by agent (m/s²), defaults to 0
+
+    # Gap 1 fix: distance to nearest obstruction (lead train, hazard, or station)
+    distance_to_occupied: float = 99999.0
+    # Gap 3 fix: whether the AI is in a forced station dwell
+    is_dwelling: bool = False
 
 
 # Reward components
@@ -161,9 +166,15 @@ def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     d_from: float = max(0.0, state.current_position - state.last_station_position)
     d_to: float = max(0.0, state.next_station_position - state.current_position)
 
+    # Gap 1 fix: use the nearest obstruction (lead train, hazard, station)
+    # instead of just the next station for the braking envelope.
+    # This ensures the target speed drops to 0 as the AI approaches
+    # a Red signal, aligning the reward with the Validation Layer.
+    d_brake: float = min(d_to, state.distance_to_occupied)
+
     # Kinematic dynamic bounds (v^2 = u^2 + 2as => v = sqrt(2as))
     v_accel = math.sqrt(2 * config.comfortable_acceleration * d_from)
-    v_brake = math.sqrt(2 * config.comfortable_deceleration * d_to)
+    v_brake = math.sqrt(2 * config.comfortable_deceleration * d_brake)
     
     v_target: float = min(v_max, v_accel, v_brake)
     
@@ -177,13 +188,22 @@ def _compute_energy_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.energy_penalty_weight * state.applied_traction
 
 def _compute_heartbeat_penalty(state: TrainState, config: RewardConfig) -> float:
+    # Gap 3 fix: don't penalise the AI for sitting still during a
+    # forced station dwell — it has no control over this period.
+    if state.is_dwelling:
+        return 0.0
     return config.heartbeat_penalty
 
 def _compute_override_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.override_penalty if state.overridden else 0.0
 
 def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
-    # Penalize the magnitude of the action shift squared (e.g., jump of 1 = -20, jump of 3 = -180)
+    # Gap 2 fix: only penalise voluntary jerk from the AI's own action
+    # changes.  When the VL overrides, the jerk is the VL's doing — the
+    # AI is already punished via the override penalty.
+    if state.overridden:
+        return 0.0
+    # Penalize the magnitude of the action shift squared (e.g., jump of 1 = -2, jump of 1.5 = -4.5)
     return config.jerk_penalty * (state.action_delta ** 2)
 
 def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:

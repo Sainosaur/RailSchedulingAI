@@ -321,6 +321,8 @@ class ModernizedLine104(gym.Env):
             overridden=overridden,
             action_delta=action_delta,
             applied_traction=applied_traction,
+            distance_to_occupied=self._dist_to_nearest_occupied(),
+            is_dwelling=(self.ai_dwell_timer > 0),
         )
 
         reward_out = compute_reward(state)
