@@ -20,7 +20,11 @@ class TrainConfig:
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 5_000_000
     learning_rate: float = 0.00041122409178063574
-    n_steps: int = 2048          # rollout buffer size per env per update (halved; total = n_envs × n_steps)
+    n_steps: int = 4096         # rollout buffer size per env per update
+                                 # total rollout = n_envs × n_steps = 65,536 steps
+                                 # KEEP HIGH: halving to 2048 doubles update frequency
+                                 # and cuts FPS ~40% because gradient steps steal time
+                                 # from env stepping. 4096 was the pre-regression value.
     batch_size: int = 256        # SGD minibatch size (larger = better GPU utilisation on 4GB VRAM)
     n_epochs: int = 4            # PPO clipping epochs per update (4 balances speed vs learning quality)
     gamma: float = 0.99          # discount factor (prioritizes ~1000s into future for train braking dynamics)
