@@ -101,6 +101,8 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         ent_coef=config.ent_coef,
         vf_coef=config.vf_coef,
         max_grad_norm=config.max_grad_norm,
+        use_sde=True,          # Enable State-Dependent Exploration for smooth continuous actions
+        sde_sample_freq=4,     # Resample noise matrix every 4 environment steps
         tensorboard_log=config.log_dir,
         seed=config.seed,
         verbose=1,  # Print training progress including FPS to terminal

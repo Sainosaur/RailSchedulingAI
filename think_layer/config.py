@@ -9,7 +9,6 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Root of the think_layer package
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
 
@@ -18,62 +17,49 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 3_000_000
-    learning_rate: float = 1.05e-05
-    n_steps: int = 1024         # rollout buffer size per env per update
-                                 # total rollout = n_envs × n_steps = 65,536 steps
-                                 # KEEP HIGH: halving to 2048 doubles update frequency
-                                 # and cuts FPS ~40% because gradient steps steal time
-                                 # from env stepping. 4096 was the pre-regression value.
-    batch_size: int = 512        # SGD minibatch size — on CPU larger = fewer gradient passes per rollout
-                                 # (65,536 / 512) × 4 epochs = 512 steps vs 1,024 at bs=256; ~2× update speedup
-    n_epochs: int = 4            # PPO clipping epochs per update (4 balances speed vs learning quality)
-    gamma: float = 0.999          # discount factor (prioritizes ~1000s into future for train braking dynamics)
-    gae_lambda: float = 0.95     # GAE advantage estimator
-    clip_range: float = 0.2      # PPO surrogate clip
-    ent_coef: float = 0.05       # entropy bonus for exploration (INCREASED to break cowardice)
-    vf_coef: float = 0.5         # value function loss weight
-    max_grad_norm: float = 0.5   # gradient clipping
+    total_timesteps: int   = 3_000_000
+    learning_rate:   float = 1e-5   # SB3 default
+    n_steps:         int   = 2048   # SB3 default
+    batch_size:      int   = 512     # SB3 default
+    n_epochs:        int   = 5     # SB3 default
+    gamma:           float = 0.999   # SB3 default
+    gae_lambda:      float = 0.95   # SB3 default
+    clip_range:      float = 0.2    # SB3 default
+    ent_coef:        float = 0.005    # SB3 default
+    vf_coef:         float = 0.5    # SB3 default
+    max_grad_norm:   float = 0.5    # SB3 default
 
     # ── Network Architecture ─────────────────────────────────────────
-    # [64, 64] is ~4× faster per gradient pass than [128, 128] on CPU.
-    # For a low-dimensional control task (train speed/position) two 64-unit
-    # layers have ample capacity. Switch to [128, 128] only if value loss
-    # shows persistent underfitting.
-    policy_net: list[int] = field(default_factory=lambda: [64, 64])
-    value_net: list[int] = field(default_factory=lambda: [64, 64])
+    policy_net: list[int] = field(default_factory=lambda: [64, 64])  # SB3 default
+    value_net:  list[int] = field(default_factory=lambda: [64, 64])  # SB3 default
 
     # ── Environment ──────────────────────────────────────────────────
-    lead_train_speed: float = 20.0  # m/s — midpoint; randomised per episode in training_mode
-    max_episode_steps: int = 15_000  # truncation safety net
-    n_envs: int = 12                 # SubprocVecEnv workers — on a 16-core machine use 12
-                                     # The main process needs ~2 cores for GAE + gradient updates;
-                                     # 16/16 starves it and causes context-switch thrash during PPO updates.
+    lead_train_speed:  float = 20.0
+    max_episode_steps: int   = 15_000
+    n_envs:            int   = 12    # 12 of 16 cores; leaves 4 for main process + OS
 
     # ── Normalisation ────────────────────────────────────────────────
-    normalize_obs: bool = True
-    normalize_reward: bool = True
-    norm_obs_clip: float = 10.0
+    normalize_obs:    bool  = True
+    normalize_reward: bool  = True
+    norm_obs_clip:    float = 10.0
     norm_reward_clip: float = 10.0
 
     # ── Reproducibility ──────────────────────────────────────────────
     seed: int = 42
 
     # ── Checkpointing & Evaluation ───────────────────────────────────
-    checkpoint_freq: int = 250_000   # save a checkpoint every N steps
-    eval_freq: int = 50_000          # run evaluation every N steps
-    eval_episodes: int = 5           # episodes per evaluation round
+    checkpoint_freq: int = 250_000
+    eval_freq:       int = 50_000
+    eval_episodes:   int = 5
 
     # ── Paths ────────────────────────────────────────────────────────
-    log_dir: str = str(_PACKAGE_DIR / "runs")
-    model_dir: str = str(_PACKAGE_DIR / "models")
+    log_dir:     str = str(_PACKAGE_DIR / "runs")
+    model_dir:   str = str(_PACKAGE_DIR / "models")
     results_dir: str = str(_PACKAGE_DIR / "results")
 
     def __post_init__(self):
-        """Create output directories if they don't exist."""
         for d in (self.log_dir, self.model_dir, self.results_dir):
             os.makedirs(d, exist_ok=True)
 
 
-# Singleton default config
 DEFAULT_CONFIG = TrainConfig()
