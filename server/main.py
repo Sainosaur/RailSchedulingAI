@@ -43,8 +43,14 @@ class ConnectionManager:
         self.active.remove(ws)
 
     async def broadcast(self, data: dict):
+        dead = []
         for ws in self.active:
-            await ws.send_json(data)
+            try:
+                await ws.send_json(data)
+            except (RuntimeError, Exception):
+                dead.append(ws)
+        for ws in dead:
+            self.active.remove(ws)
 
 
 app = FastAPI()
