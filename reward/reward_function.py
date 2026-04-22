@@ -69,7 +69,7 @@ class RewardConfig:
     # Behavioural and Operational penalties — see constraint derivation above.
     heartbeat_penalty: float = -0.05          # per-step stall pressure
     override_penalty: float = -2.0            # VL intervention cost
-    jerk_penalty: float = -2.0                # harsh action change cost
+    jerk_penalty: float = -0.05               # harsh action change cost (REDUCED to let PPO explore without terror)
 
     # Signal compliance — teaches AI to match speed to signal aspect
     signal_compliance_bonus: float = 0.3      # reward for speed matching signal expectation
@@ -173,7 +173,9 @@ def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     
     v: float = state.current_speed
     v_max: float = state.speed_limit
-    d_from: float = max(0.0, state.current_position - state.last_station_position)
+    # Force a minimum distance so the target speed is NEVER 0.0 when cleared to depart. 
+    # This prevents an inescapable cowardice trap at the station.
+    d_from: float = max(20.0, state.current_position - state.last_station_position)
     d_to: float = max(0.0, state.next_station_position - state.current_position)
 
     # Gap 1 fix: use the nearest obstruction (lead train, hazard, station)
@@ -250,8 +252,8 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     bonus = config.signal_compliance_bonus
 
     if state.signal_aspect == 3:  # Green — should be driving
-        if v > v_lim * 0.4:
-            return bonus
+        # Give a linear bonus proportional to speed: immediate dense gradient for accelerating!
+        return bonus * min(1.0, v / v_lim)
     elif state.signal_aspect == 2:  # FlashGreen — coast for efficiency
         if abs(a) < 0.1:  # coasting (near zero acceleration)
             return bonus * 0.5

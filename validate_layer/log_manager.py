@@ -12,8 +12,11 @@ from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Hardcoded reset flag — set to True to wipe the log on next run.
+# LOG_ENABLED flag — set to False during PPO training to prevent disk I/O thrashing.
 # ---------------------------------------------------------------------------
 LOG_RESET: bool = True
+LOG_ENABLED: bool = False
+
 # Log file lives inside validate_layer/
 _LOG_DIR = str(Path(__file__).resolve().parent)
 _LOG_FILENAME = "override_log.csv"
@@ -35,6 +38,9 @@ def init_log() -> None:
     * If LOG_RESET is False → create the log only if it does not exist
       (preserving previous rows).
     """
+    if not LOG_ENABLED:
+        return
+
     if LOG_RESET and os.path.exists(_LOG_PATH):
         os.remove(_LOG_PATH)
 
@@ -46,6 +52,9 @@ def init_log() -> None:
 def append_row(timestamp: float, original: float, corrected: float,
                constraint_id: str) -> None:
     """Append a single override event row to the log."""
+    if not LOG_ENABLED:
+        return
+
     with open(_LOG_PATH, "a", newline="") as fh:
         csv.writer(fh).writerow(
             [timestamp, original, corrected, constraint_id]
