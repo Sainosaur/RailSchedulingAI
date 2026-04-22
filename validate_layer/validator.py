@@ -82,6 +82,9 @@ class ValidationLayer:
         # Layer 4 — XAI log (managed by log_manager.py)
         init_log()
 
+        # Step size (matching environment)
+        self.dt = 0.1
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -353,9 +356,19 @@ class ValidationLayer:
 
         # 4. Violation Resolution
         seg = self.get_segment(x)
-        _, distance_available = self._speed_for_aspect(env_aspect, seg, dtz)
+        v_safe_limit, distance_available = self._speed_for_aspect(env_aspect, seg, dtz)
 
-        if distance_available > 0.1:
+        if "_Limit" in constraint:
+            # SPEED LIMIT CLAMPING: We are exceeding a kinematic limit.
+            # Calculate exactly what 'a' will keep us at/below the limit.
+            # u + a*dt = v_safe_limit => a = (v_safe_limit - u) / dt
+            # Plus a tiny buffer (-0.001) to stay below the 0.01 threshold.
+            a_needed = (v_safe_limit - u - 0.001) / self.dt
+            # This can be positive (if we are under the limit but the PPO action was too high)
+            # or negative (if we are already over the limit).
+            safe_a = float(max(EMERGENCY_DECEL, min(ACCEL, a_needed)))
+        elif distance_available > 0.1:
+            # SAFETY BRAKING: We are approaching a Red/Yellow or obstacle.
             a_needed = -(u**2) / (2.0 * distance_available)
             safe_a = float(max(EMERGENCY_DECEL, min(0.0, a_needed)))
         else:
@@ -364,8 +377,6 @@ class ValidationLayer:
         self._log_override(proposed_a, safe_a, constraint)
 
         # 5. Differentiate: Is this a "Safety" violation?
-        # Safety violations = Aspect, Kinematic Target, or Track Bounds.
-        # System Clamps = Segment Limits (e.g. S3_Limit).
         is_safety = True
         if "_Limit" in constraint or constraint == "Hardware_Limit_Clamp":
             is_safety = False
