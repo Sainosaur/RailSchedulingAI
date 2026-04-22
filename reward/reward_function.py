@@ -286,6 +286,7 @@ class RewardOutput:
     r_speed: float
     r_heartbeat: float
     r_signal_compliance: float
+    r_patience: float  
     # Event
     r_station: float
     r_time: float
@@ -303,63 +304,50 @@ class RewardOutput:
     # Episode control
     terminate: bool
 
+# 2. Update the compute_reward function
 def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> RewardOutput:
-    """
-    Compute the full reward for one timestep, incorporating anti-cowardice logic.
-    """
-    # 1. Existence tax (The "Anti-Cowardice" clock)
     r_existence = config.existence_penalty 
 
-    # 2. Continuous rewards (every timestep)
+    # --- PATIENCE LOGIC ---
+    # Offset the existence penalty if correctly stopped at a station waiting for Green
+    r_patience = 0.0
+    if state.current_speed < 0.1 and state.signal_aspect < 3 and state.station_index > 0:
+        r_patience = abs(config.existence_penalty)
+    # ----------------------
+
     r_progress  = _compute_progress_reward(state, config)
     r_headway   = _compute_headway_penalty(state, config)
     r_speed     = _compute_speed_reward(state, config)
     r_heartbeat = _compute_heartbeat_penalty(state, config)
     r_signal_compliance = _compute_signal_compliance_reward(state, config)
  
-    # 3. Event rewards (on specific triggers)
     r_station   = _compute_station_reward(state, config)
     r_time      = _compute_punctuality_penalty(state, config)
     r_override  = _compute_override_penalty(state, config)
     r_jerk      = _compute_jerk_penalty(state, config)
     r_energy    = _compute_energy_penalty(state, config)
  
-    # 4. Terminal penalties (end of episode)
     r_violation, terminate_violation = _compute_headway_violation(state, config)
     r_collision, terminate_collision = _compute_collision_penalty(state, config)
  
-    # --- Aggregation ---
-    
-    # We fold the existence tax into the continuous reward total.
-    # This means even if the train is stationary, it's losing points every step.
+    # Aggregate including r_patience
     r_continuous = (r_progress + r_headway + r_speed + 
-                    r_heartbeat + r_signal_compliance + r_existence)
+                    r_heartbeat + r_signal_compliance + r_existence + r_patience)
     
     r_event      = r_station + r_time + r_override + r_jerk + r_energy
     r_terminal   = r_violation + r_collision
-    
     r_total      = r_continuous + r_event + r_terminal
     
-    # Episode should end if a safety violation or collision occurs
     terminate    = terminate_violation or terminate_collision
  
     return RewardOutput(
-        r_progress=r_progress,
-        r_headway=r_headway,
-        r_speed=r_speed,
-        r_heartbeat=r_heartbeat,
-        r_signal_compliance=r_signal_compliance,
-        r_station=r_station,
-        r_time=r_time,
-        r_override=r_override,
-        r_jerk=r_jerk,
-        r_energy=r_energy,
-        r_violation=r_violation,
-        r_collision=r_collision,
-        r_continuous=r_continuous,
-        r_event=r_event,
-        r_terminal=r_terminal,
-        r_total=r_total,
+        r_progress=r_progress, r_headway=r_headway, r_speed=r_speed,
+        r_heartbeat=r_heartbeat, r_signal_compliance=r_signal_compliance,
+        r_patience=r_patience,
+        r_station=r_station, r_time=r_time, r_override=r_override,
+        r_jerk=r_jerk, r_energy=r_energy, r_violation=r_violation,
+        r_collision=r_collision, r_continuous=r_continuous,
+        r_event=r_event, r_terminal=r_terminal, r_total=r_total,
         terminate=terminate
     )
 
