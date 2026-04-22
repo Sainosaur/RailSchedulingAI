@@ -172,6 +172,19 @@ class ModernizedLine104(gym.Env):
             4.  Advance the lead train.
             5.  Compute the reward.
         """
+        # --- In railway_env.py Step Function ---
+
+        # Determine if the train is currently at a station boundary
+        at_station = (self.v < 0.1 and self.dtz < 0.5)
+
+        # THE INTERLOCK: Force throttle to 0 if:
+        # 1. Dwell timer is still counting down OR
+        # 2. We are at a station and the signal is NOT Green (3)
+        if self.ai_dwell_timer > 0 or (at_station and env_aspect < 3):
+            if self.ai_dwell_timer > 0:
+                self.ai_dwell_timer -= 1
+            proposed_a = 0.0  # Force stop
+        
         # Ensure action is a float scalar
         proposed_a = float(action[0])
 
