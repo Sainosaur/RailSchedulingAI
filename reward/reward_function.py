@@ -184,11 +184,14 @@ def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     # a Red signal, aligning the reward with the Validation Layer.
     d_brake: float = min(d_to, state.distance_to_occupied)
 
-    # Kinematic dynamic bounds (v^2 = u^2 + 2as => v = sqrt(2as))
-    v_accel = math.sqrt(2 * config.comfortable_acceleration * d_from)
+    # Braking envelope only (v^2 = 2as => v = sqrt(2as)).
+    # v_accel removed: it clamped v_target to 4.47 m/s right after every station
+    # (d_from clamped to 20m), teaching the agent to crawl away from stops.
+    # Departure acceleration is guided by heartbeat + progress already.
+    # Trapezoid analysis confirmed: dynamic formula applies to BRAKING only.
     v_brake = math.sqrt(2 * config.comfortable_deceleration * d_brake)
-    
-    v_target: float = min(v_max, v_accel, v_brake)
+
+    v_target: float = min(v_max, v_brake)
     
     overspeed: float = max(0.0, v - v_target)
     underspeed: float = max(0.0, v_target - v)
@@ -261,8 +264,12 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
         if a < 0.0:
             return bonus
     elif state.signal_aspect == 0:  # Red — should be stopped
+        # Reduced from 1.5× to 0.1×: the original +0.45/step made sitting still at
+        # a red signal MORE profitable than the progress reward from moving (+0.04/step).
+        # Agent found a stable local optimum — stop at station, earn free reward forever.
+        # Tiny bonus still acknowledges correct behaviour without creating a cowardice trap.
         if v < 1.0:
-            return bonus * 1.5
+            return bonus * 0.1
     
     return 0.0
 
