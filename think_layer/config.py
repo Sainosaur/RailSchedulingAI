@@ -38,7 +38,7 @@ class TrainConfig:
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0  # m/s — midpoint; randomised per episode in training_mode
     max_episode_steps: int = 15_000  # truncation safety net
-    n_envs: int = 32                 # parallel environments (DummyVecEnv; ~linear FPS scaling without IPC overhead)
+    n_envs: int = 16                 # parallel SubprocVecEnv workers (1 per core, ~500MB each)
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True

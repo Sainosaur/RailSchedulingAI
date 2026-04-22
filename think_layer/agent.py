@@ -65,11 +65,12 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         )
         for i in range(config.n_envs)
     ]
-    if config.n_envs > 1 and getattr(config, 'use_subproc', False):
+    if config.n_envs > 1:
+        # SubprocVecEnv: true parallelism across CPU cores.
+        # This env has non-trivial step cost (physics + validation + reward),
+        # so parallel stepping outweighs the IPC serialisation overhead.
         venv = SubprocVecEnv(env_fns)
     else:
-        # DummyVecEnv: no IPC overhead, dramatically lower RAM usage.
-        # For lightweight pure-Python envs this is faster than SubprocVecEnv.
         venv = DummyVecEnv(env_fns)
 
     # 2. Observation & reward normalisation
