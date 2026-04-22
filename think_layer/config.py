@@ -25,7 +25,8 @@ class TrainConfig:
                                  # KEEP HIGH: halving to 2048 doubles update frequency
                                  # and cuts FPS ~40% because gradient steps steal time
                                  # from env stepping. 4096 was the pre-regression value.
-    batch_size: int = 256        # SGD minibatch size (larger = better GPU utilisation on 4GB VRAM)
+    batch_size: int = 512        # SGD minibatch size — on CPU larger = fewer gradient passes per rollout
+                                 # (65,536 / 512) × 4 epochs = 512 steps vs 1,024 at bs=256; ~2× update speedup
     n_epochs: int = 4            # PPO clipping epochs per update (4 balances speed vs learning quality)
     gamma: float = 0.99          # discount factor (prioritizes ~1000s into future for train braking dynamics)
     gae_lambda: float = 0.95     # GAE advantage estimator
@@ -35,14 +36,19 @@ class TrainConfig:
     max_grad_norm: float = 0.5   # gradient clipping
 
     # ── Network Architecture ─────────────────────────────────────────
-    # Two hidden layers for both policy and value networks
-    policy_net: list[int] = field(default_factory=lambda: [128, 128])
-    value_net: list[int] = field(default_factory=lambda: [128, 128])
+    # [64, 64] is ~4× faster per gradient pass than [128, 128] on CPU.
+    # For a low-dimensional control task (train speed/position) two 64-unit
+    # layers have ample capacity. Switch to [128, 128] only if value loss
+    # shows persistent underfitting.
+    policy_net: list[int] = field(default_factory=lambda: [64, 64])
+    value_net: list[int] = field(default_factory=lambda: [64, 64])
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0  # m/s — midpoint; randomised per episode in training_mode
     max_episode_steps: int = 15_000  # truncation safety net
-    n_envs: int = 16                 # parallel SubprocVecEnv workers (1 per core, ~500MB each)
+    n_envs: int = 12                 # SubprocVecEnv workers — on a 16-core machine use 12
+                                     # The main process needs ~2 cores for GAE + gradient updates;
+                                     # 16/16 starves it and causes context-switch thrash during PPO updates.
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True

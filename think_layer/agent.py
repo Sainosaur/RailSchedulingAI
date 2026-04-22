@@ -103,7 +103,7 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         max_grad_norm=config.max_grad_norm,
         tensorboard_log=config.log_dir,
         seed=config.seed,
-        verbose=0,  # Zero output increases FPS
+        verbose=1,  # Print training progress including FPS to terminal
         device="cpu",   # MLP policy is too small for GPU benefit; CPU avoids transfer overhead
         policy_kwargs=dict(
             net_arch=dict(
