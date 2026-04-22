@@ -230,16 +230,20 @@ def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.jerk_penalty * (state.action_delta ** 2)
 
 def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -> float:
-    """Reward AI for matching its behaviour to the current signal aspect.
+    """Reward AI for VOLUNTARILY matching its behaviour to the signal.
     
-    Teaches proactive driving: brake BEFORE signal turns Red,
-    accelerate when clear. Dense but small — guides without drowning.
+    Only fires when VL did NOT override — AI can't get credit for
+    VL-forced compliance. Teaches proactive driving.
     
-    Green (3):      reward if at reasonable speed (> 50% of limit)
-    FlashGreen (2): reward if coasting or gentle braking
+    Green (3):      reward if driving at reasonable speed
+    FlashGreen (2): reward if coasting (a ≈ 0) — energy efficient
     Orange (1):     reward if actively braking
-    Red (0):        reward if stopped or nearly stopped near occupied zone
+    Red (0):        reward if stopped voluntarily
     """
+    # No credit if VL did the work
+    if state.overridden:
+        return 0.0
+
     v = state.current_speed
     v_lim = state.speed_limit
     a = state.applied_acceleration
@@ -248,15 +252,15 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     if state.signal_aspect == 3:  # Green — should be driving
         if v > v_lim * 0.4:
             return bonus
-    elif state.signal_aspect == 2:  # FlashGreen — should be cautious
-        if a <= 0.0:  # coasting or braking
+    elif state.signal_aspect == 2:  # FlashGreen — coast for efficiency
+        if abs(a) < 0.1:  # coasting (near zero acceleration)
             return bonus * 0.5
     elif state.signal_aspect == 1:  # Orange — should be braking
-        if a < 0.0:  # actively braking
+        if a < 0.0:
             return bonus
     elif state.signal_aspect == 0:  # Red — should be stopped
-        if v < 1.0:  # stopped or nearly stopped
-            return bonus * 1.5  # extra reward for correct Red compliance
+        if v < 1.0:
+            return bonus * 1.5
     
     return 0.0
 
