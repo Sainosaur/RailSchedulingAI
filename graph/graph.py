@@ -175,6 +175,19 @@ def graph() -> net.Graph:
                 boundaries.append(
                     Block(start=boundaries[-1].end, end=float(end_m), hazard=False)
                 )
+            # Merge the last zone into the second-to-last if it is shorter
+            # than SH.  This guarantees every zone has length >= SH, which
+            # is required for correct DTZ and headway spacing.
+            if len(boundaries) >= 2:
+                last_len = boundaries[-1].end - boundaries[-1].start
+                if last_len < sh:
+                    # Absorb last zone into its predecessor
+                    boundaries[-2] = Block(
+                        start=boundaries[-2].start,
+                        end=boundaries[-1].end,
+                        hazard=boundaries[-2].hazard or boundaries[-1].hazard,
+                    )
+                    boundaries.pop()
             g.add_edge(
                 station.name,
                 next_station.name,
@@ -227,6 +240,14 @@ def build_vl_segments() -> list[VLSegment]:
             pos += sh
         if boundaries[-1] < end_m:
             boundaries.append(float(end_m))
+        # Merge the last zone into the second-to-last if it is shorter
+        # than SH — matching the Block-level merge above.
+        if len(boundaries) >= 3:
+            last_zone_len = boundaries[-1] - boundaries[-2]
+            if last_zone_len < sh:
+                # Remove the second-to-last boundary so the final zone
+                # absorbs both and has length >= SH.
+                del boundaries[-2]
 
         segments.append(
             VLSegment(

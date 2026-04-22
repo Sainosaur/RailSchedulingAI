@@ -108,6 +108,7 @@ class ModernizedLine104(gym.Env):
         self.visited_stations: set[int] = set()
         self.last_a: float = 0.0  # Track the last *executed* acceleration for jerk calculation
         self.step_count: int = 0
+        self.ai_dwell_timer: int = 0  # seconds remaining at station for AI train
         self.lead_stalled: bool = False   # external stall command (frontend)
         self.lead_held: bool = False      # external hold at station (frontend)
         self.random_stall_timer: int = 0  # mid-track random stalls during training
@@ -140,6 +141,7 @@ class ModernizedLine104(gym.Env):
         self.visited_stations = {0}  # starting station already "visited"
         self.last_a = 0.0
         self.step_count = 0
+        self.ai_dwell_timer = 0
 
         # Lead train begins ~2 km ahead
         self.lead_x = self.TRACK_START + 2000.0
@@ -164,16 +166,29 @@ class ModernizedLine104(gym.Env):
     def step(self, action: np.ndarray):
         """
         Execute one environment step:
-            1.  Validate the proposed continuous acceleration through the safety sieve.
-            2.  Apply direct acceleration physics.
-            3.  Advance the lead train.
-            4.  Compute the reward.
+            1.  Handle AI station dwell (if dwelling, train stays stopped).
+            2.  Validate the proposed continuous acceleration through the safety sieve.
+            3.  Apply direct acceleration physics.
+            4.  Advance the lead train.
+            5.  Compute the reward.
         """
         # Ensure action is a float scalar
         proposed_a = float(action[0])
 
         # Current signal aspect (derived from distance to lead train)
         env_aspect = self._get_signal_aspect()
+
+        # ----- 0. AI dwell at station -----
+        # While dwelling, the AI train is forced to remain stopped.
+        # After the dwell timer expires the AI may only depart when
+        # the signal ahead is Green (3), matching real railway ops:
+        # a train must not depart into blocked track.
+        if self.ai_dwell_timer > 0:
+            self.ai_dwell_timer -= 1
+            proposed_a = 0.0  # override AI request
+        elif self.ai_dwell_timer == 0 and self.v == 0.0 and env_aspect < 3:
+            # Dwell finished but signal is not green — stay stopped
+            proposed_a = 0.0
 
         # ----- 1. Validation Layer (Layers 1–4) -----
         # VL handles the safety check against the aspect and dtz.
@@ -256,6 +271,18 @@ class ModernizedLine104(gym.Env):
                 reached_new_station = True
                 self.last_station_idx = next_st_idx
                 self.visited_stations.add(next_st_idx)
+
+                # --- AI station dwell ---
+                # Snap to station, zero speed, start dwell timer.
+                # The AI stops right at the segment boundary (the
+                # station is an infinitesimally small point).
+                self.x = self.STATIONS[next_st_idx]
+                self.v = 0.0
+                # Sample dwell from the same range as the lead train
+                if next_st_idx < len(self.STATIONS) - 1:  # not terminus
+                    self.ai_dwell_timer = int(self.np_random.integers(
+                        self.LEAD_DWELL_RANGE[0], self.LEAD_DWELL_RANGE[1]
+                    ))
                 
                 # BUG 13 FIX: Supply arrival times to TrainState so the
                 # punctuality penalty is actually calculated.
@@ -331,13 +358,18 @@ class ModernizedLine104(gym.Env):
     def render(self):
         if self.render_mode == "human":
             seg = self.vl.get_segment(self.x)
+            d_obs = self._dist_to_nearest_occupied()
+            dwell_str = f" DWELL={self.ai_dwell_timer}s" if self.ai_dwell_timer > 0 else ""
             print(
                 f"t={self.time:7.1f}s | "
                 f"x={self.x:8.1f}m | "
                 f"v={self.v:5.2f} m/s ({self.v * 3.6:5.1f} km/h) | "
                 f"seg={seg.id} | "
                 f"dtz={self.dtz:8.1f}m | "
-                f"lead={self.lead_x:8.1f}m"
+                f"lead={self.lead_x:8.1f}m | "
+                f"d_occ={d_obs:8.1f}m | "
+                f"sig={self._get_signal_aspect()}"
+                f"{dwell_str}"
             )
 
     # ------------------------------------------------------------------
@@ -368,6 +400,23 @@ class ModernizedLine104(gym.Env):
             if h_start > from_x:
                 nearest = min(nearest, h_start)
         return nearest
+
+    def _dist_to_nearest_occupied(self) -> float:
+        """Distance from the AI train to the nearest occupied boundary.
+
+        Includes:
+            1. Lead train
+            2. Any hazard block ahead
+            3. Next station boundary (where AI must stop)
+
+        Returns distance in metres (always >= 0).
+        """
+        nearest_pos = self._nearest_obstruction(self.x)
+        # Also consider the next station boundary
+        next_st_idx = self.last_station_idx + 1
+        if next_st_idx < len(self.STATIONS):
+            nearest_pos = min(nearest_pos, self.STATIONS[next_st_idx])
+        return max(0.0, nearest_pos - self.x)
 
     def _get_signal_aspect(self) -> int:
         """
