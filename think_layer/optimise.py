@@ -109,7 +109,9 @@ def objective(trial: optuna.Trial) -> float:
     eval_venv.obs_rms = env.obs_rms
     eval_venv.training = False
     
-    eval_cb = TrialEvalCallback(eval_venv, trial, n_eval_episodes=3, eval_freq=config.eval_freq)
+    # Set n_eval_episodes to 1. DummyVecEnv evaluates sequentially, so 3 episodes of 10k steps 
+    # destroys FPS. Doing 1 episode recovers massive FPS while still returning valid bounds.
+    eval_cb = TrialEvalCallback(eval_venv, trial, n_eval_episodes=1, eval_freq=config.eval_freq)
     
     # ── 4. Train ──
     try:
