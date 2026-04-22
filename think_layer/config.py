@@ -18,7 +18,7 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 3_000_000
+    total_timesteps: int = 5_000_000
     learning_rate: float = 0.00041122409178063574
     n_steps: int = 4096          # rollout buffer size per update
     batch_size: int = 64         # SGD minibatch size

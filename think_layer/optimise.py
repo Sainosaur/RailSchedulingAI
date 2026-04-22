@@ -68,10 +68,10 @@ def objective(trial: optuna.Trial) -> float:
     # ── 1. Sample Hyperparameters ──
     kwargs = {
         "learning_rate": trial.suggest_float("lr", 1e-5, 1e-3, log=True),
-        "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
+        "batch_size": trial.suggest_categorical("batch_size", [32, 64, 128]),
         "n_steps": trial.suggest_categorical("n_steps", [1024, 2048, 4096]),
         "gamma": trial.suggest_categorical("gamma", [0.99, 0.995, 0.999, 0.9999]),
-        "ent_coef": trial.suggest_float("ent_coef", 0.0001, 0.1, log=True),
+        "ent_coef": trial.suggest_float("ent_coef", 0.0001, 0.5, log=True),
     }
     
     net_arch_type = trial.suggest_categorical("net_arch", ["small", "medium"])

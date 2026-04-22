@@ -4,6 +4,8 @@
 2. **Config**: Update `config.py` with the optimal hyperparameters found in the previous step.
 3. **Train**: Run the main training script to train the model using the configured parameters.
 
+Note: rm think_layer/runs/optuna_study.db before running optimize.py to start fresh.
+
 # TensorBoard
 To monitor training progress, you can use TensorBoard.
 Run the following command in your terminal, replacing `./think_layer/runs` with the path to your actual log directory if it's different:
