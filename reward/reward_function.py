@@ -30,16 +30,16 @@ class RewardConfig:
     Constraint 1 — Good journey must be net positive:
         N_st × station + N_st × k_p + T_good × heartbeat
             + f_accel × T_good × energy × ACCEL  > 0
-        30000 + 6000 - 40 - 0 = +35960   ✓
+        30000 + 12000 - 40 - 0 = +41960   ✓
 
     Constraint 2 — Stalling must be worse than a good journey:
         T_max × (heartbeat + underspeed)  <  Good_total
-        10000 × (-0.01 - 2.2) = -22100  <  +35960   ✓
+        10000 × (-0.01 - 2.2) = -22100  <  +41960   ✓
 
     Constraint 4 — Collision/violation must exceed any positive total:
-        collision = -100000  <  -35960  (Now significantly higher to ensure terminal weight)
+        collision = -10000  (Reduced from -100k to avoid exploration fear)
     """
-    k_p: float = 1000.0                      # incremental progress reward scale (10x)
+    k_p: float = 2000.0                      # incremental progress reward scale (20x)
     station_reward_base: float = 5000.0       # base milestone for station arrival (10x)
     station_escalation: float = 0.3           # escalation rate per station index
     punctuality_factor: float = 0.5           # penalty per second *outside* tolerance
@@ -68,8 +68,8 @@ class RewardConfig:
     k_lazy: float = 0.5                       # penalty for slow acceleration at Green signal
     energy_penalty_weight: float = 0.0        # disabled
 
-    headway_violation_penalty: float = -50000.0 # exceed best journey
-    collision_penalty: float = -100000.0        # exceed best journey
+    headway_violation_penalty: float = -5000.0
+    collision_penalty: float = -10000.0        # high but not catastrophic
 
 DEFAULT_CONFIG = RewardConfig()
 
