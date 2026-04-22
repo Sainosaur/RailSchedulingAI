@@ -98,7 +98,7 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         tensorboard_log=config.log_dir,
         seed=config.seed,
         verbose=1,
-        device="cuda",  # force GPU — 4 GB VRAM is plenty for [128,128] MLP
+        device="cpu",   # MLP policy is too small for GPU benefit; CPU avoids transfer overhead
         policy_kwargs=dict(
             net_arch=dict(
                 pi=config.policy_net,
