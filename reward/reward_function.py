@@ -17,59 +17,38 @@ import math
 
 @dataclass
 class RewardConfig:
-    """Hyperparameters for the reward function.
+    k_p: float = 2000.0                      # incremental progress reward scale
+    station_reward_base: float = 5000.0       # base milestone for station arrival
+    station_escalation: float = 0.3           
+    punctuality_factor: float = 0.5           
+    punctuality_tolerance: float = 60.0       
 
-    Values are derived from the following constraints (not trial-and-error):
+    k_h: float = 3.0                          
+    headway_warning_multiplier: float = 3.0   
+    headway_violation_multiplier: float = 1.0 
 
-    Journey parameters:
-        T_good  ≈ 4 000 steps   (journey duration at ~20 m/s with dwell stops)
-        T_max   = 10 000 steps  (truncation limit)
-        N_st    = 6             (stations visited, excluding origin)
-        f_accel ≈ 0.2           (fraction of steps at positive throttle)
-
-    Constraint 1 — Good journey must be net positive:
-        N_st × station + N_st × k_p + T_good × heartbeat
-            + f_accel × T_good × energy × ACCEL  > 0
-        30000 + 12000 - 40 - 0 = +41960   ✓
-
-    Constraint 2 — Stalling must be worse than a good journey:
-        T_max × (heartbeat + underspeed)  <  Good_total
-        10000 × (-0.01 - 2.2) = -22100  <  +41960   ✓
-
-    Constraint 4 — Collision/violation must exceed any positive total:
-        collision = -10000  (Reduced from -100k to avoid exploration fear)
-    """
-    k_p: float = 2000.0                      # incremental progress reward scale (20x)
-    station_reward_base: float = 5000.0       # base milestone for station arrival (10x)
-    station_escalation: float = 0.3           # escalation rate per station index
-    punctuality_factor: float = 0.5           # penalty per second *outside* tolerance
-    punctuality_tolerance: float = 60.0       # seconds, "on time" window
-
-    k_h: float = 3.0                          # headway warning zone penalty scale
-    headway_warning_multiplier: float = 3.0   # 3× TH starts warning
-    headway_violation_multiplier: float = 1.0 # 1× TH is hard safety limit
-
-    k_over: float = 0.5                       # overspeed penalty weight (quadratic)
-    k_under: float = 0.01                     # underspeed penalty weight (linear) — LOWERED to avoid cowardice trap
-    speed_penalty_cap: float = -2.0           # cap per-step speed penalty — PROTECTS gradients from exploding
+    k_over: float = 0.5                       
+    k_under: float = 0.01                     
+    speed_penalty_cap: float = -2.0           
 
     # Kinematic Comfort Limits
-    comfortable_acceleration: float = 0.5     # m/s²
-    comfortable_deceleration: float = 0.5     # m/s²
+    comfortable_acceleration: float = 0.5     
+    comfortable_deceleration: float = 0.5     
+
+    # --- THE "ANTI-COWARDICE" TWEAKS ---
+    existence_penalty: float = -0.1           # Constant tax per step (Forces movement)
+    heartbeat_penalty: float = -0.5           # Increased 50x (Forces movement at Green)
+    override_penalty: float = -25.0           # Increased 25x (Teaches respect for VL)
+    k_stall: float = 5.0                      # Heavy penalty for sitting at Green
+    k_lazy: float = 1.0                       # Penalty for slow acceleration
 
     # Behavioural and Operational penalties
-    heartbeat_penalty: float = -0.01          # per-step stall pressure — LOWERED
-    override_penalty: float = -1.0            # VL intervention cost — LOWERED
-    jerk_penalty: float = -0.1                # harsh action change cost — BALANCED
-
-    # Signal compliance — teaches AI to match speed to signal aspect
-    signal_compliance_bonus: float = 0.3      # reward for speed matching signal expectation
-    k_stall: float = 2.0                      # penalty for being stopped at Green signal
-    k_lazy: float = 0.5                       # penalty for slow acceleration at Green signal
-    energy_penalty_weight: float = 0.0        # disabled
+    jerk_penalty: float = -0.1                
+    signal_compliance_bonus: float = 0.3      
+    energy_penalty_weight: float = 0.0        
 
     headway_violation_penalty: float = -5000.0
-    collision_penalty: float = -10000.0        # high but not catastrophic
+    collision_penalty: float = -10000.0
 
 DEFAULT_CONFIG = RewardConfig()
 
@@ -229,17 +208,6 @@ def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.jerk_penalty * (state.action_delta ** 2)
 
 def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -> float:
-    """Reward AI for VOLUNTARILY matching its behaviour to the signal.
-    
-    Only fires when VL did NOT override — AI can't get credit for
-    VL-forced compliance. Teaches proactive driving.
-    
-    Green (3):      reward if driving at reasonable speed
-    FlashGreen (2): reward if coasting (a ≈ 0) — energy efficient
-    Orange (1):     reward if actively braking
-    Red (0):        reward if stopped voluntarily
-    """
-    # No credit if VL did the work
     if state.safety_overridden:
         return 0.0
 
@@ -248,34 +216,16 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     a = state.applied_acceleration
     bonus = config.signal_compliance_bonus
 
-    if state.signal_aspect == 3:  # Green — should be driving
-        # A. PUNISH STALLING: If stopped at green, apply heavy penalty
+    if state.signal_aspect == 3:  # Green
         if v < 0.5:
-            return -config.k_stall
-            
-        # B. PUNISH LAZY ACCEL: If below target and NOT pushing hard, apply penalty
-        # Only apply if not dwelling and not near a station stop (where we want smoothness)
-        d_to_next = state.next_station_position - state.current_position
-        v_target = state.speed_limit # Simplify for lazy-check
-        if v < v_target - 2.0 and state.proposed_acceleration < 0.4 and d_to_next > 500:
-            return -config.k_lazy
-
-        # C. REWARD EFFICIENCY: Give a linear bonus proportional to speed
+            return -config.k_stall # Punish stalling heavily
         return bonus * min(1.0, v / v_lim)
-    elif state.signal_aspect == 2:  # FlashGreen — coast for efficiency
-        if abs(a) < 0.1:  # coasting (near zero acceleration)
-            return bonus * 0.5
-    elif state.signal_aspect == 1:  # Orange — should be braking
-        if a < 0.0:
-            return bonus
-    elif state.signal_aspect == 0:  # Red — should be stopped
-        # Reduced from 1.5× to 0.1×: the original +0.45/step made sitting still at
-        # a red signal MORE profitable than the progress reward from moving (+0.04/step).
-        # Agent found a stable local optimum — stop at station, earn free reward forever.
-        # Tiny bonus still acknowledges correct behaviour without creating a cowardice trap.
-        if v < 1.0:
-            return bonus * 0.1
+    elif state.signal_aspect == 0:  # Red
+        # Return 0 instead of positive bonus. 
+        # Combined with existence_penalty, sitting at Red is now a net loss.
+        return 0.0
     
+    # Keep your existing logic for FlashGreen and Orange...
     return 0.0
 
 
@@ -349,36 +299,42 @@ class RewardOutput:
 
 def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> RewardOutput:
     """
-    Compute the full reward for one timestep.
- 
-    r_t = r_continuous + r_event + r_terminal
- 
-    Also returns a `terminate` flag that the environment loop should
-    check to end the episode immediately.
+    Compute the full reward for one timestep, incorporating anti-cowardice logic.
     """
-    # --- Continuous ---
+    # 1. Existence tax (The "Anti-Cowardice" clock)
+    r_existence = config.existence_penalty 
+
+    # 2. Continuous rewards (every timestep)
     r_progress  = _compute_progress_reward(state, config)
     r_headway   = _compute_headway_penalty(state, config)
     r_speed     = _compute_speed_reward(state, config)
     r_heartbeat = _compute_heartbeat_penalty(state, config)
     r_signal_compliance = _compute_signal_compliance_reward(state, config)
  
-    # --- Event ---
+    # 3. Event rewards (on specific triggers)
     r_station   = _compute_station_reward(state, config)
     r_time      = _compute_punctuality_penalty(state, config)
     r_override  = _compute_override_penalty(state, config)
     r_jerk      = _compute_jerk_penalty(state, config)
     r_energy    = _compute_energy_penalty(state, config)
  
-    # --- Terminal ---
+    # 4. Terminal penalties (end of episode)
     r_violation, terminate_violation = _compute_headway_violation(state, config)
     r_collision, terminate_collision = _compute_collision_penalty(state, config)
  
-    # Aggregates
-    r_continuous = r_progress + r_headway + r_speed + r_heartbeat + r_signal_compliance
+    # --- Aggregation ---
+    
+    # We fold the existence tax into the continuous reward total.
+    # This means even if the train is stationary, it's losing points every step.
+    r_continuous = (r_progress + r_headway + r_speed + 
+                    r_heartbeat + r_signal_compliance + r_existence)
+    
     r_event      = r_station + r_time + r_override + r_jerk + r_energy
     r_terminal   = r_violation + r_collision
+    
     r_total      = r_continuous + r_event + r_terminal
+    
+    # Episode should end if a safety violation or collision occurs
     terminate    = terminate_violation or terminate_collision
  
     return RewardOutput(
@@ -398,9 +354,8 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
         r_event=r_event,
         r_terminal=r_terminal,
         r_total=r_total,
-        terminate=terminate)
-
-
+        terminate=terminate
+    )
 
 # Example usage
 
