@@ -17,47 +17,43 @@ import math
 
 @dataclass
 class RewardConfig:
-
-    # 1. Linearise Speed: Change quadratic 0.5 to linear 1.0
-    k_over: float = 1.0                       
-    k_under: float = 1.0 # Boosted from 0.01 to match k_over
-    
-    # 2. Cap the Punctuality "Black Hole"
-    punctuality_penalty_cap: float = -1000.0  # Prevents infinite negative rewards
-    
-    # 3. Boost the "Moving" Incentives
-    k_lazy: float = 5.0 # Increased from 1.0 to force acceleration
-    signal_compliance_bonus: float = 1.0 # Increased from 0.3
+    # 1. Progress & Station Rewards (The "Carrots")
     k_p: float = 2000.0                      # incremental progress reward scale
     station_reward_base: float = 5000.0       # base milestone for station arrival
     station_escalation: float = 0.3           
+    
+    # 2. Linearised Speed Rewards (The "Driver")
+    # Linear 1.0 prevents the "Emergency Braking" panic of quadratic weights.
+    k_over: float = 1.0                       
+    k_under: float = 1.0                      
+    speed_penalty_cap: float = -2.0           
+    
+    # 3. Moving Incentives (The "Anti-Granny" kick)
+    # Rewards pushing the throttle hard when on Green.
+    signal_compliance_bonus: float = 1.0      
+    k_stall: float = 5.0                      # Heavy penalty for sitting at Green
+    k_lazy: float = 5.0                       # Penalty for slow acceleration
+
+    # 4. Punctuality & Temporal (The "Schedule")
     punctuality_factor: float = 0.5           
     punctuality_tolerance: float = 60.0       
+    punctuality_penalty_cap: float = -1000.0  # Cap the punctuality "Black Hole"
 
+    # 5. Continuous Taxes (The "Anti-Cowardice" clock)
+    existence_penalty: float = -0.1           # Tax per step (Forces movement)
+    heartbeat_penalty: float = -0.5           # Forces movement at Green signals
+
+    # 6. Safety & Operational (The "Guardrails")
+    override_penalty: float = -25.0           # High cost for triggerring VL
+    jerk_penalty: float = -0.1                
+    comfortable_acceleration: float = 0.5     
+    comfortable_deceleration: float = 0.5     
+    energy_penalty_weight: float = 0.0        
+
+    # 7. Headway & Collision (The "Disasters")
     k_h: float = 3.0                          
     headway_warning_multiplier: float = 3.0   
     headway_violation_multiplier: float = 1.0 
-
-    k_over: float = 0.5                       
-    k_under: float = 0.01                     
-    speed_penalty_cap: float = -2.0           
-
-    # Kinematic Comfort Limits
-    comfortable_acceleration: float = 0.5     
-    comfortable_deceleration: float = 0.5     
-
-    # --- THE "ANTI-COWARDICE" TWEAKS ---
-    existence_penalty: float = -0.1           # Constant tax per step (Forces movement)
-    heartbeat_penalty: float = -0.5           # Increased 50x (Forces movement at Green)
-    override_penalty: float = -25.0           # Increased 25x (Teaches respect for VL)
-    k_stall: float = 5.0                      # Heavy penalty for sitting at Green
-    k_lazy: float = 1.0                       # Penalty for slow acceleration
-
-    # Behavioural and Operational penalties
-    jerk_penalty: float = -0.1                
-    signal_compliance_bonus: float = 0.3      
-    energy_penalty_weight: float = 0.0        
-
     headway_violation_penalty: float = -5000.0
     collision_penalty: float = -10000.0
 
@@ -154,7 +150,16 @@ def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
 
 
 def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
-    # ... (keep your target v calculations) ...
+    v: float = state.current_speed
+    v_max: float = state.speed_limit
+    
+    # 1. Braking envelope targeting the next station or occupied block ahead
+    d_to: float = max(0.0, state.next_station_position - state.current_position)
+    d_brake: float = min(d_to, state.distance_to_occupied)
+    
+    # v_target is the min of the speed limit and the square-root braking curve
+    v_brake = math.sqrt(2 * config.comfortable_deceleration * d_brake)
+    v_target: float = min(v_max, v_brake)
     
     overspeed = max(0.0, v - v_target)
     underspeed = max(0.0, v_target - v)
@@ -205,16 +210,26 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     bonus = config.signal_compliance_bonus
 
     if state.signal_aspect == 3:  # Green
-    if v < 0.5:
-        return -config.k_stall
-        
-    # when below the speed limit.
-    if v < v_lim - 1.0 and state.proposed_acceleration > 0.4:
-        return config.signal_compliance_bonus * 2.0 
-        
-    return config.signal_compliance_bonus * (v / v_lim)
+        if v < 0.5:
+            return -config.k_stall
+            
+        # when below the speed limit.
+        if v < v_lim - 1.0 and state.proposed_acceleration > 0.4:
+            return config.signal_compliance_bonus * 2.0 
+            
+        return config.signal_compliance_bonus * (v / v_lim)
     
-    # Keep your existing logic for FlashGreen and Orange...
+    elif state.signal_aspect == 2:  # FlashGreen — coast for efficiency
+        if abs(a) < 0.1:  # coasting 
+            return bonus * 0.5
+    elif state.signal_aspect == 1:  # Orange — keep speed low
+        if a < 0.0:
+            return bonus
+    elif state.signal_aspect == 0:  # Red
+        # Return 0 instead of positive bonus. 
+        # Combined with heartbeat + existence_penalty, sitting at Red is now a net loss.
+        return 0.0
+    
     return 0.0
 
 
@@ -242,7 +257,9 @@ def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> flo
 
     deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
     excess = max(0.0, deviation - config.punctuality_tolerance)
-    return -config.punctuality_factor * excess
+    raw_penalty = -config.punctuality_factor * excess
+    
+    return max(config.punctuality_penalty_cap, raw_penalty)
 
 def _compute_headway_violation(state: TrainState, config: RewardConfig) -> tuple[float, bool]:
 
