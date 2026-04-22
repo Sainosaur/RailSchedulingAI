@@ -17,6 +17,17 @@ import math
 
 @dataclass
 class RewardConfig:
+
+    # 1. Linearise Speed: Change quadratic 0.5 to linear 1.0
+    k_over: float = 1.0                       
+    k_under: float = 1.0 # Boosted from 0.01 to match k_over
+    
+    # 2. Cap the Punctuality "Black Hole"
+    punctuality_penalty_cap: float = -1000.0  # Prevents infinite negative rewards
+    
+    # 3. Boost the "Moving" Incentives
+    k_lazy: float = 5.0 # Increased from 1.0 to force acceleration
+    signal_compliance_bonus: float = 1.0 # Increased from 0.3
     k_p: float = 2000.0                      # incremental progress reward scale
     station_reward_base: float = 5000.0       # base milestone for station arrival
     station_escalation: float = 0.3           
@@ -143,40 +154,17 @@ def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
 
 
 def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
+    # ... (keep your target v calculations) ...
     
-    v: float = state.current_speed
-    v_max: float = state.speed_limit
-    # Force a minimum distance so the target speed is NEVER 0.0 when cleared to depart. 
-    # This prevents an inescapable cowardice trap at the station.
-    d_from: float = max(20.0, state.current_position - state.last_station_position)
-    d_to: float = max(0.0, state.next_station_position - state.current_position)
+    overspeed = max(0.0, v - v_target)
+    underspeed = max(0.0, v_target - v)
 
-    # Gap 1 fix: use the nearest obstruction (lead train, hazard, station)
-    # instead of just the next station for the braking envelope.
-    # This ensures the target speed drops to 0 as the AI approaches
-    # a Red signal, aligning the reward with the Validation Layer.
-    d_brake: float = min(d_to, state.distance_to_occupied)
-
-    # Braking envelope only (v^2 = 2as => v = sqrt(2as)).
-    # v_accel removed: it clamped v_target to 4.47 m/s right after every station
-    # (d_from clamped to 20m), teaching the agent to crawl away from stops.
-    # Departure acceleration is guided by heartbeat + progress already.
-    # Trapezoid analysis confirmed: dynamic formula applies to BRAKING only.
-    v_brake = math.sqrt(2 * config.comfortable_deceleration * d_brake)
-
-    v_target: float = min(v_max, v_brake)
-    
-    overspeed: float = max(0.0, v - v_target)
-    underspeed: float = max(0.0, v_target - v)
-
-    # Signal compliance: don't punish underspeed when signal is Red/Orange
-    # and AI is correctly slowing down or stopped. The AI is doing the RIGHT
-    # thing by being cautious — only penalise underspeed on Green/FlashGreen.
     if state.signal_aspect <= 1 and v < 1.0:
         underspeed = 0.0
 
-    raw = -(config.k_over * overspeed**2) - (config.k_under * underspeed)
-    # Principle 3: cap dense speed penalty so it can't drown sparse station rewards
+    # FIXED: Using linear penalties instead of quadratic to stop emergency braking
+    raw = -(config.k_over * overspeed) - (config.k_under * underspeed)
+    
     return max(config.speed_penalty_cap, raw)
 
 def _compute_energy_penalty(state: TrainState, config: RewardConfig) -> float:
@@ -217,13 +205,14 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     bonus = config.signal_compliance_bonus
 
     if state.signal_aspect == 3:  # Green
-        if v < 0.5:
-            return -config.k_stall # Punish stalling heavily
-        return bonus * min(1.0, v / v_lim)
-    elif state.signal_aspect == 0:  # Red
-        # Return 0 instead of positive bonus. 
-        # Combined with existence_penalty, sitting at Red is now a net loss.
-        return 0.0
+    if v < 0.5:
+        return -config.k_stall
+        
+    # when below the speed limit.
+    if v < v_lim - 1.0 and state.proposed_acceleration > 0.4:
+        return config.signal_compliance_bonus * 2.0 
+        
+    return config.signal_compliance_bonus * (v / v_lim)
     
     # Keep your existing logic for FlashGreen and Orange...
     return 0.0

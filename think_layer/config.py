@@ -25,7 +25,7 @@ class TrainConfig:
     gamma:           float = 0.999   # SB3 default
     gae_lambda:      float = 0.95   # SB3 cdefault
     clip_range:      float = 0.2    # SB3 default
-    ent_coef:        float = 0.02     # Increase exploration (was 0.005)
+    ent_coef:        float = 0.05     # Increase exploration (was 0.005)
     vf_coef:         float = 0.5    # SB3 default
     max_grad_norm:   float = 0.5    # SB3 default
 
