@@ -68,7 +68,7 @@ def objective(trial: optuna.Trial) -> float:
     # ── 1. Sample Hyperparameters ──
     kwargs = {
         "learning_rate": trial.suggest_float("lr", 1e-5, 1e-3, log=True),
-        "batch_size": trial.suggest_categorical("batch_size", [32, 64, 128]),
+        "batch_size": trial.suggest_categorical("batch_size", [256, 512]),
         "n_steps": trial.suggest_categorical("n_steps", [1024, 2048, 4096]),
         "gamma": trial.suggest_categorical("gamma", [0.99, 0.995, 0.999, 0.9999]),
         "ent_coef": trial.suggest_float("ent_coef", 0.0001, 0.5, log=True),
@@ -89,7 +89,8 @@ def objective(trial: optuna.Trial) -> float:
     
     # For HPO, we use shorter runs to test more configurations, evaluating frequently to enable pruning
     config.total_timesteps = 100_000  
-    config.eval_freq = 20_000
+    # eval_freq is in _on_step calls (1 call = n_envs timesteps), so divide by n_envs
+    config.eval_freq = 25_000 // config.n_envs  # ~2 evals per 100k trial
     
     # Disable tensorboard logging to save IO and memory across 100s of trials
     model, env = build_agent(config)

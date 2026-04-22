@@ -50,8 +50,9 @@ def train(config: TrainConfig) -> None:
     checkpoint_dir = os.path.join(config.model_dir, "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    # save_freq is in _on_step calls (1 call = n_envs timesteps)
     checkpoint_cb = CheckpointCallback(
-        save_freq=config.checkpoint_freq,
+        save_freq=max(1, config.checkpoint_freq // config.n_envs),
         save_path=checkpoint_dir,
         name_prefix="rl_model",
         verbose=1,
@@ -76,11 +77,12 @@ def train(config: TrainConfig) -> None:
     eval_venv.training = False   # freeze stats during evaluation
     eval_venv.norm_reward = False
 
+    # eval_freq is in _on_step calls (1 call = n_envs timesteps)
     eval_cb = EvalCallback(
         eval_venv,
         best_model_save_path=config.model_dir,
         log_path=config.log_dir,
-        eval_freq=config.eval_freq,
+        eval_freq=max(1, config.eval_freq // config.n_envs),
         n_eval_episodes=config.eval_episodes,
         deterministic=True,
         verbose=1,
