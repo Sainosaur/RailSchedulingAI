@@ -176,7 +176,11 @@ class ModernizedLine104(gym.Env):
         proposed_a = float(action[0])
 
         # Current signal aspect (derived from distance to lead train)
-        env_aspect = self._get_signal_aspect()
+        # Cache per-step to avoid redundant _nearest_obstruction() calls.
+        self._cached_nearest_pos = self._nearest_obstruction(self.x)
+        self._cached_dist_to_occupied = self._dist_to_nearest_occupied_from_cache()
+        env_aspect = self._get_signal_aspect_from_cache()
+        self._cached_aspect = env_aspect
 
         # ----- 0. AI dwell at station -----
         # While dwelling, the AI train is forced to remain stopped.
@@ -321,7 +325,7 @@ class ModernizedLine104(gym.Env):
             overridden=overridden,
             action_delta=action_delta,
             applied_traction=applied_traction,
-            distance_to_occupied=self._dist_to_nearest_occupied(),
+            distance_to_occupied=self._cached_dist_to_occupied,
             is_dwelling=(self.ai_dwell_timer > 0),
             station_index=self.last_station_idx,
             signal_aspect=env_aspect,
@@ -425,22 +429,10 @@ class ModernizedLine104(gym.Env):
         return max(0.0, nearest_pos - self.x)
 
     def _get_signal_aspect(self) -> int:
-        """
-        Derive the 4-aspect signal from the distance to the nearest
-        obstruction (lead train OR hazard block) and the current
-        segment's spatial headway (SH).
-
-        The nearest obstruction determines how many blocks ahead are
-        clear.  SH is the block length:
-            Green  (3) — next 3 blocks clear    (dist > 3 × SH)
-            DblYlw (2) — next 2 blocks clear    (dist > 2 × SH)
-            Yellow (1) — next 1 block  clear     (dist > 1 × SH)
-            Red    (0) — next block occupied     (dist ≤ 1 × SH)
-        """
+        """Compute signal aspect from scratch (uncached — used by reset/render)."""
         nearest = self._nearest_obstruction(self.x)
         dist_to_obstruction = nearest - self.x
         sh = self.vl.get_segment(self.x).spatial_headway
-
         if dist_to_obstruction > 3 * sh:
             return 3
         if dist_to_obstruction > 2 * sh:
@@ -448,6 +440,26 @@ class ModernizedLine104(gym.Env):
         if dist_to_obstruction > sh:
             return 1
         return 0
+
+    def _get_signal_aspect_from_cache(self) -> int:
+        """Signal aspect using cached nearest obstruction (avoids redundant call)."""
+        dist_to_obstruction = self._cached_nearest_pos - self.x
+        sh = self.vl.get_segment(self.x).spatial_headway
+        if dist_to_obstruction > 3 * sh:
+            return 3
+        if dist_to_obstruction > 2 * sh:
+            return 2
+        if dist_to_obstruction > sh:
+            return 1
+        return 0
+
+    def _dist_to_nearest_occupied_from_cache(self) -> float:
+        """Distance to nearest occupied using cached nearest obstruction."""
+        nearest_pos = self._cached_nearest_pos
+        next_st_idx = self.last_station_idx + 1
+        if next_st_idx < len(self.STATIONS):
+            nearest_pos = min(nearest_pos, self.STATIONS[next_st_idx])
+        return max(0.0, nearest_pos - self.x)
 
     def _compute_headway(self) -> float: # ﹀
         """
@@ -627,7 +639,8 @@ class ModernizedLine104(gym.Env):
 
     def _get_obs(self) -> np.ndarray:
         """Build the observation vector (7 values)."""
-        aspect = self._get_signal_aspect()
+        # Use cached aspect from step() if available, else compute fresh (for reset())
+        aspect = getattr(self, '_cached_aspect', self._get_signal_aspect())
         seg = self.vl.get_segment(self.x)
         next_st_pos = self.STATIONS[
             min(self.last_station_idx + 1, len(self.STATIONS) - 1)
