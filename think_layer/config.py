@@ -40,7 +40,7 @@ class TrainConfig:
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs:    bool  = True
-    normalize_reward: bool  = False   # Disable squashing of high-reward signals
+    normalize_reward: bool  = True   
     norm_obs_clip:    float = 10.0
     norm_reward_clip: float = 10.0
 
