@@ -62,7 +62,7 @@ lead_status_manager = ConnectionManager()
 
 KILLED = False  # Temporary placeholder for /kill endpoints
 origins = [
-    "http://localhost:5173",
+    "http://localhost:5174",
 ]
 
 

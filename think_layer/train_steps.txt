@@ -6,8 +6,8 @@
 
 # TensorBoard
 To monitor training progress, you can use TensorBoard.
-Run the following command in your terminal, replacing `./logs` with the path to your actual log directory if it's different:
+Run the following command in your terminal, replacing `./think_layer/runs` with the path to your actual log directory if it's different:
 
-tensorboard --logdir ./logs 
+tensorboard --logdir ./think_layer/runs
 
 Then open the provided URL (usually http://localhost:6006) in your web browser.

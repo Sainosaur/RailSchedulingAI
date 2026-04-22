@@ -44,3 +44,26 @@ A mathematical "Step" does not mean a chunk of track length. In our environment,
 
 4. Is the AI a baby at the start of the live Simulation?
 No. During the `train.py` run, the AI acts like a baby exploring for the first time. But once it finishes those 3,000,000 steps, its mature, expert brain is frozen and saved into `best_model.zip`. When you launch the web dashboard, it loads this frozen adult brain. It does absolutely zero learning or exploring on the live dashboard tracks—it is deployed as a master from Segment 0.
+
+=== STABLE BASELINES 3 TRAINING LOGS (TERMINAL) ===
+
+TIME /
+- fps: Frames Per Second. How many simulation steps the AI is calculating every wall-clock second. E.g., ~1100 fps means your system is processing 1,100 simulated seconds (steps) of train movement every real-world second.
+- iterations: The number of times the AI has collected `n_steps` amount of data and run an update on its underlying neural network.
+- time_elapsed: Total real-world wall-clock time spent training so far.
+- total_timesteps: Total simulation steps the AI has experienced overall across the entire training run.
+
+ROLLOUT /
+- ep_len_mean: The average length of the environment episodes. In our case, a longer episode means it either reached the end of the line or drove slower.
+- ep_rew_mean: Mean Episode Reward. This is the single most important metric. You want to see this start very negative and climb up closer to 0 or positive as the AI learns to avoid penalties and earn progression rewards.
+
+TRAIN /
+- approx_kl: Measures how drastically the AI changed its own "brain" during this update. If this spikes extremely high, the AI took too big of a leap and might destabilize.
+- clip_fraction: How frequently the PPO algorithm had to mathematically block the AI from making updates that were too suspiciously massive.
+- clip_range: The limit set for how much the AI's internal policy probabilities can change per update (often 0.2).
+- entropy_loss: How much random chaotic "exploration / curiosity" the AI is doing. This naturally drops over time as the AI gets confident in its optimal strategy.
+- explained_variance: How well the AI's "Critic" module is predicting the future value of the AI's actions. Closer to 1.0 means the AI is perfectly predicting the future consequences; 0 or negative means the AI is heavily confused.
+- learning_rate: Current learning multiplier.
+- loss: Overall mathematical measure of the AI's prediction errors (you generally want to see this decrease over time).
+- policy_gradient_loss: How efficiently the AI is learning to push actions that yield higher rewards and abandon actions that cause penalties.
+- value_loss: Error rate of the AI's "Critic" network in guessing how good a certain track state was.

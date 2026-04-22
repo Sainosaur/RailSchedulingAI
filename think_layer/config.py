@@ -26,7 +26,7 @@ class TrainConfig:
     gamma: float = 0.99          # discount factor (prioritizes ~1000s into future for train braking dynamics)
     gae_lambda: float = 0.95     # GAE advantage estimator
     clip_range: float = 0.2      # PPO surrogate clip
-    ent_coef: float = 0.00045137929939709193       # entropy bonus for exploration
+    ent_coef: float = 0.05       # entropy bonus for exploration (INCREASED to break cowardice)
     vf_coef: float = 0.5         # value function loss weight
     max_grad_norm: float = 0.5   # gradient clipping
 
