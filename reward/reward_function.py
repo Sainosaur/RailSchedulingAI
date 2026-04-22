@@ -65,6 +65,8 @@ class RewardConfig:
 
     # Signal compliance — teaches AI to match speed to signal aspect
     signal_compliance_bonus: float = 0.3      # reward for speed matching signal expectation
+    k_stall: float = 2.0                      # penalty for being stopped at Green signal
+    k_lazy: float = 0.5                       # penalty for slow acceleration at Green signal
     energy_penalty_weight: float = 0.0        # disabled
 
     headway_violation_penalty: float = -1000.0 # terminal — exceeds best journey
@@ -116,6 +118,7 @@ class TrainState:
     # Signal awareness
     signal_aspect: int = 3  # 0=Red, 1=Orange, 2=FlashGreen, 3=Green
     applied_acceleration: float = 0.0  # the actual acceleration applied this step
+    proposed_acceleration: float = 0.0  # the agent's chosen action (before VL clamping)
 
 
 # Reward components
@@ -247,7 +250,18 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     bonus = config.signal_compliance_bonus
 
     if state.signal_aspect == 3:  # Green — should be driving
-        # Give a linear bonus proportional to speed: immediate dense gradient for accelerating!
+        # A. PUNISH STALLING: If stopped at green, apply heavy penalty
+        if v < 0.5:
+            return -config.k_stall
+            
+        # B. PUNISH LAZY ACCEL: If below target and NOT pushing hard, apply penalty
+        # Only apply if not dwelling and not near a station stop (where we want smoothness)
+        d_to_next = state.next_station_position - state.current_position
+        v_target = state.speed_limit # Simplify for lazy-check
+        if v < v_target - 2.0 and state.proposed_acceleration < 0.4 and d_to_next > 500:
+            return -config.k_lazy
+
+        # C. REWARD EFFICIENCY: Give a linear bonus proportional to speed
         return bonus * min(1.0, v / v_lim)
     elif state.signal_aspect == 2:  # FlashGreen — coast for efficiency
         if abs(a) < 0.1:  # coasting (near zero acceleration)

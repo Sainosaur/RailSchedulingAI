@@ -329,6 +329,7 @@ class ModernizedLine104(gym.Env):
             station_index=self.last_station_idx,
             signal_aspect=env_aspect,
             applied_acceleration=safe_a,
+            proposed_acceleration=proposed_a,
         )
 
         reward_out = compute_reward(state)
