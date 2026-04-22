@@ -1,0 +1,13 @@
+# Training Steps
+
+1. **Optimize**: Run `optimise.py` to find the best hyperparameters.
+2. **Config**: Update `config.py` with the optimal hyperparameters found in the previous step.
+3. **Train**: Run the main training script to train the model using the configured parameters.
+
+# TensorBoard
+To monitor training progress, you can use TensorBoard.
+Run the following command in your terminal, replacing `./logs` with the path to your actual log directory if it's different:
+
+tensorboard --logdir ./logs 
+
+Then open the provided URL (usually http://localhost:6006) in your web browser.

@@ -19,21 +19,21 @@ class TrainConfig:
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 3_000_000
-    learning_rate: float = 3e-4
-    n_steps: int = 2048          # rollout buffer size per update
+    learning_rate: float = 0.00041122409178063574
+    n_steps: int = 4096          # rollout buffer size per update
     batch_size: int = 64         # SGD minibatch size
     n_epochs: int = 10           # PPO clipping epochs per update
-    gamma: float = 0.999         # discount factor (prioritizes ~1000s into future for train braking dynamics)
+    gamma: float = 0.99          # discount factor (prioritizes ~1000s into future for train braking dynamics)
     gae_lambda: float = 0.95     # GAE advantage estimator
     clip_range: float = 0.2      # PPO surrogate clip
-    ent_coef: float = 0.01       # entropy bonus for exploration
+    ent_coef: float = 0.00045137929939709193       # entropy bonus for exploration
     vf_coef: float = 0.5         # value function loss weight
     max_grad_norm: float = 0.5   # gradient clipping
 
     # ── Network Architecture ─────────────────────────────────────────
     # Two hidden layers for both policy and value networks
-    policy_net: list[int] = field(default_factory=lambda: [64, 64])
-    value_net: list[int] = field(default_factory=lambda: [64, 64])
+    policy_net: list[int] = field(default_factory=lambda: [128, 128])
+    value_net: list[int] = field(default_factory=lambda: [128, 128])
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0  # m/s — midpoint; randomised per episode in training_mode
