@@ -69,7 +69,8 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         # SubprocVecEnv: true parallelism across CPU cores.
         # This env has non-trivial step cost (physics + validation + reward),
         # so parallel stepping outweighs the IPC serialisation overhead.
-        venv = SubprocVecEnv(env_fns)
+        # Use 'fork' for exceptionally fast worker initialization in Linux Optuna loops.
+        venv = SubprocVecEnv(env_fns, start_method="fork")
     else:
         venv = DummyVecEnv(env_fns)
 
@@ -98,7 +99,7 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         max_grad_norm=config.max_grad_norm,
         tensorboard_log=config.log_dir,
         seed=config.seed,
-        verbose=1,
+        verbose=0,  # Zero output increases FPS
         device="cpu",   # MLP policy is too small for GPU benefit; CPU avoids transfer overhead
         policy_kwargs=dict(
             net_arch=dict(
