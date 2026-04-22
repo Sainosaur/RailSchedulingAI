@@ -27,7 +27,7 @@ def main():
     )
     parser.add_argument(
         "--timesteps", type=int, default=None,
-        help="Total training timesteps (default: 500,000)"
+        help="Total training timesteps (default: 3,000,000)"
     )
     parser.add_argument(
         "--lr", type=float, default=None,

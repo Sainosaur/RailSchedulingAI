@@ -18,12 +18,12 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 1_000_000
+    total_timesteps: int = 3_000_000
     learning_rate: float = 3e-4
     n_steps: int = 2048          # rollout buffer size per update
     batch_size: int = 64         # SGD minibatch size
     n_epochs: int = 10           # PPO clipping epochs per update
-    gamma: float = 0.99          # discount factor
+    gamma: float = 0.999         # discount factor (prioritizes ~1000s into future for train braking dynamics)
     gae_lambda: float = 0.95     # GAE advantage estimator
     clip_range: float = 0.2      # PPO surrogate clip
     ent_coef: float = 0.01       # entropy bonus for exploration
