@@ -172,21 +172,30 @@ class ModernizedLine104(gym.Env):
             4.  Advance the lead train.
             5.  Compute the reward.
         """
-        # --- In railway_env.py Step Function ---
+        # 1. Ingest the action first so we can override it if needed
+        proposed_a = float(action[0])
 
-        # Determine if the train is currently at a station boundary
+        # 2. Define signal aspect BEFORE using it in the Interlock
+        self._cached_nearest_pos = self._nearest_obstruction(self.x)
+        self._cached_dist_to_occupied = self._dist_to_nearest_occupied_from_cache()
+        env_aspect = self._get_signal_aspect_from_cache()
+        self._cached_aspect = env_aspect
+
+        # 3. CONSOLIDATED INTERLOCK & DWELL
         at_station = (self.v < 0.1 and self.dtz < 0.5)
-
-        # THE INTERLOCK: Force throttle to 0 if:
-        # 1. Dwell timer is still counting down OR
-        # 2. We are at a station and the signal is NOT Green (3)
+    
         if self.ai_dwell_timer > 0 or (at_station and env_aspect < 3):
+            # Decrement timer ONLY ONCE
             if self.ai_dwell_timer > 0:
                 self.ai_dwell_timer -= 1
-            proposed_a = 0.0  # Force stop
-        
-        # Ensure action is a float scalar
-        proposed_a = float(action[0])
+            
+            # Override the AI request to a full stop
+            proposed_a = 0.0 
+
+        # 4. Pass to Validation Layer
+        safe_a, safety_overridden = self.vl.get_safe_action(
+            proposed_a, env_aspect, self.x, self.v, self.dtz,
+        )
 
         # Current signal aspect (derived from distance to lead train)
         # Cache per-step to avoid redundant _nearest_obstruction() calls.
