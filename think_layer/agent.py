@@ -38,7 +38,11 @@ def make_env(
         env = ModernizedLine104(lead_train_speed=lead_train_speed, training_mode=True)
         # Wrap in TimeLimit for episode truncation
         env = gym.wrappers.TimeLimit(env, max_episode_steps=max_episode_steps)
-        env = Monitor(env)
+        # filename=None: disable per-episode .monitor.csv disk writes.
+        # With 16 parallel envs hitting episode boundaries constantly, the
+        # default file-logging causes significant IO overhead and tanks FPS.
+        # EvalCallback captures all the episode stats we need anyway.
+        env = Monitor(env, filename=None)
         env.reset(seed=seed)
         return env
 
