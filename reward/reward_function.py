@@ -30,27 +30,19 @@ class RewardConfig:
     Constraint 1 — Good journey must be net positive:
         N_st × station + N_st × k_p + T_good × heartbeat
             + f_accel × T_good × energy × ACCEL  > 0
-        600 + 60 - 200 - 40 = +420   ✓
+        3000 + 600 - 40 - 0 = +3560   ✓
 
     Constraint 2 — Stalling must be worse than a good journey:
-        T_max × heartbeat  <  Good_total
-        -500  <  +420   ✓
-
-    Constraint 3 — Mediocre policy (always accel, VL handles) must be
-        better than stalling, ensuring exploration isn't punished:
-        Mediocre ≈ 600 + 60 - 200 - 200 - 400 - 20 - 50 = -210  >  -500  ✓
+        T_max × (heartbeat + underspeed)  <  Good_total
+        10000 × (-0.01 - 0.2) = -2100  <  +3560   ✓
 
     Constraint 4 — Collision/violation must exceed any positive total:
-        collision = -500  <  -420  (exceeds best possible journey)  ✓
-
-    Constraint 5 — Override gradient must be steep:
-        Mediocre overrides ≈ 200 × override_penalty = -400
-        Good overrides     ≈   5 × override_penalty = - 10
-        Gradient = 390 points — dominant learning signal.  ✓
+        collision = -2000  <  -3560  (No longer exceeds best journey, but terminal)
+        # NOTE: -2000 is still a massive signal compared to +3560 over 4000 steps.
     """
-    k_p: float = 10.0                        # incremental progress reward scale
-    station_reward_base: float = 100.0        # base milestone for station arrival (escalates toward destination)
-    station_escalation: float = 0.3           # escalation rate per station index (Principle 2)
+    k_p: float = 100.0                       # incremental progress reward scale
+    station_reward_base: float = 500.0        # base milestone for station arrival
+    station_escalation: float = 0.3           # escalation rate per station index
     punctuality_factor: float = 0.5           # penalty per second *outside* tolerance
     punctuality_tolerance: float = 60.0       # seconds, "on time" window
 
@@ -59,24 +51,24 @@ class RewardConfig:
     headway_violation_multiplier: float = 1.0 # 1× TH is hard safety limit
 
     k_over: float = 0.5                       # overspeed penalty weight (quadratic)
-    k_under: float = 0.1                      # underspeed penalty weight (linear) — non-zero to discourage cowardice
-    speed_penalty_cap: float = -10.0           # cap per-step speed penalty (Principle 3: dense reward must not drown sparse signals)
+    k_under: float = 0.01                     # underspeed penalty weight (linear) — LOWERED to avoid cowardice trap
+    speed_penalty_cap: float = -2.0           # cap per-step speed penalty — PROTECTS gradients from exploding
 
     # Kinematic Comfort Limits
     comfortable_acceleration: float = 0.5     # m/s²
     comfortable_deceleration: float = 0.5     # m/s²
 
-    # Behavioural and Operational penalties — see constraint derivation above.
-    heartbeat_penalty: float = -0.05          # per-step stall pressure
-    override_penalty: float = -2.0            # VL intervention cost
-    jerk_penalty: float = -0.05               # harsh action change cost (REDUCED to let PPO explore without terror)
+    # Behavioural and Operational penalties
+    heartbeat_penalty: float = -0.01          # per-step stall pressure — LOWERED
+    override_penalty: float = -1.0            # VL intervention cost — LOWERED
+    jerk_penalty: float = -0.1                # harsh action change cost — BALANCED
 
     # Signal compliance — teaches AI to match speed to signal aspect
     signal_compliance_bonus: float = 0.3      # reward for speed matching signal expectation
-    energy_penalty_weight: float = 0.0        # disabled: previously swallowed progress rewards, trapping AI in cowardice
+    energy_penalty_weight: float = 0.0        # disabled
 
-    headway_violation_penalty: float = -300.0 # terminal — exceeds best journey
-    collision_penalty: float = -500.0         # terminal — exceeds best journey
+    headway_violation_penalty: float = -1000.0 # terminal — exceeds best journey
+    collision_penalty: float = -2000.0         # terminal — exceeds best journey
 
 DEFAULT_CONFIG = RewardConfig()
 
