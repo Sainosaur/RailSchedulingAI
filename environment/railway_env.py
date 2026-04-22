@@ -323,6 +323,7 @@ class ModernizedLine104(gym.Env):
             applied_traction=applied_traction,
             distance_to_occupied=self._dist_to_nearest_occupied(),
             is_dwelling=(self.ai_dwell_timer > 0),
+            station_index=self.last_station_idx,
         )
 
         reward_out = compute_reward(state)

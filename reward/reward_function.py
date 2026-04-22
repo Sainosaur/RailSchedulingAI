@@ -49,7 +49,8 @@ class RewardConfig:
         Gradient = 390 points — dominant learning signal.  ✓
     """
     k_p: float = 10.0                        # incremental progress reward scale
-    station_reward: float = 100.0             # large milestone for station arrival
+    station_reward_base: float = 100.0        # base milestone for station arrival (escalates toward destination)
+    station_escalation: float = 0.3           # escalation rate per station index (Principle 2)
     punctuality_factor: float = 0.5           # penalty per second *outside* tolerance
     punctuality_tolerance: float = 60.0       # seconds, "on time" window
 
@@ -59,6 +60,7 @@ class RewardConfig:
 
     k_over: float = 0.5                       # overspeed penalty weight (quadratic)
     k_under: float = 0.1                      # underspeed penalty weight (linear) — non-zero to discourage cowardice
+    speed_penalty_cap: float = -10.0           # cap per-step speed penalty (Principle 3: dense reward must not drown sparse signals)
 
     # Kinematic Comfort Limits
     comfortable_acceleration: float = 0.5     # m/s²
@@ -114,6 +116,8 @@ class TrainState:
     distance_to_occupied: float = 99999.0
     # Gap 3 fix: whether the AI is in a forced station dwell
     is_dwelling: bool = False
+    # Principle 2: station index for escalating rewards
+    station_index: int = 0
 
 
 # Reward components
@@ -181,7 +185,9 @@ def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     overspeed: float = max(0.0, v - v_target)
     underspeed: float = max(0.0, v_target - v)
 
-    return -(config.k_over * overspeed**2) - (config.k_under * underspeed)
+    raw = -(config.k_over * overspeed**2) - (config.k_under * underspeed)
+    # Principle 3: cap dense speed penalty so it can't drown sparse station rewards
+    return max(config.speed_penalty_cap, raw)
 
 def _compute_energy_penalty(state: TrainState, config: RewardConfig) -> float:
     # Penalize purely positive acceleration applications (traction). Coasting and braking are free.
@@ -207,8 +213,13 @@ def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.jerk_penalty * (state.action_delta ** 2)
 
 def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
-    
-    return config.station_reward if state.reached_new_station else 0.0 
+    # Principle 2: rewards escalate toward destination.
+    # Station 0 = base × 1.0, Station 5 = base × 2.5
+    # Creates a reward gradient pulling AI toward completion.
+    if not state.reached_new_station:
+        return 0.0
+    escalation = 1.0 + state.station_index * config.station_escalation
+    return config.station_reward_base * escalation
  
 def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> float:
     """Penalty for arriving at a station outside the on-time tolerance window.
