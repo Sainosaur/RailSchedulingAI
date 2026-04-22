@@ -1,0 +1,46 @@
+=== HYPERPARAMETER SUMMARY FOR RAIL SCHEDULING AI (PPO) ===
+
+lr (Learning Rate)
+What it is: How drastically the AI changes its belief system after making a mistake or earning a reward.
+- High value (e.g., 0.001): Fast learning but highly unstable. May "forget" how to brake safely if it tries to avoid a penalty too aggressively.
+- Low value (e.g., 0.00005): Slow, meticulous learning. Slower to train, but often creates a smoother driving curve.
+
+batch_size
+What it is: How many "memories" the AI studies at once before updating its brain.
+- High value (e.g., 256): Very stable learning because it sees the big picture, but it takes more RAM.
+- Low value (e.g., 64): High frequency of updates based on tiny data snippets. The learning curve will look erratic.
+
+n_steps
+What it is: Exactly how much simulated time/distance the AI plays out on the track before it tries to learn from the results.
+- Value like 4096: The AI will drive a massive chunk of a journey (e.g., leaving a station, navigating a hazard, and arriving at the next station) *before* stopping to think about if what it did was good. Highly recommended for train networks because braking consequences take thousands of meters to play out.
+
+gamma (Discount Factor)
+What it is: The AI's "foresight" or care about the future.
+- 0.99: The AI only cares about consequences roughly 100 steps into the future. 
+- 0.999 or 0.9999: The AI cares about consequences 1000 to 10000 steps into the future. Because commercial trains take kilometers to stop, higher gammas natively force the AI to respect physical consequences minutes in advance.
+
+ent_coef (Entropy Coefficient)
+What it is: The algorithm's built-in "curiosity" module.
+- High value (e.g., 0.1): The AI will frequently ignore what it thinks is the safest move and instead try something wild (like speeding) just to test boundaries. 
+- Low value (e.g., 0.001): Highly risk-averse. Once it discovers driving slowly works, it may never explore faster speeds to earn progression rewards.
+
+net_arch (Network Architecture)
+What it is: The physical size of the mathematical hidden layers.
+- small ([64, 64]): Forces the AI to generalize and learn the physics concepts of momentum and stopping distance rather than overfitting.
+- medium ([128, 128]): Capable of learning more complex multi-variable actions, but runs a high risk of memorizing the exact locations of the stations rather than understanding *why* it should stop.
+
+=== OPTUNA EVALUATION METRICS ===
+
+1. Why are early Mean Rewards negative (-500)?
+In the line 104 simulation, an AI loses -20 points every time the Validation Layer emergency-overrides a dangerous move. A completely untrained AI will get thousands of penalties, scoring -20,000. 
+If an Optuna trial hits -500, that is actually a massive improvement—it means the AI is successfully making the 76km journey and only making a handful of mistakes.
+To get a fully positive Mean Reward (e.g. +500 for a flawless run with 0 infractions), you must train the winning configuration on a massive 3,000,000+ step run with train.py. Optuna's goal is merely figuring out which config learns fastest in 100k test steps.
+
+2. Why are the hyperparameters so absurdly precise? (e.g. 1.03003399...e-05)
+Optuna does not think in human-readable constants. It models complex, multi-dimensional probability curves. When picking a variable to test, it extracts the absolute exact floating-point coordinate on the topological curve that possesses the highest mathematical certainty of yielding an improvement.
+
+3. What is a "Step"?
+A mathematical "Step" does not mean a chunk of track length. In our environment, 1 Step = 1 Simulated Second of physical time. Because it takes roughly 4,000 real-world simulated seconds for a train to drive 76 kilometers, 3,000,000 steps simply means the environment forces the AI to drive the entire route over 750 times on hyper-speed until it masters the physics.
+
+4. Is the AI a baby at the start of the live Simulation?
+No. During the `train.py` run, the AI acts like a baby exploring for the first time. But once it finishes those 3,000,000 steps, its mature, expert brain is frozen and saved into `best_model.zip`. When you launch the web dashboard, it loads this frozen adult brain. It does absolutely zero learning or exploring on the live dashboard tracks—it is deployed as a master from Segment 0.

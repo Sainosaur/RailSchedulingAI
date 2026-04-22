@@ -89,17 +89,21 @@ class ValidationLayer:
     def get_segment(self, x: float) -> VLSegment:
         """
         Return the segment that contains position *x*.
-        Raises ValueError if *x* is outside the track boundaries.
+        If *x* slightly overshoots the track boundaries computationally, it clamps 
+        to the nearest segment to prevent brittle ValueError crashes in PPO.
         """
+        if x <= self.segments[0].start:
+            return self.segments[0]
+            
+        if x >= self.segments[-1].end:
+            return self.segments[-1]
+
         for seg in self.segments:
             if seg.start <= x < seg.end:
                 return seg
-        # Allow exact endpoint of the track
-        if x == self.segments[-1].end:
-            return self.segments[-1]
 
         raise ValueError(
-            f"Position x={x} is off the track "
+            f"Position x={x} is completely unresolvable "
             f"[{self.segments[0].start}, {self.segments[-1].end}]"
         )
 
