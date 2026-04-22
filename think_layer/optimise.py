@@ -93,6 +93,8 @@ def objective(trial: optuna.Trial) -> float:
     config.eval_freq = 25_000 // config.n_envs  # ~2 evals per 100k trial
     
     # Disable tensorboard logging to save IO and memory across 100s of trials
+    # AND to bypass the Protobuf/Tensorboard metaclass error on Python 3.14!
+    config.log_dir = None
     model, env = build_agent(config)
     
     # ── 3. Evaluation Setup ──
