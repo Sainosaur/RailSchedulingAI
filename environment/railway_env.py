@@ -324,6 +324,8 @@ class ModernizedLine104(gym.Env):
             distance_to_occupied=self._dist_to_nearest_occupied(),
             is_dwelling=(self.ai_dwell_timer > 0),
             station_index=self.last_station_idx,
+            signal_aspect=env_aspect,
+            applied_acceleration=safe_a,
         )
 
         reward_out = compute_reward(state)
@@ -345,6 +347,7 @@ class ModernizedLine104(gym.Env):
                 "headway": reward_out.r_headway,
                 "speed": reward_out.r_speed,
                 "heartbeat": reward_out.r_heartbeat,
+                "signal_compliance": reward_out.r_signal_compliance,
                 "station": reward_out.r_station,
                 "punctuality": reward_out.r_time,
                 "override": reward_out.r_override,

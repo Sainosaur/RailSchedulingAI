@@ -19,7 +19,7 @@ def run_and_collect():
     data = {
         "position": [], "speed": [], "time": [],
         "progress": [], "headway": [], "speed_rew": [],
-        "heartbeat": [], "station": [], "override": [],
+        "heartbeat": [], "sig_compliance": [], "station": [], "override": [],
         "jerk": [], "energy": [], "total": [],
         "lead_x": [], "signal": [],
     }
@@ -36,6 +36,7 @@ def run_and_collect():
         data["headway"].append(rb["headway"])
         data["speed_rew"].append(rb["speed"])
         data["heartbeat"].append(rb["heartbeat"])
+        data["sig_compliance"].append(rb["signal_compliance"])
         data["station"].append(rb["station"])
         data["override"].append(rb["override"])
         data["jerk"].append(rb["jerk"])
@@ -74,6 +75,7 @@ def plot(data):
     ax.plot(x, data["progress"], label="Progress", linewidth=0.8)
     ax.plot(x, data["speed_rew"], label="Speed", linewidth=0.8)
     ax.plot(x, data["heartbeat"], label="Heartbeat", linewidth=0.8)
+    ax.plot(x, data["sig_compliance"], label="Sig Compliance", linewidth=0.8, color="green")
     ax.set_ylabel("Reward")
     ax.set_title("Continuous Rewards (every step)")
     ax.legend()

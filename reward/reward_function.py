@@ -70,6 +70,9 @@ class RewardConfig:
     heartbeat_penalty: float = -0.05          # per-step stall pressure
     override_penalty: float = -2.0            # VL intervention cost
     jerk_penalty: float = -2.0                # harsh action change cost
+
+    # Signal compliance — teaches AI to match speed to signal aspect
+    signal_compliance_bonus: float = 0.3      # reward for speed matching signal expectation
     energy_penalty_weight: float = -0.1       # mild traction efficiency signal
 
     headway_violation_penalty: float = -300.0 # terminal — exceeds best journey
@@ -118,6 +121,9 @@ class TrainState:
     is_dwelling: bool = False
     # Principle 2: station index for escalating rewards
     station_index: int = 0
+    # Signal awareness
+    signal_aspect: int = 3  # 0=Red, 1=Orange, 2=FlashGreen, 3=Green
+    applied_acceleration: float = 0.0  # the actual acceleration applied this step
 
 
 # Reward components
@@ -185,6 +191,12 @@ def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     overspeed: float = max(0.0, v - v_target)
     underspeed: float = max(0.0, v_target - v)
 
+    # Signal compliance: don't punish underspeed when signal is Red/Orange
+    # and AI is correctly slowing down or stopped. The AI is doing the RIGHT
+    # thing by being cautious — only penalise underspeed on Green/FlashGreen.
+    if state.signal_aspect <= 1 and v < 1.0:
+        underspeed = 0.0
+
     raw = -(config.k_over * overspeed**2) - (config.k_under * underspeed)
     # Principle 3: cap dense speed penalty so it can't drown sparse station rewards
     return max(config.speed_penalty_cap, raw)
@@ -197,6 +209,11 @@ def _compute_heartbeat_penalty(state: TrainState, config: RewardConfig) -> float
     # Gap 3 fix: don't penalise the AI for sitting still during a
     # forced station dwell — it has no control over this period.
     if state.is_dwelling:
+        return 0.0
+    # Signal compliance: don't punish for being stopped at Red/Orange.
+    # The AI is correctly obeying the signal — penalising it here
+    # teaches cowardice ("stopping is always bad").
+    if state.signal_aspect <= 1 and state.current_speed < 0.5:
         return 0.0
     return config.heartbeat_penalty
 
@@ -211,6 +228,38 @@ def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
         return 0.0
     # Penalize the magnitude of the action shift squared (e.g., jump of 1 = -2, jump of 1.5 = -4.5)
     return config.jerk_penalty * (state.action_delta ** 2)
+
+def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -> float:
+    """Reward AI for matching its behaviour to the current signal aspect.
+    
+    Teaches proactive driving: brake BEFORE signal turns Red,
+    accelerate when clear. Dense but small — guides without drowning.
+    
+    Green (3):      reward if at reasonable speed (> 50% of limit)
+    FlashGreen (2): reward if coasting or gentle braking
+    Orange (1):     reward if actively braking
+    Red (0):        reward if stopped or nearly stopped near occupied zone
+    """
+    v = state.current_speed
+    v_lim = state.speed_limit
+    a = state.applied_acceleration
+    bonus = config.signal_compliance_bonus
+
+    if state.signal_aspect == 3:  # Green — should be driving
+        if v > v_lim * 0.4:
+            return bonus
+    elif state.signal_aspect == 2:  # FlashGreen — should be cautious
+        if a <= 0.0:  # coasting or braking
+            return bonus * 0.5
+    elif state.signal_aspect == 1:  # Orange — should be braking
+        if a < 0.0:  # actively braking
+            return bonus
+    elif state.signal_aspect == 0:  # Red — should be stopped
+        if v < 1.0:  # stopped or nearly stopped
+            return bonus * 1.5  # extra reward for correct Red compliance
+    
+    return 0.0
+
 
 def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
     # Principle 2: rewards escalate toward destination.
@@ -262,6 +311,7 @@ class RewardOutput:
     r_headway: float
     r_speed: float
     r_heartbeat: float
+    r_signal_compliance: float
     # Event
     r_station: float
     r_time: float
@@ -293,6 +343,7 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
     r_headway   = _compute_headway_penalty(state, config)
     r_speed     = _compute_speed_reward(state, config)
     r_heartbeat = _compute_heartbeat_penalty(state, config)
+    r_signal_compliance = _compute_signal_compliance_reward(state, config)
  
     # --- Event ---
     r_station   = _compute_station_reward(state, config)
@@ -306,7 +357,7 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
     r_collision, terminate_collision = _compute_collision_penalty(state, config)
  
     # Aggregates
-    r_continuous = r_progress + r_headway + r_speed + r_heartbeat
+    r_continuous = r_progress + r_headway + r_speed + r_heartbeat + r_signal_compliance
     r_event      = r_station + r_time + r_override + r_jerk + r_energy
     r_terminal   = r_violation + r_collision
     r_total      = r_continuous + r_event + r_terminal
@@ -317,6 +368,7 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
         r_headway=r_headway,
         r_speed=r_speed,
         r_heartbeat=r_heartbeat,
+        r_signal_compliance=r_signal_compliance,
         r_station=r_station,
         r_time=r_time,
         r_override=r_override,
@@ -356,6 +408,7 @@ if __name__ == "__main__":
     print(f"  Headway        : {result.r_headway:+.4f}")
     print(f"  Speed          : {result.r_speed:+.4f}")
     print(f"  Heartbeat      : {result.r_heartbeat:+.4f}")
+    print(f"  Sig Compliance : {result.r_signal_compliance:+.4f}")
     print(f"  Station        : {result.r_station:+.4f}")
     print(f"  Punctuality    : {result.r_time:+.4f}")
     print(f"  Override       : {result.r_override:+.4f}")
