@@ -89,6 +89,7 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         tensorboard_log=config.log_dir,
         seed=config.seed,
         verbose=1,
+        device="cpu", # Force CPU (faster for simple MLPs and Env stepping overhead)
         policy_kwargs=dict(
             net_arch=dict(
                 pi=config.policy_net,
