@@ -20,8 +20,8 @@ class TrainConfig:
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 5_000_000
     learning_rate: float = 0.00041122409178063574
-    n_steps: int = 4096          # rollout buffer size per update
-    batch_size: int = 64         # SGD minibatch size
+    n_steps: int = 2048          # rollout buffer size per env per update (halved; total = n_envs × n_steps)
+    batch_size: int = 256        # SGD minibatch size (larger = better GPU utilisation on 4GB VRAM)
     n_epochs: int = 10           # PPO clipping epochs per update
     gamma: float = 0.99          # discount factor (prioritizes ~1000s into future for train braking dynamics)
     gae_lambda: float = 0.95     # GAE advantage estimator
@@ -38,6 +38,7 @@ class TrainConfig:
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0  # m/s — midpoint; randomised per episode in training_mode
     max_episode_steps: int = 15_000  # truncation safety net
+    n_envs: int = 32                 # parallel environments (DummyVecEnv; ~linear FPS scaling without IPC overhead)
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True

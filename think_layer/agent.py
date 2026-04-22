@@ -12,7 +12,7 @@ from typing import Callable
 import gymnasium as gym
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
 
 # Ensure project-root imports work
@@ -54,14 +54,23 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
     (model, vec_env) — the PPO model and the VecNormalize wrapper
                        (needed to save/load normalisation stats).
     """
-    # 1. Vectorised environment (single env for now)
-    venv = DummyVecEnv([
+    # 1. Vectorised environment (n_envs parallel copies for throughput)
+    #    SubprocVecEnv runs each env in its own process for true parallelism.
+    #    DummyVecEnv fallback for n_envs=1 (avoids multiprocessing overhead).
+    env_fns = [
         make_env(
-            seed=config.seed,
+            seed=config.seed + i,
             lead_train_speed=config.lead_train_speed,
             max_episode_steps=config.max_episode_steps,
         )
-    ])
+        for i in range(config.n_envs)
+    ]
+    if config.n_envs > 1 and getattr(config, 'use_subproc', False):
+        venv = SubprocVecEnv(env_fns)
+    else:
+        # DummyVecEnv: no IPC overhead, dramatically lower RAM usage.
+        # For lightweight pure-Python envs this is faster than SubprocVecEnv.
+        venv = DummyVecEnv(env_fns)
 
     # 2. Observation & reward normalisation
     venv = VecNormalize(
@@ -89,7 +98,7 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         tensorboard_log=config.log_dir,
         seed=config.seed,
         verbose=1,
-        device="cpu", # Force CPU (faster for simple MLPs and Env stepping overhead)
+        device="cuda",  # force GPU — 4 GB VRAM is plenty for [128,128] MLP
         policy_kwargs=dict(
             net_arch=dict(
                 pi=config.policy_net,
