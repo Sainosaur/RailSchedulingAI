@@ -15,7 +15,7 @@ from pathlib import Path
 import optuna
 
 from stable_baselines3.common.callbacks import EvalCallback
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv , VecNormalize
 
 # Ensure project-root imports work
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
