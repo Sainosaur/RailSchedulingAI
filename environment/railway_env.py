@@ -195,7 +195,7 @@ class ModernizedLine104(gym.Env):
 
         # ----- 1. Validation Layer (Layers 1–4) -----
         # VL handles the safety check against the aspect and dtz.
-        safe_a, overridden = self.vl.get_safe_action(
+        safe_a, safety_overridden = self.vl.get_safe_action(
             proposed_a, env_aspect, self.x, self.v, self.dtz,
         )
 
@@ -321,7 +321,7 @@ class ModernizedLine104(gym.Env):
             actual_arrival_time=actual_arrival_time,
             collision=(self.x >= self.lead_x),
             temporal_headway=seg.temporal_headway,
-            overridden=overridden,
+            safety_overridden=safety_overridden,
             action_delta=action_delta,
             applied_traction=applied_traction,
             distance_to_occupied=self._cached_dist_to_occupied,
@@ -340,7 +340,7 @@ class ModernizedLine104(gym.Env):
         truncated = bool(self.step_count >= self.MAX_STEPS)
 
         info = {
-            "overridden": overridden,
+            "safety_overridden": safety_overridden,
             "safe_a": safe_a,
             "proposed_a": proposed_a,
             "aspect": env_aspect,

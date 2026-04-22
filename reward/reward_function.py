@@ -30,18 +30,17 @@ class RewardConfig:
     Constraint 1 — Good journey must be net positive:
         N_st × station + N_st × k_p + T_good × heartbeat
             + f_accel × T_good × energy × ACCEL  > 0
-        3000 + 600 - 40 - 0 = +3560   ✓
+        30000 + 6000 - 40 - 0 = +35960   ✓
 
     Constraint 2 — Stalling must be worse than a good journey:
         T_max × (heartbeat + underspeed)  <  Good_total
-        10000 × (-0.01 - 0.2) = -2100  <  +3560   ✓
+        10000 × (-0.01 - 2.2) = -22100  <  +35960   ✓
 
     Constraint 4 — Collision/violation must exceed any positive total:
-        collision = -2000  <  -3560  (No longer exceeds best journey, but terminal)
-        # NOTE: -2000 is still a massive signal compared to +3560 over 4000 steps.
+        collision = -100000  <  -35960  (Now significantly higher to ensure terminal weight)
     """
-    k_p: float = 100.0                       # incremental progress reward scale
-    station_reward_base: float = 500.0        # base milestone for station arrival
+    k_p: float = 1000.0                      # incremental progress reward scale (10x)
+    station_reward_base: float = 5000.0       # base milestone for station arrival (10x)
     station_escalation: float = 0.3           # escalation rate per station index
     punctuality_factor: float = 0.5           # penalty per second *outside* tolerance
     punctuality_tolerance: float = 60.0       # seconds, "on time" window
@@ -69,8 +68,8 @@ class RewardConfig:
     k_lazy: float = 0.5                       # penalty for slow acceleration at Green signal
     energy_penalty_weight: float = 0.0        # disabled
 
-    headway_violation_penalty: float = -1000.0 # terminal — exceeds best journey
-    collision_penalty: float = -2000.0         # terminal — exceeds best journey
+    headway_violation_penalty: float = -50000.0 # exceed best journey
+    collision_penalty: float = -100000.0        # exceed best journey
 
 DEFAULT_CONFIG = RewardConfig()
 
@@ -103,7 +102,7 @@ class TrainState:
     temporal_headway: float = 12.5  # default to highest TH
     
     # Validation / Smoothing (Defaults set to safe values so the environment won't break until we integrate them)
-    overridden: bool = False
+    safety_overridden: bool = False
     # BUG 11/21 FIX: action_delta is the absolute difference between two
     # continuous accelerations — a float in [0.0, 1.5], not a discrete int.
     action_delta: float = 0.0  # |safe_a - last_a|  (m/s²)
@@ -218,13 +217,13 @@ def _compute_heartbeat_penalty(state: TrainState, config: RewardConfig) -> float
     return config.heartbeat_penalty
 
 def _compute_override_penalty(state: TrainState, config: RewardConfig) -> float:
-    return config.override_penalty if state.overridden else 0.0
+    return config.override_penalty if state.safety_overridden else 0.0
 
 def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
     # Gap 2 fix: only penalise voluntary jerk from the AI's own action
     # changes.  When the VL overrides, the jerk is the VL's doing — the
     # AI is already punished via the override penalty.
-    if state.overridden:
+    if state.safety_overridden:
         return 0.0
     # Penalize the magnitude of the action shift squared (e.g., jump of 1 = -2, jump of 1.5 = -4.5)
     return config.jerk_penalty * (state.action_delta ** 2)
@@ -241,7 +240,7 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     Red (0):        reward if stopped voluntarily
     """
     # No credit if VL did the work
-    if state.overridden:
+    if state.safety_overridden:
         return 0.0
 
     v = state.current_speed

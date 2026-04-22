@@ -319,36 +319,23 @@ class ValidationLayer:
 
         Validates the AI's requested continuous acceleration against environmental
         bounds.  If unsafe, computes the minimum deceleration required to stop
-        within the available distance using SUVAT: v² = u² + 2as.
-        With v=0 (target: full stop): a = -u² / (2s).
+        within the available distance or respect the limit.
 
-        Graduated override severity:
-            - Out-of-range PPO action       →  hardware limit clamp (logged as Hardware_Limit_Clamp)
-            - Far from boundary, low speed  →  precise SUVAT deceleration (a_needed, near 0)
-            - Approaching boundary fast     →  computed braking (between 0 and -1.0 m/s²)
-            - Imminent spatial violation    →  emergency braking (-1.0 m/s²)
-
-        Parameters
-        ----------
-        proposed_a   : float  Continuous AI throttle action.  Out-of-range values are hardware-clamped.
-        env_aspect   : int    Environmental signal aspect (0-3).
-        x            : float  Current position (m).
-        u            : float  Current speed / initial velocity (m/s).
-        dtz          : float  Distance to next fixed-block boundary (m).
+        OVERRIDE DIFFERENTIATION:
+        - Safety Overrides (True): Aspect_Spatial, Kinematic_Target, Track_Bounds.
+          These represent mistakes by the AI and are punished.
+        - System Clamps (False): Hardware_Limit, Segment_Limit.
+          These are purely physical/maintainance constraints and are NOT punished.
 
         Returns
         -------
-        (safe_a, was_overridden) -> (float, bool)
-        was_overridden=True whenever the VL returns a value different from proposed_a,
-        whether due to a hardware clamp or a safety violation.
+        (safe_a, was_safety_overridden) -> (float, bool)
         """
-        # Hardware clamp to physical system limits.
-        # A PPO action outside [-1.0, 0.5] is physically impossible.
-        # If the VL replaces it, that IS an override — the returned value differs from proposed_a.
+        # 1. Hardware clamp (System Clamp)
         clamped_a = max(EMERGENCY_DECEL, min(ACCEL, proposed_a))
         was_hardware_clamped = clamped_a != proposed_a
 
-        # Layer 2 check (runs on clamped value)
+        # 2. Safety check (Layer 2)
         is_safe, constraint = self._check_action_safety(
             clamped_a, env_aspect, x, u, dtz
         )
@@ -356,23 +343,15 @@ class ValidationLayer:
         if is_safe:
             if was_hardware_clamped:
                 self._log_override(proposed_a, clamped_a, "Hardware_Limit_Clamp")
-                return clamped_a, True
+                # Hardware clamp is NOT a safety violation — return False
+                return clamped_a, False
             return clamped_a, False
 
-        # Already stopped — no braking required.  Short-circuit before the
-        # graduated override to avoid spamming the XAI log every step while
-        # the train is legally waiting at a Red signal.
+        # 3. Already stopped
         if u <= 0.01:
-            if was_hardware_clamped:
-                self._log_override(proposed_a, 0.0, "Hardware_Limit_Clamp")
-                return 0.0, True
             return 0.0, False
 
-        # Compute the minimum deceleration required to stop within available distance.
-        # SUVAT: v² = u² + 2as, with v=0 → a = -u² / (2s)
-        # Clamped to [EMERGENCY_DECEL, 0.0]: always decelerative, never exceeds physical limit.
-        # No artificial minimum (e.g. SERVICE_DECEL) — gentle violations get the precise
-        # correction needed, preserving the AI's learning gradient.
+        # 4. Violation Resolution
         seg = self.get_segment(x)
         _, distance_available = self._speed_for_aspect(env_aspect, seg, dtz)
 
@@ -380,11 +359,18 @@ class ValidationLayer:
             a_needed = -(u**2) / (2.0 * distance_available)
             safe_a = float(max(EMERGENCY_DECEL, min(0.0, a_needed)))
         else:
-            # Zero available distance — emergency brake
             safe_a = float(EMERGENCY_DECEL)
 
         self._log_override(proposed_a, safe_a, constraint)
-        return safe_a, True
+
+        # 5. Differentiate: Is this a "Safety" violation?
+        # Safety violations = Aspect, Kinematic Target, or Track Bounds.
+        # System Clamps = Segment Limits (e.g. S3_Limit).
+        is_safety = True
+        if "_Limit" in constraint or constraint == "Hardware_Limit_Clamp":
+            is_safety = False
+        
+        return safe_a, is_safety
 
     # ------------------------------------------------------------------
     # Layer 4 — Explainable AI (XAI) Logging
