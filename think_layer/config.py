@@ -26,8 +26,8 @@ class TrainConfig:
     gae_lambda: float = 0.95
     clip_range: float = 0.2
     ent_coef: float = 0.01  # Increase exploration (was 0.005)
-    vf_coef: float = 0.5  
-    max_grad_norm: float = 0.5  
+    vf_coef: float = 0.5
+    max_grad_norm: float = 0.5
 
     # ── Network Architecture ─────────────────────────────────────────
     policy_net: list[int] = field(default_factory=lambda: [128, 128])
@@ -36,7 +36,7 @@ class TrainConfig:
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0
     max_episode_steps: int = 20_000
-    n_envs: int = 12  # 12 of 16 cores; leaves 4 for main process + OS
+    n_envs: int = 6  # 6 performance of 10 total cores
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True

@@ -310,6 +310,26 @@ class ModernizedLine104(gym.Env):
                 f"t={self.time:7.1f}s | x={self.x:8.1f}m | v={self.v:5.2f}m/s | seg={seg.id} | dtz={self.dtz:8.1f}m | lead={self.lead_train.x:8.1f}m | sig={self._get_signal_aspect()}"
             )
 
+    @property
+    def lead_x(self) -> float:
+        return self.lead_train.x
+
+    @property
+    def lead_v(self) -> float:
+        return self.lead_train.v
+
+    @property
+    def lead_dwell_timer(self) -> int:
+        return self.lead_train.dwell_timer
+
+    @property
+    def lead_stalled(self) -> bool:
+        return self.lead_train.stalled
+
+    @property
+    def lead_held(self) -> bool:
+        return self.lead_train.held
+
     # --- API HELPER METHODS ---
     def _update_dtz(self):
         self.dtz = self.vl.compute_dtz(self.x)
