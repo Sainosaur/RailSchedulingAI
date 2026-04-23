@@ -216,9 +216,16 @@ class ModernizedLine104(gym.Env):
 
         # --- REWARDS ---
         last_st_pos = self.STATIONS[self.last_station_idx]
-        next_st_pos = self.STATIONS[
-            min(self.last_station_idx + 1, len(self.STATIONS) - 1)
-        ]
+        next_idx = min(self.last_station_idx + 1, len(self.STATIONS) - 1)
+        next_st_pos = self.STATIONS[next_idx]
+
+        # Calculate the next scheduled arrival time
+        next_entry = self.timetable.get_entry(next_idx)
+        next_scheduled = (
+            next_entry.scheduled_arrival
+            if next_entry
+            else self._ideal_schedule[next_idx]
+        )
 
         state = TrainState(
             current_position=self.x,
@@ -242,6 +249,8 @@ class ModernizedLine104(gym.Env):
             signal_aspect=env_aspect,
             applied_acceleration=safe_a,
             proposed_acceleration=proposed_a,
+            current_time=self.time,
+            next_scheduled_arrival_time=next_scheduled,
         )
 
         reward_out = compute_reward(state)
