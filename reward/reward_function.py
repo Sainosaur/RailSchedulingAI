@@ -409,10 +409,10 @@ def compute_reward(
     )
 
     r_event = r_station + r_time + r_override + r_jerk + r_energy
-    r_terminal = r_violation + r_collision
+    r_terminal = r_violation + r_collision + r_lateness
     r_total = r_continuous + r_event + r_terminal
 
-    terminate = terminate_violation or terminate_collision
+    terminate = terminate_violation or terminate_collision or terminate_lateness
 
     return RewardOutput(
         r_progress=r_progress,
@@ -430,6 +430,7 @@ def compute_reward(
         r_energy=r_energy,
         r_violation=r_violation,
         r_collision=r_collision,
+        r_lateness=r_lateness,
         r_continuous=r_continuous,
         r_event=r_event,
         r_terminal=r_terminal,
