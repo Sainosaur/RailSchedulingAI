@@ -17,7 +17,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
@@ -25,7 +24,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from environment.railway_env import ModernizedLine104  # noqa: E402
-from think_layer.config import TrainConfig, DEFAULT_CONFIG  # noqa: E402
+from think_layer.config import DEFAULT_CONFIG, TrainConfig  # noqa: E402
 
 
 def evaluate(
@@ -67,7 +66,9 @@ def evaluate(
 
     # Build evaluation environment
     def _make_eval_env():
-        env = ModernizedLine104(lead_train_speed=config.lead_train_speed, training_mode=False)
+        env = ModernizedLine104(
+            lead_train_speed=config.lead_train_speed, training_mode=False
+        )
         return env
 
     venv = DummyVecEnv([_make_eval_env])
@@ -76,7 +77,7 @@ def evaluate(
     if os.path.exists(vecnorm_path):
         print(f"Loading VecNormalize from: {vecnorm_path}")
         venv = VecNormalize.load(vecnorm_path, venv)
-        venv.training = False    # freeze normalisation stats
+        venv.training = False  # freeze normalisation stats
         venv.norm_reward = False  # use raw rewards for evaluation
     else:
         print("WARNING: VecNormalize stats not found, running without normalisation")
@@ -93,6 +94,8 @@ def evaluate(
         ep_overrides = 0
         ep_rows = []
 
+        ep_stations = 1
+
         while not done:
             action, _ = model.predict(obs, deterministic=True)
             obs, reward, dones, infos = venv.step(action)
@@ -101,6 +104,16 @@ def evaluate(
             raw_reward = reward[0]
             ep_reward += raw_reward
             ep_steps += 1
+
+            # Update max stations reached in this episode
+            if "punctuality_status" in info:
+                # next_station_idx is the one we are GOING to.
+                # So the number of stations reached is the next_idx (since 0 is the start).
+                next_idx = info["punctuality_status"]["ai"].get("next_station_idx")
+                if next_idx is not None:
+                    ep_stations = max(ep_stations, next_idx)
+                elif info["punctuality_status"]["ai"].get("status") == "arrived":
+                    ep_stations = 7
 
             if info.get("overridden", False):
                 ep_overrides += 1
@@ -130,14 +143,7 @@ def evaluate(
 
         override_rate = (ep_overrides / ep_steps * 100) if ep_steps > 0 else 0.0
 
-        # Access the raw env to get visited stations
-        raw_env = venv.envs[0]
-        # Unwrap through Monitor/TimeLimit to get the base env
-        base_env = raw_env
-        while hasattr(base_env, "env"):
-            base_env = base_env.env
-
-        stations_visited = len(getattr(base_env, "visited_stations", set()))
+        stations_visited = ep_stations
 
         summary = {
             "episode": ep,
@@ -150,10 +156,12 @@ def evaluate(
         episode_summaries.append(summary)
         all_rows.extend(ep_rows)
 
-        print(f"  Episode {ep}: reward={ep_reward:+.2f}  "
-              f"steps={ep_steps}  "
-              f"overrides={ep_overrides} ({override_rate:.1f}%)  "
-              f"stations={stations_visited}/7")
+        print(
+            f"  Episode {ep}: reward={ep_reward:+.2f}  "
+            f"steps={ep_steps}  "
+            f"overrides={ep_overrides} ({override_rate:.1f}%)  "
+            f"stations={stations_visited}/7"
+        )
 
     # Save CSV
     csv_path = None
@@ -199,21 +207,21 @@ def main():
         description="Evaluate a trained PPO agent on Line 104"
     )
     parser.add_argument(
-        "--model", type=str, default=None,
-        help="Path to model .zip file (default: best_model in model_dir)"
+        "--model",
+        type=str,
+        default=None,
+        help="Path to model .zip file (default: best_model in model_dir)",
     )
     parser.add_argument(
-        "--vecnorm", type=str, default=None,
-        help="Path to VecNormalize .pkl file"
+        "--vecnorm", type=str, default=None, help="Path to VecNormalize .pkl file"
     )
     parser.add_argument(
-        "--episodes", type=int, default=5,
-        help="Number of evaluation episodes (default: 5)"
+        "--episodes",
+        type=int,
+        default=5,
+        help="Number of evaluation episodes (default: 5)",
     )
-    parser.add_argument(
-        "--no-csv", action="store_true",
-        help="Skip saving CSV output"
-    )
+    parser.add_argument("--no-csv", action="store_true", help="Skip saving CSV output")
 
     args = parser.parse_args()
     config = TrainConfig()
