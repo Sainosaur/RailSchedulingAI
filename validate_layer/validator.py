@@ -42,25 +42,22 @@ class ValidationLayer:
                 return boundary - x
         return seg.spatial_headway
 
-    # --- In validator.py _speed_for_aspect ---
+    def _speed_for_aspect(
+        self, aspect: int, segment: VLSegment, dtz: float, current_v: float
+    ) -> Tuple[float, float]:
+        sh = segment.spatial_headway
 
+        # NEW COMPLEXITY: Only grant the 1km Departure Authority if the signal is GREEN (3).
+        # If the signal is Orange (1) or FlashGreen (2), the "Zero Distance" math stays
+        # at 0.0, keeping the train locked.
+        if current_v < 0.1 and aspect == 3:
+            distance_available = dtz + 3 * sh  # The 'Green Departure Runway'
+        else:
+            # Normal authority calculation for all other states
+            distance_available = dtz + (aspect * sh)
 
-def _speed_for_aspect(
-    self, aspect: int, segment: VLSegment, dtz: float, current_v: float
-) -> Tuple[float, float]:
-    sh = segment.spatial_headway
-
-    # NEW COMPLEXITY: Only grant the 1km Departure Authority if the signal is GREEN (3).
-    # If the signal is Orange (1) or FlashGreen (2), the "Zero Distance" math stays
-    # at 0.0, keeping the train locked.
-    if current_v < 0.1 and aspect == 3:
-        distance_available = dtz + 3 * sh  # The 'Green Departure Runway'
-    else:
-        # Normal authority calculation for all other states
-        distance_available = dtz + (aspect * sh)
-
-    v_dynamic = math.sqrt(2 * abs(EMERGENCY_DECEL) * max(0.0, distance_available))
-    return min(v_dynamic, segment.limit_ms), distance_available
+        v_dynamic = math.sqrt(2 * abs(EMERGENCY_DECEL) * max(0.0, distance_available))
+        return min(v_dynamic, segment.limit_ms), distance_available
 
     def _project(
         self, x: float, u: float, proposed_a: float, v_ceil: float, t: float
@@ -89,7 +86,7 @@ def _speed_for_aspect(
         self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float
     ) -> Tuple[bool, str]:
         current_seg = self.get_segment(x)
-        max_safe_v, dist_avail = self._speed_for_aspect(env_aspect, current_seg, dtz)
+        max_safe_v, dist_avail = self._speed_for_aspect(env_aspect, current_seg, dtz, u)
         boundary_x = x + dist_avail
 
         t_stop = current_seg.limit_ms / abs(EMERGENCY_DECEL)
@@ -127,7 +124,7 @@ def _speed_for_aspect(
 
         # RESOLUTION LOGIC
         seg = self.get_segment(x)
-        v_target, dist_avail = self._speed_for_aspect(env_aspect, seg, dtz)
+        v_target, dist_avail = self._speed_for_aspect(env_aspect, seg, dtz, u)
 
         if "_Limit" in constraint:
             a_needed = (v_target - u - 0.01) / self.dt
