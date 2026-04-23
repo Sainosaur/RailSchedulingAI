@@ -58,6 +58,10 @@ class RewardConfig:
     headway_violation_penalty: float = -5000.0
     collision_penalty: float = -10000.0
 
+    # 8. Lateness (The "Ghost Train")
+    lateness_violation_threshold: float = 300.0  # 5 minutes
+    lateness_violation_penalty: float = -10000.0
+
 
 DEFAULT_CONFIG = RewardConfig()
 
@@ -109,6 +113,8 @@ class TrainState:
     signal_aspect: int = 3  # 0=Red, 1=Orange, 2=FlashGreen, 3=Green
     applied_acceleration: float = 0.0  # the actual acceleration applied this step
     proposed_acceleration: float = 0.0  # the agent's chosen action (before VL clamping)
+    current_time: float = 0.0  # environment current time
+    next_scheduled_arrival_time: float = 0.0  # scheduled arrival at the next station
 
 
 # Reward components
@@ -304,6 +310,18 @@ def _compute_collision_penalty(
 
     if state.collision:
         return config.collision_penalty, True
+    return 0.0, False
+
+
+def _compute_lateness_violation(
+    state: TrainState, config: RewardConfig
+) -> tuple[float, bool]:
+    if (
+        state.next_scheduled_arrival_time > 0
+        and state.current_time
+        > state.next_scheduled_arrival_time + config.lateness_violation_threshold
+    ):
+        return config.lateness_violation_penalty, True
     return 0.0, False
 
 
