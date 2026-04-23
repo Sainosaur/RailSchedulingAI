@@ -62,7 +62,7 @@ def evaluate(
 
     # Load model
     print(f"Loading model from: {model_path}")
-    model = PPO.load(model_path)
+    model = PPO.load(model_path, device="cpu")
 
     # Build evaluation environment
     def _make_eval_env():
