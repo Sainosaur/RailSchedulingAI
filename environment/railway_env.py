@@ -283,6 +283,26 @@ class ModernizedLine104(gym.Env):
 
         return self._get_obs(), reward_out.r_total, terminated, truncated, info
 
+    def _get_obs(self) -> np.ndarray:
+        return np.array(
+            [
+                self.x,
+                self.v,
+                self.dtz,
+                float(
+                    self._cached_aspect
+                    if hasattr(self, "_cached_aspect")
+                    else self._get_signal_aspect()
+                ),
+                self._cached_dist_to_occupied
+                if hasattr(self, "_cached_dist_to_occupied")
+                else self._dist_to_nearest_occupied(),
+                self.lead_train.v,
+                self.time,
+            ],
+            dtype=np.float32,
+        )
+
     def render(self):
         if self.render_mode == "human":
             seg = self.vl.get_segment(self.x)
