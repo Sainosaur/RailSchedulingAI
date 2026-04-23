@@ -18,20 +18,20 @@ class TrainConfig:
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 5_000_000
-    learning_rate: float = 1e-4  # SB3 default
-    n_steps: int = 4096  # SB3 default
-    batch_size: int = 512  # SB3 default
-    n_epochs: int = 5  # SB3 default
-    gamma: float = 0.9999  # SB3 default
-    gae_lambda: float = 0.95  # SB3 default
-    clip_range: float = 0.2  # SB3 default
+    learning_rate: float = 1e-4
+    n_steps: int = 4096
+    batch_size: int = 512
+    n_epochs: int = 5
+    gamma: float = 0.9999
+    gae_lambda: float = 0.95
+    clip_range: float = 0.2
     ent_coef: float = 0.01  # Increase exploration (was 0.005)
-    vf_coef: float = 0.5  # SB3 default
-    max_grad_norm: float = 0.5  # SB3 default
+    vf_coef: float = 0.5  
+    max_grad_norm: float = 0.5  
 
     # ── Network Architecture ─────────────────────────────────────────
-    policy_net: list[int] = field(default_factory=lambda: [64, 64])  # SB3 default
-    value_net: list[int] = field(default_factory=lambda: [64, 64])  # SB3 default
+    policy_net: list[int] = field(default_factory=lambda: [128, 128])
+    value_net: list[int] = field(default_factory=lambda: [128, 128])
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0
