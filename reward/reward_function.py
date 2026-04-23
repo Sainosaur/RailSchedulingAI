@@ -454,6 +454,8 @@ if __name__ == "__main__":
         headway=15.0,  # e.g. 15s headway
         temporal_headway=12.5,
         reached_new_station=False,
+        current_time=100.0,
+        next_scheduled_arrival_time=500.0,
     )
 
     result = compute_reward(state)
@@ -464,6 +466,8 @@ if __name__ == "__main__":
     print(f"  Speed          : {result.r_speed:+.4f}")
     print(f"  Heartbeat      : {result.r_heartbeat:+.4f}")
     print(f"  Sig Compliance : {result.r_signal_compliance:+.4f}")
+    print(f"  Clear Road     : {result.r_clear_road:+.4f}")
+    print(f"  Cruise         : {result.r_cruise:+.4f}")
     print(f"  Station        : {result.r_station:+.4f}")
     print(f"  Punctuality    : {result.r_time:+.4f}")
     print(f"  Override       : {result.r_override:+.4f}")
@@ -471,6 +475,7 @@ if __name__ == "__main__":
     print(f"  Energy         : {result.r_energy:+.4f}")
     print(f"  HW Violation   : {result.r_violation:+.4f}")
     print(f"  Collision      : {result.r_collision:+.4f}")
+    print(f"  Lateness       : {result.r_lateness:+.4f}")
     print("------------------------")
     print(f"  Continuous     : {result.r_continuous:+.4f}")
     print(f"  Event          : {result.r_event:+.4f}")
