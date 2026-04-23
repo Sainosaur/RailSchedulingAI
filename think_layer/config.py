@@ -23,7 +23,7 @@ class TrainConfig:
     batch_size: int = 512  # SB3 default
     n_epochs: int = 5  # SB3 default
     gamma: float = 0.9999  # SB3 default
-    gae_lambda: float = 0.95  # SB3 cdefault
+    gae_lambda: float = 0.95  # SB3 default
     clip_range: float = 0.2  # SB3 default
     ent_coef: float = 0.01  # Increase exploration (was 0.005)
     vf_coef: float = 0.5  # SB3 default

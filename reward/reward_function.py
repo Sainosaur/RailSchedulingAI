@@ -19,7 +19,9 @@ from typing import Optional
 @dataclass
 class RewardConfig:
     # 1. Progress & Station Rewards (The "Carrots")
-    k_p: float = 2000.0  # incremental progress reward scale
+    k_p: float = (
+        2000.0  # incremental progress reward scale (increase to 4000 if still slow)
+    )
     station_reward_base: float = 8000.0  # milestone for station arrival
     station_escalation: float = 0.3
 
