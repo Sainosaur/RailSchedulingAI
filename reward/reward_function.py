@@ -350,6 +350,7 @@ class RewardOutput:
     # Terminal
     r_violation: float
     r_collision: float
+    r_lateness: float
     # Aggregate
     r_continuous: float
     r_event: float
@@ -392,6 +393,7 @@ def compute_reward(
 
     r_violation, terminate_violation = _compute_headway_violation(state, config)
     r_collision, terminate_collision = _compute_collision_penalty(state, config)
+    r_lateness, terminate_lateness = _compute_lateness_violation(state, config)
 
     # Aggregate including r_patience
     r_continuous = (
