@@ -236,7 +236,7 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
 
     v = state.current_speed
     v_lim = state.speed_limit
-    a = state.applied_acceleration
+    a = state.proposed_acceleration  # Use proposed_acceleration to judge AI intent
     bonus = config.signal_compliance_bonus
 
     if state.signal_aspect == 3:  # Green
@@ -244,17 +244,27 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
             return -config.k_stall
 
         # when below the speed limit.
-        if v < v_lim - 1.0 and state.proposed_acceleration > 0.4:
+        if v < v_lim - 1.0 and a > 0.4:
             return config.signal_compliance_bonus * 2.0
 
         return config.signal_compliance_bonus * (v / v_lim)
 
-    elif state.signal_aspect == 2:  # FlashGreen — coast for efficiency
-        if abs(a) < 0.1:  # coasting
-            return bonus * 0.5
-    elif state.signal_aspect == 1:  # Orange — keep speed low
-        if a < 0.0:
+    elif state.signal_aspect == 2:  # FlashGreen / Double Yellow — MUST coast
+        # Reward AI for choosing to coast (throttle near 0 or braking)
+        if a <= 0.0:
+            return bonus * 2.0
+        else:
+            return -config.override_penalty * 0.5  # Harsh penalty for accelerating
+
+    elif state.signal_aspect == 1:  # Orange / Yellow — MUST brake if moving fast
+        if v > 2.0:
+            if a < -0.1:  # Reward active braking
+                return bonus * 2.0
+            else:
+                return -config.override_penalty * 0.5  # Harsh penalty for not braking
+        elif a <= 0.0:
             return bonus
+
     elif state.signal_aspect == 0:  # Red
         # Return 0 instead of positive bonus.
         # Combined with heartbeat + existence_penalty, sitting at Red is now a net loss.
