@@ -35,8 +35,6 @@ class RewardConfig:
     k_lazy: float = 5.0
     clear_road_bonus: float = 1.0  # NEW: Bonus for having 3+ blocks clear
 
-    # ... (rest of config remains)
-
     # 4. Punctuality & Temporal (The "Schedule")
     punctuality_factor: float = 0.5
     punctuality_tolerance: float = 60.0
