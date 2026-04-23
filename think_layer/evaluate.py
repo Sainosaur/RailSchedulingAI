@@ -115,7 +115,7 @@ def evaluate(
                 elif info["punctuality_status"]["ai"].get("status") == "arrived":
                     ep_stations = 7
 
-            if info.get("overridden", False):
+            if info.get("safety_overridden", False):
                 ep_overrides += 1
 
             # Per-step row
