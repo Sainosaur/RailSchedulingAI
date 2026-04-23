@@ -15,7 +15,7 @@ from pathlib import Path
 # LOG_ENABLED flag — set to False during PPO training to prevent disk I/O thrashing.
 # ---------------------------------------------------------------------------
 LOG_RESET: bool = True
-LOG_ENABLED: bool = False
+LOG_ENABLED: bool = True
 
 # Log file lives inside validate_layer/
 _LOG_DIR = str(Path(__file__).resolve().parent)
@@ -49,13 +49,18 @@ def init_log() -> None:
             csv.writer(fh).writerow(_HEADER)
 
 
-def append_row(timestamp: float, original: float, corrected: float,
-               constraint_id: str) -> None:
+def append_row(
+    timestamp: float, original: float, corrected: float, constraint_id: str
+) -> None:
     """Append a single override event row to the log."""
     if not LOG_ENABLED:
         return
 
     with open(_LOG_PATH, "a", newline="") as fh:
-        csv.writer(fh).writerow(
-            [timestamp, original, corrected, constraint_id]
-        )
+        csv.writer(fh).writerow([timestamp, original, corrected, constraint_id])
+
+
+def clear_log() -> None:
+    """Wipe the override log file and re-initialise the header."""
+    with open(_LOG_PATH, "w", newline="") as fh:
+        csv.writer(fh).writerow(_HEADER)

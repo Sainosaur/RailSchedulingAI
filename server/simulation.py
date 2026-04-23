@@ -10,6 +10,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from environment.railway_env import ModernizedLine104
+from environment.timetable import STATION_NAMES
 
 
 class SimulationRunner:
@@ -120,8 +121,10 @@ class SimulationRunner:
         else:
             signal = "red"
 
-        lead_segment = raw_env.vl.get_segment(min(raw_env.lead_x, raw_env.TRACK_END))
-        lead_progress = (raw_env.lead_x - lead_segment.start) / (
+        lead_segment = raw_env.vl.get_segment(
+            min(raw_env.lead_train.x, raw_env.TRACK_END)
+        )
+        lead_progress = (raw_env.lead_train.x - lead_segment.start) / (
             lead_segment.end - lead_segment.start
         )
 
@@ -134,29 +137,43 @@ class SimulationRunner:
                 "progress": float(progress),
                 "speed_ms": float(raw_env.v),
                 "speed_kmh": float(raw_env.v) * 3.6,
+                "acceleration": float(raw_env.last_a),
                 "dtz": float(raw_env.dtz),
                 "signal": signal,
                 "dist_to_next_station": float(next_st_pos - raw_env.x),
                 "dist_to_obstruction": float(raw_env._dist_to_nearest_occupied()),
                 "speed_limit_ms": float(segment.limit_ms),
                 "headway": float(
-                    (raw_env.lead_x - raw_env.x) / raw_env.v
+                    (raw_env.lead_train.x - raw_env.x) / raw_env.v
                     if raw_env.v > 0.01
                     else 9999.0
                 ),
-                "segment": segment.id,
+                "segment_id": segment.id,
+                "approaching_station": STATION_NAMES[next_st_idx],
                 "dwell_timer": int(raw_env.ai_dwell_timer),
+                "authority_ranges": {
+                    "red": [0.0, float(segment.spatial_headway)],
+                    "yellow": [
+                        float(segment.spatial_headway),
+                        float(2 * segment.spatial_headway),
+                    ],
+                    "double_yellow": [
+                        float(2 * segment.spatial_headway),
+                        float(3 * segment.spatial_headway),
+                    ],
+                    "green": [float(3 * segment.spatial_headway), 9999.9],
+                },
             },
             "lead": {
-                "position_m": float(raw_env.lead_x),
+                "position_m": float(raw_env.lead_train.x),
                 "progress": float(lead_progress),
-                "speed_ms": float(raw_env.lead_v),
-                "speed_kmh": float(raw_env.lead_v) * 3.6,
+                "speed_ms": float(raw_env.lead_train.v),
+                "speed_kmh": float(raw_env.lead_train.v) * 3.6,
                 "signal": "green",
                 "segment": lead_segment.id,
-                "dwell_timer": int(raw_env.lead_dwell_timer),
-                "stalled": raw_env.lead_stalled,
-                "held": raw_env.lead_held,
+                "dwell_timer": int(raw_env.lead_train.dwell_timer),
+                "stalled": raw_env.lead_train.stalled,
+                "held": raw_env.lead_train.held,
             },
             "override": {
                 "active": False,
@@ -209,9 +226,9 @@ class SimulationRunner:
                     signal = "red"
 
                 lead_segment = raw_env.vl.get_segment(
-                    min(raw_env.lead_x, raw_env.TRACK_END)
+                    min(raw_env.lead_train.x, raw_env.TRACK_END)
                 )
-                lead_progress = (raw_env.lead_x - lead_segment.start) / (
+                lead_progress = (raw_env.lead_train.x - lead_segment.start) / (
                     lead_segment.end - lead_segment.start
                 )
 
@@ -224,6 +241,7 @@ class SimulationRunner:
                         "progress": float(progress),
                         "speed_ms": float(raw_env.v),
                         "speed_kmh": float(raw_env.v) * 3.6,
+                        "acceleration": float(raw_env.last_a),
                         "dtz": float(raw_env.dtz),
                         "signal": signal,
                         "dist_to_next_station": float(next_st_pos - raw_env.x),
@@ -232,23 +250,36 @@ class SimulationRunner:
                         ),
                         "speed_limit_ms": float(segment.limit_ms),
                         "headway": float(
-                            (raw_env.lead_x - raw_env.x) / raw_env.v
+                            (raw_env.lead_train.x - raw_env.x) / raw_env.v
                             if raw_env.v > 0.01
                             else 9999.0
                         ),
-                        "segment": info.get("segment", segment.id),
+                        "segment_id": info.get("segment", segment.id),
+                        "approaching_station": STATION_NAMES[next_st_idx],
                         "dwell_timer": int(raw_env.ai_dwell_timer),
+                        "authority_ranges": {
+                            "red": [0.0, float(segment.spatial_headway)],
+                            "yellow": [
+                                float(segment.spatial_headway),
+                                float(2 * segment.spatial_headway),
+                            ],
+                            "double_yellow": [
+                                float(2 * segment.spatial_headway),
+                                float(3 * segment.spatial_headway),
+                            ],
+                            "green": [float(3 * segment.spatial_headway), 9999.9],
+                        },
                     },
                     "lead": {
-                        "position_m": float(raw_env.lead_x),
+                        "position_m": float(raw_env.lead_train.x),
                         "progress": float(lead_progress),
-                        "speed_ms": float(raw_env.lead_v),
-                        "speed_kmh": float(raw_env.lead_v) * 3.6,
+                        "speed_ms": float(raw_env.lead_train.v),
+                        "speed_kmh": float(raw_env.lead_train.v) * 3.6,
                         "signal": "green",
                         "segment": lead_segment.id,
-                        "dwell_timer": int(raw_env.lead_dwell_timer),
-                        "stalled": raw_env.lead_stalled,
-                        "held": raw_env.lead_held,
+                        "dwell_timer": int(raw_env.lead_train.dwell_timer),
+                        "stalled": raw_env.lead_train.stalled,
+                        "held": raw_env.lead_train.held,
                     },
                     "override": {
                         "active": info.get("overridden", False),

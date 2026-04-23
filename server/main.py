@@ -12,6 +12,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from stable_baselines3.common.vec_env import VecNormalize
 
+from environment.railway_env import ModernizedLine104
+from environment.timetable import STATION_NAMES
 from graph.graph import graph
 from server.simulation import SimulationRunner
 from validate_layer import log_manager
@@ -122,6 +124,12 @@ async def log():
         return {"logs": list(reader)}
 
 
+@app.post("/api/dashboard/logs/reset")
+async def reset_logs():
+    log_manager.clear_log()
+    return {"status": "success", "message": "Override logs cleared."}
+
+
 # BUG 15 FIX: Wire up the kill/restore endpoints directly to the
 # simulation runner instead of just flipping a cosmetic 'KILLED' flag.
 @app.post("/api/dashboard/kill/kill")
@@ -151,10 +159,10 @@ async def _broadcast_lead_status():
     raw_env = _get_raw_env()
     await lead_status_manager.broadcast(
         {
-            "stalled": raw_env.lead_stalled,
-            "held": raw_env.lead_held,
-            "speed_ms": float(raw_env.lead_v),
-            "dwell_timer": int(raw_env.lead_dwell_timer),
+            "stalled": raw_env.lead_train.stalled,
+            "held": raw_env.lead_train.held,
+            "speed_ms": float(raw_env.lead_train.v),
+            "dwell_timer": int(raw_env.lead_train.dwell_timer),
         }
     )
 
@@ -200,8 +208,8 @@ async def lead_status(websocket: WebSocket):
         raw_env = _get_raw_env()
         await websocket.send_json(
             {
-                "stalled": raw_env.lead_stalled,
-                "held": raw_env.lead_held,
+                "stalled": raw_env.lead_train.stalled,
+                "held": raw_env.lead_train.held,
             }
         )
     else:
@@ -251,7 +259,9 @@ async def sim_updates(websocket: WebSocket):
             next_st_idx = min(raw_env.last_station_idx + 1, len(raw_env.STATIONS) - 1)
             next_st_pos = raw_env.STATIONS[next_st_idx]
             headway = float(
-                (raw_env.lead_x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0
+                (raw_env.lead_train.x - raw_env.x) / raw_env.v
+                if raw_env.v > 0.01
+                else 9999.0
             )
             signal_aspect = raw_env._get_signal_aspect()
             if signal_aspect == 3:
@@ -264,9 +274,9 @@ async def sim_updates(websocket: WebSocket):
                 signal = "red"
 
             lead_segment = raw_env.vl.get_segment(
-                min(raw_env.lead_x, raw_env.TRACK_END)
+                min(raw_env.lead_train.x, raw_env.TRACK_END)
             )
-            lead_progress = (raw_env.lead_x - lead_segment.start) / (
+            lead_progress = (raw_env.lead_train.x - lead_segment.start) / (
                 lead_segment.end - lead_segment.start
             )
 
@@ -280,6 +290,7 @@ async def sim_updates(websocket: WebSocket):
                         "progress": float(progress),
                         "speed_ms": float(raw_env.v),
                         "speed_kmh": float(raw_env.v) * 3.6,
+                        "acceleration": float(raw_env.last_a),
                         "dtz": float(raw_env.dtz),
                         "signal": signal,
                         "dist_to_next_station": float(next_st_pos - raw_env.x),
@@ -288,19 +299,32 @@ async def sim_updates(websocket: WebSocket):
                         ),
                         "speed_limit_ms": float(segment.limit_ms),
                         "headway": headway,
-                        "segment": segment.id,
+                        "segment_id": segment.id,
+                        "approaching_station": STATION_NAMES[next_st_idx],
                         "dwell_timer": int(raw_env.ai_dwell_timer),
+                        "authority_ranges": {
+                            "red": [0.0, float(segment.spatial_headway)],
+                            "yellow": [
+                                float(segment.spatial_headway),
+                                float(2 * segment.spatial_headway),
+                            ],
+                            "double_yellow": [
+                                float(2 * segment.spatial_headway),
+                                float(3 * segment.spatial_headway),
+                            ],
+                            "green": [float(3 * segment.spatial_headway), 9999.9],
+                        },
                     },
                     "lead": {
-                        "position_m": float(raw_env.lead_x),
+                        "position_m": float(raw_env.lead_train.x),
                         "progress": float(lead_progress),
-                        "speed_ms": float(raw_env.lead_v),
-                        "speed_kmh": float(raw_env.lead_v) * 3.6,
+                        "speed_ms": float(raw_env.lead_train.v),
+                        "speed_kmh": float(raw_env.lead_train.v) * 3.6,
                         "signal": "green",
                         "segment": lead_segment.id,
-                        "dwell_timer": int(raw_env.lead_dwell_timer),
-                        "stalled": raw_env.lead_stalled,
-                        "held": raw_env.lead_held,
+                        "dwell_timer": int(raw_env.lead_train.dwell_timer),
+                        "stalled": raw_env.lead_train.stalled,
+                        "held": raw_env.lead_train.held,
                     },
                     "override": {
                         "active": False,
