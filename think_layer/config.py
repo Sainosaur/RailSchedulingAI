@@ -17,31 +17,31 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int   = 3_000_000
-    learning_rate:   float = 1e-5   # SB3 default
-    n_steps:         int   = 2048   # SB3 default
-    batch_size:      int   = 512     # SB3 default
-    n_epochs:        int   = 5     # SB3 default
-    gamma:           float = 0.999   # SB3 default
-    gae_lambda:      float = 0.95   # SB3 cdefault
-    clip_range:      float = 0.2    # SB3 default
-    ent_coef:        float = 0.05     # Increase exploration (was 0.005)
-    vf_coef:         float = 0.5    # SB3 default
-    max_grad_norm:   float = 0.5    # SB3 default
+    total_timesteps: int = 5_000_000
+    learning_rate: float = 1e-4  # SB3 default
+    n_steps: int = 4096  # SB3 default
+    batch_size: int = 512  # SB3 default
+    n_epochs: int = 5  # SB3 default
+    gamma: float = 0.9999  # SB3 default
+    gae_lambda: float = 0.95  # SB3 cdefault
+    clip_range: float = 0.2  # SB3 default
+    ent_coef: float = 0.01  # Increase exploration (was 0.005)
+    vf_coef: float = 0.5  # SB3 default
+    max_grad_norm: float = 0.5  # SB3 default
 
     # ── Network Architecture ─────────────────────────────────────────
     policy_net: list[int] = field(default_factory=lambda: [64, 64])  # SB3 default
-    value_net:  list[int] = field(default_factory=lambda: [64, 64])  # SB3 default
+    value_net: list[int] = field(default_factory=lambda: [64, 64])  # SB3 default
 
     # ── Environment ──────────────────────────────────────────────────
-    lead_train_speed:  float = 20.0
-    max_episode_steps: int   = 15_000
-    n_envs:            int   = 12    # 12 of 16 cores; leaves 4 for main process + OS
+    lead_train_speed: float = 20.0
+    max_episode_steps: int = 20_000
+    n_envs: int = 12  # 12 of 16 cores; leaves 4 for main process + OS
 
     # ── Normalisation ────────────────────────────────────────────────
-    normalize_obs:    bool  = True
-    normalize_reward: bool  = True   
-    norm_obs_clip:    float = 10.0
+    normalize_obs: bool = True
+    normalize_reward: bool = True
+    norm_obs_clip: float = 10.0
     norm_reward_clip: float = 10.0
 
     # ── Reproducibility ──────────────────────────────────────────────
@@ -49,12 +49,12 @@ class TrainConfig:
 
     # ── Checkpointing & Evaluation ───────────────────────────────────
     checkpoint_freq: int = 250_000
-    eval_freq:       int = 50_000
-    eval_episodes:   int = 5
+    eval_freq: int = 50_000
+    eval_episodes: int = 5
 
     # ── Paths ────────────────────────────────────────────────────────
-    log_dir:     str = str(_PACKAGE_DIR / "runs")
-    model_dir:   str = str(_PACKAGE_DIR / "models")
+    log_dir: str = str(_PACKAGE_DIR / "runs")
+    model_dir: str = str(_PACKAGE_DIR / "models")
     results_dir: str = str(_PACKAGE_DIR / "results")
 
     def __post_init__(self):
