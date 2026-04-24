@@ -1,0 +1,14 @@
+explain in the env, why we have the red single interlock, 
+speed limit governer, boundary awareness. 
+should the ai be able to mess up and its the VL that should enforce safety ve override and 
+training with reward_function (reward good beahviour), punish bad behaviour? 
+why does env, cap speed, it shouldnt, the ai must learn to stay at segment speed. 
+i dont understand the station management,  the ai train must be able to see th station at 
+least 3* SH away from station position (just before segment boundary). 
+The last zone in the segment must be the red zone because we want ai train to stop just 
+before the next segment in the last zone of the current segment. 
+Maybe change the observation space, make it 8 variables, split the signal aspect 
+to train signal aspect and station signal aspect. ensure that the sation aspect 
+is always red and train can detect it normally, but after dwell time is complete, 
+it can simply ignore station signal aspect for 3*SH of the next segment. 
+So it then lokos at train signal aspect to see how far occupied zone is for lead train? 
