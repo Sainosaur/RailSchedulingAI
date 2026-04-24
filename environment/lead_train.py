@@ -8,7 +8,7 @@ Acts as a completely separate agent from the Gymnasium environment.
 import math
 
 class LeadTrain:
-    LEAD_DWELL_RANGE: tuple[int, int] = (15, 60)
+    LEAD_DWELL_RANGE: tuple[int, int] = (20, 40)
     LEAD_SERVICE_DECEL: float = -0.5
     ACCEL: float = 0.5
     DECEL: float = -1.0

@@ -225,14 +225,9 @@ class ModernizedLine104(gym.Env):
             )
             self.ai_arrival_times[next_st_idx] = self.time
 
-            # NEW DWELL LOGIC:
+            # NEW DWELL LOGIC: Random dwell (matching lead train behavior 20-40s)
             if next_st_idx < len(self.STATIONS) - 1 and entry:
-                # If early or on-time, wait until scheduled departure
-                if actual_arrival_time <= entry.scheduled_arrival:
-                    self.ai_departure_time = entry.scheduled_departure
-                else:
-                    # If late, wait exactly 60 seconds (1 minute recovery)
-                    self.ai_departure_time = self.time + 60.0
+                self.ai_departure_time = self.time + self.np_random.integers(20, 40)
 
         # --- REWARDS ---
         last_st_pos = self.STATIONS[self.last_station_idx]
