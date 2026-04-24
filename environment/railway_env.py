@@ -198,6 +198,8 @@ class ModernizedLine104(gym.Env):
         # Current signal aspect (derived from distance to lead train)
         env_aspect = self._get_signal_aspect()
 
+        collision_occurred = False  # will be set in the non-dwell path
+
         # ----- 0. AI Dwell: train is physically stopped at a station -----
         dwelling = self.ai_dwell_timer > 0
         if dwelling:
@@ -228,9 +230,16 @@ class ModernizedLine104(gym.Env):
 
         else:
             # ----- 1. Validation Layer (Layers 1–4) -----
-            safe_a, overridden = self.vl.get_safe_action(
-                proposed_a, env_aspect, self.x, self.v, self.dtz,
-            )
+            # VL is bypassed during training so the agent can learn to respect
+            # limits through reward signals rather than having them enforced.
+            # The VL remains active in deployment (training_mode=False).
+            if self.training_mode:
+                safe_a = proposed_a
+                overridden = False
+            else:
+                safe_a, overridden = self.vl.get_safe_action(
+                    proposed_a, env_aspect, self.x, self.v, self.dtz,
+                )
 
             # Jerk tracking: delta of the *physically executed* acceleration
             action_delta = abs(safe_a - self.last_a)
@@ -303,20 +312,24 @@ class ModernizedLine104(gym.Env):
                     entry = self.timetable.get_entry(next_st_idx)
                     scheduled_arrival_time = entry.scheduled_arrival if entry else self._ideal_schedule[next_st_idx]
                     self.ai_arrival_times[next_st_idx] = self.time
+                    # No forced snap or dwell — agent chooses its own speed through stations.
 
-                    # Snap to station and begin dwell (not at final station)
-                    self.x = self.STATIONS[next_st_idx]
-                    self.v = 0.0
-                    if next_st_idx < len(self.STATIONS) - 1:
-                        self.ai_dwell_timer = self.AI_DWELL_TIME
+        # ----- 5. Collision snap-back (training only) -----
+        # Capture the collision flag BEFORE snapping so the reward sees it.
+        collision_occurred = self.x >= self.lead_x
+        if self.training_mode and collision_occurred:
+            snap_seg = self.vl.get_segment(min(self.lead_x, self.TRACK_END - 1.0))
+            self.x = max(self.TRACK_START, self.lead_x - 2.0 * snap_seg.spatial_headway)
+            self.v = 0.0
 
-        # ----- 5. Reward computation -----
+        # ----- 6. Reward computation -----
         last_st_pos = self.STATIONS[self.last_station_idx]
         next_st_pos = self.STATIONS[
             min(self.last_station_idx + 1, len(self.STATIONS) - 1)
         ]
 
         headway = self._compute_headway()
+        seg = self.vl.get_segment(self.x)  # refresh after possible snap
 
         state = TrainState(
             current_position=self.x,
@@ -329,7 +342,7 @@ class ModernizedLine104(gym.Env):
             reached_new_station=reached_new_station,
             scheduled_arrival_time=scheduled_arrival_time,
             actual_arrival_time=actual_arrival_time,
-            collision=(self.x >= self.lead_x),
+            collision=collision_occurred,
             temporal_headway=seg.temporal_headway,
             overridden=overridden,
             action_delta=action_delta,

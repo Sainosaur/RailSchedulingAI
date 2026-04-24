@@ -17,38 +17,50 @@ import math
 
 @dataclass
 class RewardConfig:
-    """Hyperparameters for the reward function."""
-    k_p: float = 0.1  # per-metre progress reward scale (≈ 0.0015 reward per metre → ~1.5/km)
-    station_reward: float = 25.0
-    station_overshoot_penalty: float = -25.0  # penalty for blasting through station at speed
-    station_arrival_speed_limit: float = 2.0  # m/s — max speed to qualify for station reward
-    punctuality_factor: float = 0.5       # penalty per second *outside* tolerance
-    punctuality_tolerance: float = 60.0   # seconds, "on time" window
+    """Hyperparameters for the reward function — elimination-diet baseline.
 
-    k_h: float = 3.0  # HEADWAY_WARNING_SCALE
-    headway_warning_multiplier: float = 3.0  # e.g., 3x TH starts warning zone
-    headway_violation_multiplier: float = 1.0  # e.g., 1x TH is hard safety limit
+    Only the signals needed to teach the agent to move and survive are active.
+    Reintroduce one component at a time once the base behaviour is stable.
 
-    k_vel: float = 0.5   # velocity bonus weight (continuous positive reward for speed)
-    k_over: float = 0.05  # overspeed penalty weight (quadratic, vs. segment limit only)
-    k_under: float = 0.0  # underspeed penalty weight — disabled: progress + velocity bonus carry departure signal
+    Mathematical basis
+    ------------------
+    Perfect episode: ~3 800 steps at 20 m/s average across 76 km.
+    Progress total  = k_p * 6 segments = 20 * 6 = 120.
+    Heartbeat fires only while stationary (v < 0.5 m/s); penalty per
+    stall-step = -0.5.  Moving earns +0.04/step; sitting costs -0.5/step
+    → 12.5:1 gradient favouring movement.
+    Velocity bonus = +0.05/step at speed limit, 0 at standstill.
+    Collision = -100 (≈ 83% of a perfect run): very painful, recoverable.
+    Violation = -50  (≈ 42% of a perfect run): serious, survivable.
+    """
 
-    # Kinematic Comfort Limits
+    # --- Active ---
+    k_p: float = 20.0  # progress reward scale (segment-span fraction × k_p)
+    heartbeat_penalty: float = -0.5   # fires only when v < 0.5 m/s
+    headway_violation_penalty: float = -50.0   # non-terminal
+    collision_penalty: float = -100.0          # non-terminal
+
+    k_h: float = 0.2   # headway warning ramp: 0 at 3×TH → -0.2/step at 1×TH
+    k_vel: float = 0.05  # velocity reward: +k_vel at speed limit, 0 at standstill
+    headway_warning_multiplier: float = 3.0
+    headway_violation_multiplier: float = 1.0
+
+    # --- Zeroed (reintroduce one at a time) ---
+    station_reward: float = 0.0
+    station_overshoot_penalty: float = 0.0
+    station_arrival_speed_limit: float = 2.0   # kept for when station_reward is re-enabled
+    punctuality_factor: float = 0.0
+    punctuality_tolerance: float = 60.0
+
+    k_over: float = 0.0   # overspeed penalty
+    k_under: float = 0.0  # underspeed penalty
+
     comfortable_acceleration: float = 0.5  # m/s²
     comfortable_deceleration: float = 0.5  # m/s²
 
-    # Behavioural and Operational penalties
-    heartbeat_penalty: float = -0.05          # per-step cost of doing nothing
-    override_penalty: float = 0.0             # overrides are correct safety behaviour, not an agent failure
-    # jerk penalty must be small: early Gaussian exploration naturally swings
-    # action by ~1.5 per step, so -0.5 × 1.5² = -1.125/step (~-600/rollout)
-    # teaches PPO to pick a constant action — which collapses to full brake.
-    jerk_penalty: float = -0.01               # penalty for flip-flopping actions abruptly
-    energy_penalty_weight: float = -0.05      # penalty for positive traction use
-
-    # Safety costs — non-terminal so the agent can recover and learn.
-    headway_violation_penalty: float = -10.0
-    collision_penalty: float = -20.0
+    override_penalty: float = 0.0
+    jerk_penalty: float = 0.0
+    energy_penalty_weight: float = 0.0
 
 DEFAULT_CONFIG = RewardConfig()
 
@@ -94,10 +106,17 @@ class TrainState:
 
 
 def _compute_progress_reward(state: TrainState, config: RewardConfig) -> float:
-    # Per-metre progress reward — uniform across spans of wildly different lengths
-    # (5 km vs. 22 km) so the per-step signal is comparable throughout the line.
-    delta_m = max(0.0, state.current_position - state.previous_position)
-    return config.k_p * delta_m
+    # Segment-span fractional progress: reward is proportional to the fraction
+    # of the inter-station span covered, so the per-step signal is comparable
+    # regardless of segment length (5 km vs. 22 km).
+    span = state.next_station_position - state.last_station_position
+    if span <= 0:
+        return 0.0
+    p_current = (state.current_position - state.last_station_position) / span
+    p_previous = (state.previous_position - state.last_station_position) / span
+    p_current = max(0.0, min(1.0, p_current))
+    p_previous = max(0.0, min(1.0, p_previous))
+    return config.k_p * (p_current - p_previous)
 
 
 def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
@@ -157,7 +176,8 @@ def _compute_energy_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.energy_penalty_weight * state.applied_traction
 
 def _compute_heartbeat_penalty(state: TrainState, config: RewardConfig) -> float:
-    return config.heartbeat_penalty
+    # Only penalise genuine stalls — not the passage of time while cruising.
+    return config.heartbeat_penalty if state.current_speed < 0.5 else 0.0
 
 def _compute_override_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.override_penalty if state.overridden else 0.0
@@ -317,6 +337,7 @@ if __name__ == "__main__":
     print(f"  Progress       : {result.r_progress:+.4f}")
     print(f"  Headway        : {result.r_headway:+.4f}")
     print(f"  Speed          : {result.r_speed:+.4f}")
+    print(f"  Velocity       : {result.r_velocity:+.4f}")
     print(f"  Heartbeat      : {result.r_heartbeat:+.4f}")
     print(f"  Station        : {result.r_station:+.4f}")
     print(f"  Punctuality    : {result.r_time:+.4f}")

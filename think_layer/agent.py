@@ -10,10 +10,9 @@ from pathlib import Path
 from typing import Callable
 
 import gymnasium as gym
-
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
 # Ensure project-root imports work
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -26,11 +25,12 @@ def make_env(
     seed: int = 42,
     lead_train_speed: float = 20.0,
     max_episode_steps: int = 15_000,
+    rank: int = 0,
 ) -> Callable[[], gym.Env]:
     """
     Return a thunk that creates a MonitoredLine104 environment.
 
-    SB3's DummyVecEnv expects a list of callables, each returning a Gym env.
+    SubprocVecEnv expects a list of callables, each returning a Gym env.
     Monitor wraps the env to log episode stats (reward, length).
     """
 
@@ -39,7 +39,8 @@ def make_env(
         # Wrap in TimeLimit for episode truncation
         env = gym.wrappers.TimeLimit(env, max_episode_steps=max_episode_steps)
         env = Monitor(env)
-        env.reset(seed=seed)
+        # Use rank to offset seed to avoid same seed in multiple parallel envs
+        env.reset(seed=seed + rank)
         return env
 
     return _init
@@ -54,14 +55,18 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
     (model, vec_env) — the PPO model and the VecNormalize wrapper
                        (needed to save/load normalisation stats).
     """
-    # 1. Vectorised environment (single env for now)
-    venv = DummyVecEnv([
-        make_env(
-            seed=config.seed,
-            lead_train_speed=config.lead_train_speed,
-            max_episode_steps=config.max_episode_steps,
-        )
-    ])
+    # 1. Vectorised environment (SubprocVecEnv for multi-core speed)
+    venv = SubprocVecEnv(
+        [
+            make_env(
+                seed=config.seed,
+                lead_train_speed=config.lead_train_speed,
+                max_episode_steps=config.max_episode_steps,
+                rank=i,
+            )
+            for i in range(config.n_envs)
+        ]
+    )
 
     # 2. Observation & reward normalisation
     venv = VecNormalize(

@@ -192,7 +192,7 @@ class ValidationLayer:
             if u >= v_ceil:
                 # BUG 6 FIX: coast at the ceiling, not at u (which may be
                 # above v_ceil due to a prior segment with a higher limit).
-                return x + v_ceil * t, v_ceil 
+                return x + v_ceil * t, v_ceil
             t_to_limit = (v_ceil - u) / proposed_a
         else:
             if u <= 0.0:

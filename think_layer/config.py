@@ -19,16 +19,21 @@ class TrainConfig:
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 1_000_000
-    learning_rate: float = 1e-4   # lowered from 3e-4: PPO was finding good policies and then losing them
-    n_steps: int = 4096           # larger rollouts → more stable advantage estimates
-    batch_size: int = 128         # scale minibatch with n_steps
-    n_epochs: int = 10            # PPO clipping epochs per update
-    gamma: float = 0.99           # discount factor
-    gae_lambda: float = 0.95      # GAE advantage estimator
-    clip_range: float = 0.2       # PPO surrogate clip
-    ent_coef: float = 0.02        # increased: keep exploration alive so the agent doesn't collapse to brake
-    vf_coef: float = 0.5          # value function loss weight
-    max_grad_norm: float = 0.5    # gradient clipping
+    learning_rate: float = (
+        1e-4  # lowered from 3e-4: PPO was finding good policies and then losing them
+    )
+    n_envs: int = 8  # number of parallel environments (matching M2 core count)
+    n_steps: int = 512  # steps per env; total rollout = n_envs * n_steps = 4096
+    batch_size: int = 128  # scale minibatch with n_steps
+    n_epochs: int = 10  # PPO clipping epochs per update
+    gamma: float = 0.99  # discount factor
+    gae_lambda: float = 0.95  # GAE advantage estimator
+    clip_range: float = 0.2  # PPO surrogate clip
+    ent_coef: float = (
+        0.02  # increased: keep exploration alive so the agent doesn't collapse to brake
+    )
+    vf_coef: float = 0.5  # value function loss weight
+    max_grad_norm: float = 0.5  # gradient clipping
 
     # ── Network Architecture ─────────────────────────────────────────
     # Two hidden layers for both policy and value networks
@@ -36,7 +41,9 @@ class TrainConfig:
     value_net: list[int] = field(default_factory=lambda: [64, 64])
 
     # ── Environment ──────────────────────────────────────────────────
-    lead_train_speed: float = 20.0  # m/s — midpoint; randomised per episode in training_mode
+    lead_train_speed: float = (
+        20.0  # m/s — midpoint; randomised per episode in training_mode
+    )
     max_episode_steps: int = 15_000  # truncation safety net
 
     # ── Normalisation ────────────────────────────────────────────────
@@ -49,9 +56,9 @@ class TrainConfig:
     seed: int = 42
 
     # ── Checkpointing & Evaluation ───────────────────────────────────
-    checkpoint_freq: int = 250_000   # save a checkpoint every N steps
-    eval_freq: int = 50_000          # run evaluation every N steps
-    eval_episodes: int = 5           # episodes per evaluation round
+    checkpoint_freq: int = 250_000  # save a checkpoint every N steps
+    eval_freq: int = 50_000  # run evaluation every N steps
+    eval_episodes: int = 5  # episodes per evaluation round
 
     # ── Paths ────────────────────────────────────────────────────────
     log_dir: str = str(_PACKAGE_DIR / "runs")
