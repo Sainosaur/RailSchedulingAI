@@ -228,7 +228,16 @@ class SimulationRunner:
                     self._current_obs = self.venv.reset()
 
                 # SB3 inference
-                action, _ = self.model.predict(self._current_obs, deterministic=True)
+                if self.model is not None:
+                    action, _ = self.model.predict(
+                        self._current_obs, deterministic=True
+                    )
+                else:
+                    # Fallback: Just coast (0 acceleration) if no model exists
+                    import numpy as np
+
+                    action = [np.array([0.0], dtype=np.float32)]
+
                 self._current_obs, rewards, dones, infos = self.venv.step(action)
 
                 info = infos[0]

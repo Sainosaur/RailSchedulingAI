@@ -3,7 +3,7 @@
   "venv": "venv",
   "executionEnvironments": [
     {
-      "root": "."
-    }
-  ]
+      "root": ".",
+    },
+  ],
 }

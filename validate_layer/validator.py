@@ -137,7 +137,7 @@ class ValidationLayer:
             seg_id = constraint.split("_")[0]
             target_limit = seg.limit_ms
             for s in self.segments:
-                if s.id == seg_id:
+                if str(s.id) == str(seg_id):
                     target_limit = s.limit_ms
                     break
             a_needed = (target_limit - u - 0.01) / self.dt
