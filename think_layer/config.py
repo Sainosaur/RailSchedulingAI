@@ -36,7 +36,7 @@ class TrainConfig:
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0
     max_episode_steps: int = 20_000
-    n_envs: int = 6  # 6 performance of 10 total cores
+    n_envs: int = 14  # depnds on cores
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True
