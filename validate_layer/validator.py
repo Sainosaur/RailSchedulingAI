@@ -95,11 +95,15 @@ class ValidationLayer:
         return x_proj, max(0.0, v)
 
     def _check_action_safety(
-        self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float
+        self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float, d_occ: float = 99999.0
     ) -> Tuple[bool, str]:
         """Simulates trajectory to verify if an action violates safety constraints."""
         current_seg = self.get_segment(x)
         max_safe_v, dist_avail = self._speed_for_aspect(env_aspect, current_seg, dtz, u)
+        
+        # BUG FIX: Authority must also respect the actual physical distance to the lead train/hazard.
+        # This prevents collisions when the lead train is in the same block as the AI train.
+        dist_avail = min(dist_avail, d_occ)
         boundary_x = x + dist_avail
 
         # Look ahead based on stopping time
@@ -112,10 +116,12 @@ class ValidationLayer:
             proj_seg = self.get_segment(x_proj)
 
             # Constraint 1: Spatial limit (Aspect Authority)
-            # TOLERANCE: If speed is very low (< 1 m/s) and we are close to the boundary (< 2m), 
-            # allow a small overshoot to prevent nuisance overrides during station stops.
+            # BUG FIX: Use strict inequality (>) and ensure stationary trains don't trigger violations.
             tolerance = 2.0 if (u < 1.0 and dist_avail < 2.0) else 0.0
-            if x_proj >= boundary_x + tolerance:
+            if x_proj > boundary_x + tolerance + 0.01:
+                # If stationary and not intending to move, this isn't a violation
+                if u < 0.1 and proposed_a <= 0:
+                    continue
                 return False, "Aspect_Spatial_Violation"
 
             # Constraint 2: Speed limit of the current or future segment
@@ -129,7 +135,7 @@ class ValidationLayer:
         return True, ""
 
     def get_safe_action(
-        self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float
+        self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float, d_occ: float = 99999.0
     ) -> Tuple[float, bool]:
         """
         Main entry point. Validates action and returns a safe alternative if needed.
@@ -149,7 +155,7 @@ class ValidationLayer:
 
         # 4. Trajectory Safety Check
         is_safe, constraint = self._check_action_safety(
-            clamped_a, env_aspect, x, u, dtz
+            clamped_a, env_aspect, x, u, dtz, d_occ
         )
 
         if is_safe:
@@ -157,6 +163,7 @@ class ValidationLayer:
 
         # 5. RESOLUTION (If unsafe, find the best possible safe action)
         v_target, dist_avail = self._speed_for_aspect(env_aspect, seg, dtz, u)
+        dist_avail = min(dist_avail, d_occ)
 
         if "_Limit" in constraint:
             # Resolve speed limit violations
