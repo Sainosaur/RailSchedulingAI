@@ -42,32 +42,43 @@ class SimulationRunner:
         # 3. Load Normalisation Stats
         vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "best_vecnormalize.pkl"
         if vecnorm_path.exists():
-            # Workaround for numpy 2.x pickle loaded in numpy 1.x
+            # Workaround for numpy 2.x pickle loaded in numpy 1.x (and vice versa)
             import sys
+            import importlib
 
-            import numpy.core.multiarray
-            import numpy.core.numeric
-            import numpy.random._pickle
+            # 1. Defensive imports of internal modules to satisfy Pyright/static analysis
+            try:
+                import numpy.core.multiarray as ncm  # type: ignore
+                import numpy.core.numeric as ncn  # type: ignore
+                # Use importlib to avoid direct static reference to internal module
+                nr_pickle = importlib.import_module("numpy.random._pickle")
+            except ImportError:
+                # Fallback if names differ or modules are moved
+                ncm = getattr(getattr(numpy, "core", None), "multiarray", None)
+                ncn = getattr(getattr(numpy, "core", None), "numeric", None)
+                nr_pickle = getattr(numpy.random, "_pickle", None)
 
-            # 1. Core aliases (numpy 2.x renamed core to _core)
-            sys.modules.setdefault("numpy._core", numpy.core)
-            sys.modules.setdefault("numpy._core.numeric", numpy.core.numeric)
-            sys.modules.setdefault("numpy._core.multiarray", numpy.core.multiarray)
+            # 2. Core aliases (numpy 2.x renamed core to _core)
+            if hasattr(numpy, "core"):
+                sys.modules.setdefault("numpy._core", numpy.core)
+                if ncn:
+                    sys.modules.setdefault("numpy._core.numeric", ncn)
+                if ncm:
+                    sys.modules.setdefault("numpy._core.multiarray", ncm)
 
-            # 2. Monkeypatch __bit_generator_ctor to handle BitGenerator classes
-            # being passed instead of strings (common when loading numpy 2.x pickles in 1.x)
-            # Use getattr to avoid name mangling inside the class method
-            if not hasattr(numpy.random._pickle, "_patched"):
-                orig_ctor = getattr(numpy.random._pickle, "__bit_generator_ctor")
+            # 3. Monkeypatch __bit_generator_ctor to handle BitGenerator classes
+            if nr_pickle and not hasattr(nr_pickle, "_patched"):
+                orig_ctor = getattr(nr_pickle, "__bit_generator_ctor", None)
+                if orig_ctor:
 
-                def patched_ctor(bit_generator_name):
-                    if not isinstance(bit_generator_name, str):
-                        if hasattr(bit_generator_name, "__name__"):
-                            bit_generator_name = bit_generator_name.__name__
-                    return orig_ctor(bit_generator_name)
+                    def patched_ctor(bit_generator_name):
+                        if not isinstance(bit_generator_name, str):
+                            if hasattr(bit_generator_name, "__name__"):
+                                bit_generator_name = bit_generator_name.__name__
+                        return orig_ctor(bit_generator_name)
 
-                setattr(numpy.random._pickle, "__bit_generator_ctor", patched_ctor)
-                setattr(numpy.random._pickle, "_patched", True)
+                    setattr(nr_pickle, "__bit_generator_ctor", patched_ctor)
+                    setattr(nr_pickle, "_patched", True)
 
             self.venv = VecNormalize.load(str(vecnorm_path), self.venv)
             self.venv.training = False
