@@ -68,30 +68,31 @@ class ValidationLayer:
         return v_target, distance_available
 
     def _project(
-        self, x: float, u: float, proposed_a: float, v_ceil: float, t_steps: float
+        self, x: float, u: float, proposed_a: float, v_ceil: float, t: float
     ) -> Tuple[float, float]:
-        """
-        Predicts position and speed after t_steps using discrete Euler integration
-        to match the environment's physics exactly.
-        """
-        curr_x = x
-        curr_v = u
-        steps = int(t_steps)
+        """Predicts position and speed after t seconds using SUVAT."""
+        if proposed_a == 0:
+            return x + u * t, u
 
-        for _ in range(steps):
-            # Environment logic: v = v + a*dt, v = clamp(0, v_limit), x = x + v*dt
-            curr_v += proposed_a * self.dt
-            if proposed_a > 0:
-                curr_v = min(curr_v, v_ceil)
-            else:
-                curr_v = max(0.0, curr_v)
-            
-            curr_x += curr_v * self.dt
-            
-            if proposed_a <= 0 and curr_v <= 0:
-                break  # Stopped early
+        if proposed_a > 0:
+            if u >= v_ceil:
+                return x + v_ceil * t, v_ceil
+            t_to_limit = (v_ceil - u) / proposed_a
+        else:
+            if u <= 0.0:
+                return x, 0.0
+            t_to_limit = (0.0 - u) / proposed_a
 
-        return curr_x, curr_v
+        if t <= t_to_limit:
+            v = u + proposed_a * t
+            x_proj = x + u * t + 0.5 * proposed_a * (t**2)
+        else:
+            # Reached speed limit or stop mid-interval
+            x_at_limit = x + u * t_to_limit + 0.5 * proposed_a * (t_to_limit**2)
+            v = v_ceil if proposed_a > 0 else 0.0
+            x_proj = x_at_limit + v * (t - t_to_limit)
+
+        return x_proj, max(0.0, v)
 
     def _check_action_safety(
         self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float
