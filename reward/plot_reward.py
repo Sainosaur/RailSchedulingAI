@@ -34,75 +34,79 @@ def run_and_collect():
     
     data = {
         "position": [], "speed": [], "reward": [], 
-        "total_reward": [], "r_breaks": [],
+        "total_reward": [], "limit": [],
         "lead_x": [], "signal": [],
     }
 
     obs = venv.reset()
     total_rew = 0
-    for idx in range(25000):  # Long budget for full run
+    for idx in range(25000):
         action, _ = model.predict(obs, deterministic=True)
+        
+        # Take step
         obs, rewards, terminated, info = venv.step(action)
         
-        # Unpack from vector env
+        # Unpack BEFORE reset logic can mess with position
         real_env = venv.envs[0].unwrapped
-        total_rew += rewards[0]
-
-        if idx % 2000 == 0:
-            print(f"TRAINED AGENT | Step {idx}: Pos={real_env.x/1000:.1f}km, V={real_env.v*3.6:.1f}km/h, TotalReward={total_rew:.1f}")
+        
+        # Get the limit for the CURRENT position (not the reset position)
+        current_limit = real_env.vl.get_segment(real_env.x).limit_ms * 3.6
 
         data["position"].append(real_env.x)
         data["speed"].append(real_env.v)
         data["reward"].append(rewards[0])
         data["total_reward"].append(total_rew)
+        data["limit"].append(current_limit)
         data["lead_x"].append(real_env.lead_train.x)
         data["signal"].append(real_env._get_signal_aspect())
 
+        total_rew += rewards[0]
+
+        if idx % 2000 == 0:
+            print(f"TRAINED AGENT | Step {idx}: Pos={real_env.x/1000:.1f}km, V={real_env.v*3.6:.1f}km/h")
+
         if terminated[0]:
+            print(f"Terminated at {real_env.x/1000:.1f}km")
             break
 
-    print(f"Final Position: {real_env.x/1000:.1f}km | Final Reward: {total_rew:.1f}")
     return {k: np.array(v) for k, v in data.items()}
-
 
 def plot(data):
     """Plot the reward landscape across the line."""
-    stations_km = [0, 15, 28, 42, 55, 68, 76]  # approximate
-    x = data["position"] / 1000.0  # meters to km
+    stations_km = [0, 15, 28, 42, 55, 68, 76] 
+    x = data["position"] / 1000.0
     
     fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
     
-    # 1. Speed & Signal
+    # 1. Speed & Limits
     ax = axes[0]
-    ax.plot(x, data["speed"] * 3.6, label="Agent Speed", linewidth=1.2, color="blue")
+    ax.plot(x, data["speed"] * 3.6, label="Agent Speed", linewidth=2.0, color="blue")
+    ax.plot(x, data["limit"], label="Speed Limit", color="red", linestyle="--", alpha=0.8)
     ax2 = ax.twinx()
-    ax2.plot(x, data["signal"], color="orange", alpha=0.3, label="Signal Aspect")
+    ax2.plot(x, data["signal"], color="orange", alpha=0.3, label="Signal")
     ax.set_ylabel("Speed (km/h)")
     ax2.set_ylabel("Signal (0-3)")
-    ax.set_title("FINAL PERFORMANCE: Trained RL Agent (5M Steps)")
-    for s in stations_km: ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
+    ax.set_title("SPEED AUDIT: Trained Agent vs. Limits")
     ax.legend(loc="upper left")
 
-    # 2. Per-Step Reward
+    # 2. Reward density
     ax = axes[1]
-    ax.plot(x, data["reward"], color="green", linewidth=0.5, alpha=0.7)
+    ax.plot(x, data["reward"], color="green", linewidth=0.5)
     ax.set_ylabel("Step Reward")
-    ax.set_title("Per-Step Reward Density")
-    for s in stations_km: ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
+    ax.set_title("Reward Spikes (Stations/Violations)")
 
-    # 3. Cumulative Total
+    # 3. Total Reward
     ax = axes[2]
-    ax.plot(x, data["total_reward"], color="black", linewidth=1.5)
-    ax.set_ylabel("Total Reward")
+    ax.plot(x, data["total_reward"], color="black", linewidth=2.0)
+    ax.set_ylabel("Cumulative Score")
     ax.set_xlabel("Position (km)")
-    ax.set_title("Cumulative Journey Reward (The Golden Curve)")
-    ax.axhline(0, color="red", linestyle="--", alpha=0.5)
-    for s in stations_km: ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
-
+    ax.set_title("The Golden Curve")
+    
+    for ax_item in axes:
+        for s in stations_km: ax_item.axvline(s, color="gray", linestyle="--", alpha=0.2)
+    
     plt.tight_layout()
-    out = Path(__file__).resolve().parent / "reward_landscape.png"
-    plt.savefig(out, dpi=150)
-    print(f"Saved: {out}")
+    plt.savefig("reward_landscape.png", dpi=150)
     plt.show()
 
 if __name__ == "__main__":
