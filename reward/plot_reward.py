@@ -9,129 +9,95 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from environment.railway_env import ModernizedLine104
+from reward.reward_function import compute_reward, TrainState, RewardConfig
+
+# Paths to trained model
+MODEL_DIR = "/home/dharms/RailSchedulingAI/think_layer/models"
+MODEL_PATH = os.path.join(MODEL_DIR, "best_model.zip")
+STATS_PATH = os.path.join(MODEL_DIR, "final_vecnormalize.pkl")
 
 def run_and_collect():
     """Run full episode with max-throttle policy, collect reward breakdown."""
-    env = ModernizedLine104(lead_train_speed=20.0, training_mode=False)
-    obs, info = env.reset()
+    env = ModernizedLine104(lead_train_speed=25.0, training_mode=False)
+    # Wrap in VecNormalize (Crucial for HPO-tuned models)
+    venv = DummyVecEnv([lambda: env])
+    venv = VecNormalize.load(STATS_PATH, venv)
+    venv.training = False
+    venv.norm_reward = False
 
+    # Load Model
+    model = PPO.load(MODEL_PATH, env=venv)
+    
     data = {
-        "position": [], "speed": [], "time": [],
-        "progress": [], "headway": [], "speed_rew": [],
-        "heartbeat": [], "sig_compliance": [], "station": [], "override": [],
-        "jerk": [], "energy": [], "total": [],
+        "position": [], "speed": [], "reward": [], 
+        "total_reward": [], "r_breaks": [],
         "lead_x": [], "signal": [],
     }
 
-    for idx in range(20000):  # Real time simulation
-        # PERFECT CONTROLLER: Act like a perfect AI agent
-        seg = env.vl.get_segment(env.x)
-        target_v = seg.limit_ms * 0.98  # Stay just under the limit
+    obs = venv.reset()
+    total_rew = 0
+    for idx in range(25000):  # Long budget for full run
+        action, _ = model.predict(obs, deterministic=True)
+        obs, rewards, terminated, info = venv.step(action)
         
-        # Simple proportional controller for acceleration
-        error = target_v - env.v
-        kp_accel = 0.5
-        ideal_a = error * kp_accel
-        clamped_a = max(-0.5, min(0.5, ideal_a))
-        
-        # Step the environment with our 'Ideal' action
-        obs, reward, terminated, truncated, info = env.step(np.array([clamped_a]))
+        # Unpack from vector env
+        real_env = venv.envs[0].unwrapped
+        total_rew += rewards[0]
 
         if idx % 2000 == 0:
-            rb = info["reward_breakdown"]
-            leaks = {k: round(v, 2) for k, v in rb.items() if abs(v) > 0.1}
-            print(f"PERFECT DRIVER | Step {idx}: Pos={env.x/1000:.1f}km, V={env.v*3.6:.1f}km/h, Reward={reward:.2f}, Leaks={leaks}")
+            print(f"TRAINED AGENT | Step {idx}: Pos={real_env.x/1000:.1f}km, V={real_env.v*3.6:.1f}km/h, TotalReward={total_rew:.1f}")
 
-        rb = info["reward_breakdown"]
-        data["position"].append(env.x)
-        data["speed"].append(env.v)
-        data["time"].append(env.time)
-        data["progress"].append(rb["progress"]) 
-        data["headway"].append(rb["headway"])
-        data["speed_rew"].append(rb["speed"])
-        data["heartbeat"].append(rb["heartbeat"])
-        data["sig_compliance"].append(rb["signal_compliance"])
-        data["station"].append(rb["station"])
-        data["override"].append(rb["override"])
-        data["jerk"].append(rb["jerk"])
-        data["energy"].append(rb["energy"])
-        data["total"].append(reward)
-        data["lead_x"].append(env.lead_x)
-        data["signal"].append(info["aspect"])
+        data["position"].append(real_env.x)
+        data["speed"].append(real_env.v)
+        data["reward"].append(rewards[0])
+        data["total_reward"].append(total_rew)
+        data["lead_x"].append(real_env.lead_train.x)
+        data["signal"].append(real_env._get_signal_aspect())
 
-        # IGNORE TERMINATED for plotting: we want to see the whole line
-        # Only stop if we physically reached the end of the track
-        if env.x >= env.TRACK_END - 10:
-             break
+        if terminated[0]:
+            break
 
+    print(f"Final Position: {real_env.x/1000:.1f}km | Final Reward: {total_rew:.1f}")
     return {k: np.array(v) for k, v in data.items()}
 
 
 def plot(data):
-    fig, axes = plt.subplots(5, 1, figsize=(14, 16), sharex=True)
-    x = data["position"] / 1000  # km
-    stations_km = np.array([582, 5481, 14951, 37160, 47017, 67394, 76651]) / 1000
-
-    # 1. Speed + Signal
+    """Plot the reward landscape across the line."""
+    stations_km = [0, 15, 28, 42, 55, 68, 76]  # approximate
+    x = data["position"] / 1000.0  # meters to km
+    
+    fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
+    
+    # 1. Speed & Signal
     ax = axes[0]
-    ax.plot(x, data["speed"] * 3.6, color="dodgerblue", linewidth=0.8, label="AI Speed (km/h)")
-    ax.set_ylabel("Speed (km/h)")
+    ax.plot(x, data["speed"] * 3.6, label="Agent Speed", linewidth=1.2, color="blue")
     ax2 = ax.twinx()
-    ax2.plot(x, data["signal"], color="orange", alpha=0.4, linewidth=0.5, label="Signal Aspect")
+    ax2.plot(x, data["signal"], color="orange", alpha=0.3, label="Signal Aspect")
+    ax.set_ylabel("Speed (km/h)")
     ax2.set_ylabel("Signal (0-3)")
-    ax2.set_ylim(-0.5, 4)
-    ax.set_title("IDEAL TRAJECTORY: Speed & Signal Aspect (Lead Train as Model)")
-    for s in stations_km:
-        ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
+    ax.set_title("FINAL PERFORMANCE: Trained RL Agent (5M Steps)")
+    for s in stations_km: ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
     ax.legend(loc="upper left")
-    ax2.legend(loc="upper right")
 
-    # 2. Continuous rewards
+    # 2. Per-Step Reward
     ax = axes[1]
-    ax.plot(x, data["progress"], label="Progress", linewidth=0.8)
-    ax.plot(x, data["speed_rew"], label="Speed", linewidth=0.8)
-    ax.plot(x, data["heartbeat"], label="Heartbeat", linewidth=0.8)
-    ax.plot(x, data["sig_compliance"], label="Sig Compliance", linewidth=0.8, color="green")
-    ax.set_ylabel("Reward")
-    ax.set_title("Continuous Rewards (every step)")
-    ax.legend()
-    for s in stations_km:
-        ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
-
-    # 3. Event rewards
-    ax = axes[2]
-    ax.plot(x, data["override"], label="Override", color="red", linewidth=0.8)
-    ax.plot(x, data["jerk"], label="Jerk", color="purple", linewidth=0.8)
-    ax.plot(x, data["energy"], label="Energy", color="brown", linewidth=0.8)
-    ax.scatter(x[data["station"] > 0], data["station"][data["station"] > 0],
-               label="Station (+100)", color="green", zorder=5, s=60)
-    ax.set_ylabel("Reward")
-    ax.set_title("Event Rewards (on triggers)")
-    ax.legend()
-    for s in stations_km:
-        ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
-
-    # 4. Cumulative total
-    ax = axes[3]
-    cumulative = np.cumsum(data["total"])
-    ax.plot(x, cumulative, color="black", linewidth=1)
-    ax.set_ylabel("Cumulative Reward")
-    ax.set_title("Cumulative Total Reward")
-    ax.axhline(0, color="green", linestyle="--", alpha=0.5, label="Break-even")
-    ax.axhline(-500, color="red", linestyle="--", alpha=0.5, label="Cowardice floor (-500)")
-    ax.legend()
-    for s in stations_km:
-        ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
-
-    # 5. Per-step total
-    ax = axes[4]
-    ax.plot(x, data["total"], color="black", linewidth=0.5, alpha=0.7)
+    ax.plot(x, data["reward"], color="green", linewidth=0.5, alpha=0.7)
     ax.set_ylabel("Step Reward")
+    ax.set_title("Per-Step Reward Density")
+    for s in stations_km: ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
+
+    # 3. Cumulative Total
+    ax = axes[2]
+    ax.plot(x, data["total_reward"], color="black", linewidth=1.5)
+    ax.set_ylabel("Total Reward")
     ax.set_xlabel("Position (km)")
-    ax.set_title("Per-Step Total Reward")
-    for s in stations_km:
-        ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
+    ax.set_title("Cumulative Journey Reward (The Golden Curve)")
+    ax.axhline(0, color="red", linestyle="--", alpha=0.5)
+    for s in stations_km: ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
 
     plt.tight_layout()
     out = Path(__file__).resolve().parent / "reward_landscape.png"
@@ -139,10 +105,6 @@ def plot(data):
     print(f"Saved: {out}")
     plt.show()
 
-
 if __name__ == "__main__":
     data = run_and_collect()
-    print(f"Episode: {len(data['position'])} steps, "
-          f"final pos: {data['position'][-1]/1000:.1f} km, "
-          f"total reward: {data['total'].sum():.1f}")
     plot(data)
