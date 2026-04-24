@@ -130,6 +130,7 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
                     vf=config.value_net,
                 ),
             ),
-        )
+        
+)
 
     return model, venv
