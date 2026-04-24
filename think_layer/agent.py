@@ -85,40 +85,51 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         venv = DummyVecEnv(env_fns)
 
     # 2. Observation & reward normalisation
-    venv = VecNormalize(
-        venv,
-        norm_obs=config.normalize_obs,
-        norm_reward=config.normalize_reward,
-        clip_obs=config.norm_obs_clip,
-        clip_reward=config.norm_reward_clip,
-    )
+    stats_path = Path(config.model_dir) / "final_vecnormalize.pkl"
+    if stats_path.exists():
+        print(f"Loading existing normalisation stats from {stats_path}")
+        venv = VecNormalize.load(str(stats_path), venv)
+    else:
+        venv = VecNormalize(
+            venv,
+            norm_obs=config.normalize_obs,
+            norm_reward=config.normalize_reward,
+            clip_obs=config.norm_obs_clip,
+            clip_reward=config.norm_reward_clip,
+        )
 
-    # 3. PPO model
-    model = PPO(
-        policy="MlpPolicy",
-        env=venv,
-        learning_rate=config.learning_rate,
-        n_steps=config.n_steps,
-        batch_size=config.batch_size,
-        n_epochs=config.n_epochs,
-        gamma=config.gamma,
-        gae_lambda=config.gae_lambda,
-        clip_range=config.clip_range,
-        ent_coef=config.ent_coef,
-        vf_coef=config.vf_coef,
-        max_grad_norm=config.max_grad_norm,
-        use_sde=True,          # Enable State-Dependent Exploration for smooth continuous actions
-        sde_sample_freq=4,     # Resample noise matrix every 4 environment steps
-        tensorboard_log=config.log_dir,
-        seed=config.seed,
-        verbose=1,  # Print training progress including FPS to terminal
-        device="cpu",   # MLP policy is too small for GPU benefit; CPU avoids transfer overhead
-        policy_kwargs=dict(
-            net_arch=dict(
-                pi=config.policy_net,
-                vf=config.value_net,
+    # 3. PPO model / Resume logic
+    model_path = Path(config.model_dir) / "final_model.zip"
+    if model_path.exists():
+        print(f"RESUMING TRAINING from {model_path}...")
+        model = PPO.load(str(model_path), env=venv, device="cpu", custom_objects={"learning_rate": config.learning_rate})
+    else:
+        print("Starting training from SCRATCH.")
+        model = PPO(
+            policy="MlpPolicy",
+            env=venv,
+            learning_rate=config.learning_rate,
+            n_steps=config.n_steps,
+            batch_size=config.batch_size,
+            n_epochs=config.n_epochs,
+            gamma=config.gamma,
+            gae_lambda=config.gae_lambda,
+            clip_range=config.clip_range,
+            ent_coef=config.ent_coef,
+            vf_coef=config.vf_coef,
+            max_grad_norm=config.max_grad_norm,
+            use_sde=True,          # Enable State-Dependent Exploration for smooth continuous actions
+            sde_sample_freq=4,     # Resample noise matrix every 4 environment steps
+            tensorboard_log=config.log_dir,
+            seed=config.seed,
+            verbose=1,  # Print training progress including FPS to terminal
+            device="cpu",   # MLP policy is too small for GPU benefit; CPU avoids transfer overhead
+            policy_kwargs=dict(
+                net_arch=dict(
+                    pi=config.policy_net,
+                    vf=config.value_net,
+                ),
             ),
-        ),
-    )
+        )
 
     return model, venv
