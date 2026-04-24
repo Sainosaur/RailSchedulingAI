@@ -340,7 +340,10 @@ class SimulationRunner:
                 }
 
                 if self.broadcast_callback:
-                    await self.broadcast_callback(state)
+                    try:
+                        await self.broadcast_callback(state)
+                    except Exception as e:
+                        print(f"Broadcast failed: {e}")
 
                 if done:
                     self.is_running = False  # Auto pause when episode is finished
