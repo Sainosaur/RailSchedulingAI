@@ -191,6 +191,18 @@ class SimulationRunner:
                 "segment_id": segment.id,
                 "approaching_station": STATION_NAMES[next_st_idx],
                 "dwell_timer": int(raw_env.ai_dwell_timer),
+                "authority_ranges": {
+                    "red": [0.0, float(segment.spatial_headway)],
+                    "yellow": [
+                        float(segment.spatial_headway),
+                        float(2 * segment.spatial_headway),
+                    ],
+                    "double_yellow": [
+                        float(2 * segment.spatial_headway),
+                        float(3 * segment.spatial_headway),
+                    ],
+                    "green": [float(3 * segment.spatial_headway), 9999.9],
+                },
             },
             "lead": {
                 "position_m": float(raw_env.lead_train.x),
@@ -211,6 +223,7 @@ class SimulationRunner:
             "stations_visited": list(raw_env.visited_stations),
             "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
             "done": bool(force_done),
+            "timetable": raw_env.timetable.to_dict(),
             "punctuality": raw_env.get_punctuality_status(),
             "reward": {
                 "total": 0.0,
@@ -226,6 +239,13 @@ class SimulationRunner:
             while self.is_running:
                 if self._current_obs is None:
                     self._current_obs = self.venv.reset()
+                
+                # If we just started, broadcast the initial full state
+                if raw_env := self.venv.envs[0]:
+                    while hasattr(raw_env, "env"):
+                        raw_env = raw_env.env
+                    if raw_env.step_count == 0:
+                        await self._broadcast_step()
 
                 # SB3 inference
                 if self.model is not None:

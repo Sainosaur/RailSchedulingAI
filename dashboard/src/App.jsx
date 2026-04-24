@@ -38,8 +38,8 @@ export default function App() {
       if (data.type === "sim_update") {
         setTrains([data.lead, data.ai]);
         setAiStats(data.ai);
-        setTimetable(data.timetable);
-        setPunctuality(data.punctuality);
+        if (data.timetable) setTimetable(data.timetable);
+        if (data.punctuality) setPunctuality(data.punctuality);
         setLeadState({ stalled: data.lead.stalled, held: data.lead.held });
         setSimTime(data.time);
         setIsRunning(true);
