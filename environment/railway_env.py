@@ -30,6 +30,13 @@ from environment.timetable import (                             # noqa: E402
 )
 from dataclasses import dataclass
 
+@dataclass
+class Landslide:
+    """A named, toggleable hazard at a specific track position."""
+    position: float   # exact position passed by the caller (metres)
+    active: bool      # whether the hazard is currently in effect
+    _block_start: float  # start of the enclosing fixed block
+    _block_end: float    # end   of the enclosing fixed block
 
 class ModernizedLine104(gym.Env):
     """
@@ -79,6 +86,8 @@ class ModernizedLine104(gym.Env):
         self.lead_train_speed = lead_train_speed
         self.training_mode = training_mode
         self.active_hazards: set[tuple[float, float]] = set()  # {(block_start, block_end), ...}
+        self.landslides: dict[int, Landslide] = {}   # idx → Landslide
+        self._landslide_counter: int = 0             # monotonically increasing key
 
         # Validation Layer (safety sieve)
         self.vl = ValidationLayer()
@@ -601,6 +610,53 @@ class ModernizedLine104(gym.Env):
     def clear_all_hazards(self) -> None:
         """Remove all active hazards."""
         self.active_hazards.clear()
+        
+        # ------------------------------------------------------------------
+    # Landslide API  (named, indexed, toggleable hazards)
+    # ------------------------------------------------------------------
+
+    def _find_block_for_position(self, position: float) -> tuple[float, float]:
+        """Return the (block_start, block_end) of the fixed block that
+        contains *position*.  Used to translate a landslide position into
+        the (start, end) key expected by active_hazards / set_block_hazard.
+        """
+        seg = self.vl.get_segment(position)
+        bounds = seg.block_boundaries
+        for i in range(len(bounds) - 1):
+            if bounds[i] <= position < bounds[i + 1]:
+                return bounds[i], bounds[i + 1]
+        # Fallback: position is at the very last boundary
+        return bounds[-2], bounds[-1]
+
+    def set_landslide(self, position: float) -> int:
+        """Register a new active landslide at *position* and return its index.
+
+        The landslide immediately blocks the enclosing fixed block (as if
+        set_block_hazard were called with active=True).
+        """
+        block_start, block_end = self._find_block_for_position(position)
+        idx = self._landslide_counter
+        self._landslide_counter += 1
+        self.landslides[idx] = Landslide(
+            position=position,
+            active=True,
+            _block_start=block_start,
+            _block_end=block_end,
+        )
+        self.set_block_hazard(block_start, block_end, True)
+        return idx
+
+    def toggle_landslide(self, idx: int) -> bool:
+        """Toggle the landslide at *idx* on/off.  Returns the new active state."""
+        ls = self.landslides[idx]
+        ls.active = not ls.active
+        self.set_block_hazard(ls._block_start, ls._block_end, ls.active)
+        return ls.active
+
+    def clear_landslide(self, idx: int) -> None:
+        """Remove the landslide at *idx* and deactivate its block hazard."""
+        ls = self.landslides.pop(idx)
+        self.set_block_hazard(ls._block_start, ls._block_end, False)
 
     # ------------------------------------------------------------------
     # Timetable & Punctuality
