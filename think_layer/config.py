@@ -17,7 +17,7 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 10_000_000
+    total_timesteps: int = 5_000_000
     learning_rate: float = 3e-4
     n_steps: int = 2048
     batch_size: int = 512
