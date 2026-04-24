@@ -33,8 +33,8 @@ class RewardConfig:
 
     # 3. Moving Incentives (The "Anti-Granny" kick)
     signal_compliance_bonus: float = 1.0
-    k_stall: float = 10.0  # Increased: sitting at Green is now very painful
-    k_lazy: float = 5.0
+    k_stall: float = 20.0  # DOUBLED: sitting at Green is now EXTREMELY painful
+    k_lazy: float = 10.0  # DOUBLED: punish hanging back too far
     clear_road_bonus: float = 1.0  # NEW: Bonus for having 3+ blocks clear
 
     # 4. Punctuality & Temporal (The "Schedule")
@@ -59,11 +59,11 @@ class RewardConfig:
     headway_warning_multiplier: float = 3.0
     headway_violation_multiplier: float = 1.0
     headway_violation_penalty: float = -5000.0
-    collision_penalty: float = -10000.0
+    collision_penalty: float = -5000.0  # SOFTENED: Prevent policy shock
 
     # 8. Lateness (The "Ghost Train")
-    lateness_violation_threshold: float = 300.0  # 5 minutes
-    lateness_violation_penalty: float = -10000.0
+    lateness_violation_threshold: float = 600.0  # INCREASED to 10 minutes for stability
+    lateness_violation_penalty: float = -5000.0  # SOFTENED: Prevent policy shock
 
 
 DEFAULT_CONFIG = RewardConfig()
