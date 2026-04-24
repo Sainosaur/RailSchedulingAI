@@ -109,6 +109,7 @@ class ValidationLayer:
         """
         Validates AI action. Includes logic to differentiate system clamps from safety failures.
         """
+        seg = self.get_segment(x)
         clamped_a = max(EMERGENCY_DECEL, min(ACCEL, proposed_a))
 
         # PROACTIVE SAFETY FIX: If stopped at Red and staying stopped, no override.
@@ -129,7 +130,6 @@ class ValidationLayer:
             return clamped_a, False
 
         # RESOLUTION LOGIC
-        seg = self.get_segment(x)
         v_target, dist_avail = self._speed_for_aspect(env_aspect, seg, dtz, u)
 
         if "_Limit" in constraint:

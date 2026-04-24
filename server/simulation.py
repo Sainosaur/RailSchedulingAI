@@ -185,6 +185,10 @@ class SimulationRunner:
             "done": bool(force_done),
             "timetable": raw_env.timetable.to_dict(),
             "punctuality": raw_env.get_punctuality_status(),
+            "reward": {
+                "total": 0.0,
+                "breakdown": {},
+            },
         }
 
         await self.broadcast_callback(state)

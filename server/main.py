@@ -338,6 +338,10 @@ async def sim_updates(websocket: WebSocket):
                     "done": False,
                     "timetable": raw_env.timetable.to_dict(),
                     "punctuality": raw_env.get_punctuality_status(),
+                    "reward": {
+                        "total": 0.0,
+                        "breakdown": {},
+                    },
                 }
             )
             await asyncio.sleep(0.5)

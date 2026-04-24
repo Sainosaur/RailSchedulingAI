@@ -259,7 +259,7 @@ class ModernizedLine104(gym.Env):
             action_delta=action_delta,
             applied_traction=applied_traction,
             distance_to_occupied=self._cached_dist_to_occupied,
-            is_dwelling=(self.ai_dwell_timer > 0),
+            is_dwelling=in_dwell,
             station_index=self.last_station_idx,
             signal_aspect=env_aspect,
             applied_acceleration=safe_a,
@@ -344,6 +344,13 @@ class ModernizedLine104(gym.Env):
     @property
     def lead_held(self) -> bool:
         return self.lead_train.held
+
+    @property
+    def ai_dwell_timer(self) -> int:
+        """Remaining dwell time in seconds."""
+        if not hasattr(self, "ai_departure_time"):
+            return 0
+        return max(0, int(self.ai_departure_time - self.time))
 
     # --- API HELPER METHODS ---
     def _update_dtz(self):
