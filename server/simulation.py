@@ -42,6 +42,16 @@ class SimulationRunner:
         # 3. Load Normalisation Stats
         vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "best_vecnormalize.pkl"
         if vecnorm_path.exists():
+            # Workaround for numpy 2.x pickle loaded in numpy 1.x where _core was renamed to core
+            import sys
+
+            import numpy.core.multiarray
+            import numpy.core.numeric
+
+            sys.modules.setdefault("numpy._core", numpy.core)
+            sys.modules.setdefault("numpy._core.numeric", numpy.core.numeric)
+            sys.modules.setdefault("numpy._core.multiarray", numpy.core.multiarray)
+
             self.venv = VecNormalize.load(str(vecnorm_path), self.venv)
             self.venv.training = False
             self.venv.norm_reward = False
