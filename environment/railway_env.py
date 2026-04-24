@@ -79,7 +79,8 @@ class ModernizedLine104(gym.Env):
         self.last_a: float = 0.0
         self.step_count: int = 0
 
-        self._ideal_schedule = self._compute_ideal_schedule()
+        self.step_count = 0
+
         self.timetable: Timetable = generate_timetable(
             self.vl.segments,
             self.STATIONS,
@@ -240,11 +241,8 @@ class ModernizedLine104(gym.Env):
 
         # Calculate the next scheduled arrival time
         next_entry = self.timetable.get_entry(next_idx)
-        next_scheduled = (
-            next_entry.scheduled_arrival
-            if next_entry
-            else self._ideal_schedule[next_idx]
-        )
+        # Use the station entry for the scheduled time
+        next_scheduled = next_entry.scheduled_arrival if next_entry else 0.0
 
         state = TrainState(
             current_position=self.x,
@@ -412,12 +410,6 @@ class ModernizedLine104(gym.Env):
     def _compute_headway(self) -> float:
         return (self.lead_train.x - self.x) / self.v if self.v > 0.01 else 9999.0
 
-    def _compute_ideal_schedule(self) -> list[float]:
-        times, cumulative = [0.0], 0.0
-        for seg in self.vl.segments:
-            cumulative += (seg.end - seg.start) / seg.limit_ms
-            times.append(cumulative)
-        return times
 
     # --- EXTERNAL COMMANDS ---
     def stall_lead(self):

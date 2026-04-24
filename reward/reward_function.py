@@ -40,6 +40,7 @@ class RewardConfig:
     # 4. Punctuality & Temporal (The "Schedule")
     punctuality_factor: float = 0.5
     punctuality_tolerance: float = 60.0
+    ontime_bonus: float = 3000.0  # NEW: Massive carrot for hitting the window
     punctuality_penalty_cap: float = -1000.0  # Cap the punctuality "Black Hole"
 
     # 5. Continuous Taxes (The "Anti-Cowardice" clock)
@@ -318,12 +319,9 @@ def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
 
 
 def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> float:
-    """Penalty for arriving at a station outside the on-time tolerance window.
+    """Reward for arriving on-time, or penalty for missing the window.
 
-    BUG 13 FIX: previously always returned 0 because scheduled/actual arrival
-    times were never set by the environment.  The environment now passes
-    actual_arrival_time=self.time and scheduled_arrival_time computed from
-    the expected journey time at lead_train_speed.
+    BUG 13 FIX: The environment now feeds accurate scheduled/actual arrival times.
     """
     if not state.reached_new_station:
         return 0.0
@@ -331,9 +329,14 @@ def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> flo
         return 0.0
 
     deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
+
+    # 1. On-Time Reward
+    if deviation <= config.punctuality_tolerance:
+        return config.ontime_bonus
+
+    # 2. Missed Window Penalty
     excess = max(0.0, deviation - config.punctuality_tolerance)
     raw_penalty = -config.punctuality_factor * excess
-
     return max(config.punctuality_penalty_cap, raw_penalty)
 
 

@@ -64,6 +64,7 @@ def train(config: TrainConfig) -> None:
             make_env(
                 seed=config.seed + 1000,
                 lead_train_speed=config.lead_train_speed,
+                slack_factor=config.slack_factor,
                 max_episode_steps=config.max_episode_steps,
             )
         ]

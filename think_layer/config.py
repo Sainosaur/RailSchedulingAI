@@ -19,13 +19,13 @@ class TrainConfig:
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 5_000_000
     learning_rate: float = 0.0002
-    n_steps: int = 2048
+    n_steps: int = 4096
     batch_size: int = 512
     n_epochs: int = 5
-    gamma: float = 0.999
+    gamma: float = 0.9999
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    ent_coef: float = 0.03
+    ent_coef: float = 0.05
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
 
@@ -35,8 +35,8 @@ class TrainConfig:
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 25.0
-    max_episode_steps: int = 20_000
-    n_envs: int = 512
+    max_episode_steps: int = 30_000
+    n_envs: int = 12
     slack_factor: float = 1.15  # 15% operational buffer for RL stability
 
     # ── Normalisation ────────────────────────────────────────────────
