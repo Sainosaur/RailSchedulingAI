@@ -38,35 +38,36 @@ def run_and_collect():
         "lead_x": [], "signal": [],
     }
 
+    # Initial obs
     obs = venv.reset()
     total_rew = 0
+    
     for idx in range(25000):
+        # 1. Store the state BEFORE the step
+        real_env = venv.envs[0].unwrapped
+        current_x = real_env.x
+        current_v = real_env.v
+        current_lead_x = real_env.lead_train.x
+        current_signal = real_env._get_signal_aspect()
+        current_limit = real_env.vl.get_segment(current_x).limit_ms * 3.6
+
+        # 2. Predict and Step
         action, _ = model.predict(obs, deterministic=True)
-        
-        # Take step
         obs, rewards, terminated, info = venv.step(action)
         
-        # Unpack BEFORE reset logic can mess with position
-        real_env = venv.envs[0].unwrapped
-        
-        # Get the limit for the CURRENT position (not the reset position)
-        current_limit = real_env.vl.get_segment(real_env.x).limit_ms * 3.6
-
-        data["position"].append(real_env.x)
-        data["speed"].append(real_env.v)
+        # 3. Append the pre-step state (The true state of the journey)
+        data["position"].append(current_x)
+        data["speed"].append(current_v)
         data["reward"].append(rewards[0])
         data["total_reward"].append(total_rew)
         data["limit"].append(current_limit)
-        data["lead_x"].append(real_env.lead_train.x)
-        data["signal"].append(real_env._get_signal_aspect())
+        data["lead_x"].append(current_lead_x)
+        data["signal"].append(current_signal)
 
         total_rew += rewards[0]
 
-        if idx % 2000 == 0:
-            print(f"TRAINED AGENT | Step {idx}: Pos={real_env.x/1000:.1f}km, V={real_env.v*3.6:.1f}km/h")
-
         if terminated[0]:
-            print(f"Terminated at {real_env.x/1000:.1f}km")
+            print(f"Journey ended at {current_x/1000:.2f} km")
             break
 
     return {k: np.array(v) for k, v in data.items()}

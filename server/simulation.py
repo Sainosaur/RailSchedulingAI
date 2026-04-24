@@ -29,7 +29,7 @@ class SimulationRunner:
         self._task = None
         self._current_obs = None
 
-    def load_model(self, lead_train_speed=20.0):
+    def load_model(self, lead_train_speed=25.0):
         print(f"Loading simulation model (Lead Speed = {lead_train_speed} m/s)")
 
         # 1. Thunk to create the bare environment
@@ -40,7 +40,7 @@ class SimulationRunner:
         self.venv = DummyVecEnv([make_env])
 
         # 3. Load Normalisation Stats
-        vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "best_vecnormalize.pkl"
+        vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "final_vecnormalize.pkl"
         if vecnorm_path.exists():
             # Workaround for numpy 2.x pickle loaded in numpy 1.x (and vice versa)
             import sys
@@ -90,7 +90,7 @@ class SimulationRunner:
             )
 
         # 4. Load PPO Checkpoint
-        model_path = PROJECT_ROOT / "think_layer" / "models" / "best_model.zip"
+        model_path = PROJECT_ROOT / "think_layer" / "models" / "final_model.zip"
         if model_path.exists():
             self.model = PPO.load(str(model_path), env=self.venv, device="cpu")
         else:
