@@ -34,9 +34,9 @@ class TrainConfig:
     value_net: list[int] = field(default_factory=lambda: [128, 128])
 
     # ── Environment ──────────────────────────────────────────────────
-    lead_train_speed: float = 20.0
+    lead_train_speed: float = 25.0
     max_episode_steps: int = 20_000
-    n_envs: int = 14  # depnds on cores
+    n_envs: int = 12  # depnds on threads
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True
