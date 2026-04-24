@@ -28,7 +28,7 @@ class RewardConfig:
     headway_violation_multiplier: float = 1.0  # e.g., 1x TH is hard safety limit
     
     k_over: float = 0.5  # overspeed penalty weight  (quadratic)
-    k_under: float = 0.0  # underspeed penalty weight (linear, default 0)
+    k_under: float = 0.1  # underspeed penalty weight (linear, default 0) (was 0.0)
     
     # Kinematic Comfort Limits
     comfortable_acceleration: float = 0.5  # m/s²
