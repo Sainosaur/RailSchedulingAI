@@ -254,9 +254,21 @@ def _compute_creep_penalty(state: TrainState, config: RewardConfig) -> float:
 
 
 def _compute_patience_reward(state: TrainState, config: RewardConfig) -> float:
-    # Reward for remaining stationary at a restrictive signal
+    """Reward for remaining stationary when required (Signals or Stations)."""
+    # 1. Stationary at Restrictive Signal
     if state.signal_aspect < 3 and state.current_speed < 0.1:
         return 0.5
+
+    # 2. Stationary at Station (Dwell)
+    # If we are within 2 meters of a station and speed is zero, provide dwell bonus
+    # This prevents 'Heartbeat' and 'Existence' penalties from annoying the AI during stops.
+    dist_to_station = min(
+        abs(state.current_position - state.last_station_position),
+        abs(state.current_position - state.next_station_position)
+    )
+    if dist_to_station < 2.0 and state.current_speed < 0.1:
+        return 1.5  # Strong bonus specifically for waiting correctly at stations
+
     return 0.0
 
 
@@ -285,16 +297,16 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
 
     elif state.signal_aspect == 2:  # Double Yellow — MUST decelerate
         if a < -0.1:
-            return bonus * 2.0  # Reward active braking
+            return bonus * 4.0  # DOUBLED: Reward active braking more aggressively
         elif a > 0.05:
-            return -config.override_penalty * 0.5  # Penalty for accelerating
+            return -config.override_penalty * 0.5
         return 0.0
 
     elif state.signal_aspect == 1:  # Yellow — MUST decelerate
         if a < -0.1:
-            return bonus * 3.0  # Higher reward for braking at yellow
+            return bonus * 6.0  # DOUBLED: Very high reward for braking at yellow
         elif a > 0.01:
-            return -config.override_penalty * 0.8  # Stronger penalty for accelerating
+            return -config.override_penalty * 0.8
         return 0.0
 
     elif state.signal_aspect == 0:  # Red

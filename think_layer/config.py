@@ -30,8 +30,8 @@ class TrainConfig:
     max_grad_norm: float = 0.5
 
     # ── Network Architecture ─────────────────────────────────────────
-    policy_net: list[int] = field(default_factory=lambda: [128, 128])
-    value_net: list[int] = field(default_factory=lambda: [128, 128])
+    policy_net: list[int] = field(default_factory=lambda: [256, 256])
+    value_net: list[int] = field(default_factory=lambda: [256, 256])
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 25.0
