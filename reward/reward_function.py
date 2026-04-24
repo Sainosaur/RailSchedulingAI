@@ -59,12 +59,13 @@ class RewardConfig:
     k_h: float = 3.0
     headway_warning_multiplier: float = 3.0
     headway_violation_multiplier: float = 1.0
-    headway_violation_penalty: float = -5000.0
-    collision_penalty: float = -5000.0  # SOFTENED: Prevent policy shock
+    headway_violation_penalty: float = -100000.0  # FATAL: Run this and lose everything
+    collision_penalty: float = -100000.0  # FATAL
 
-    # 8. Lateness (The "Ghost Train")
-    lateness_violation_threshold: float = 600.0  # INCREASED to 10 minutes for stability
-    lateness_violation_penalty: float = -5000.0  # SOFTENED: Prevent policy shock
+    # 8. Lateness & Dwell (The "Professionalism")
+    lateness_violation_threshold: float = 600.0 
+    lateness_violation_penalty: float = -10000.0 
+    dwell_patience_bonus: float = 5.0  # NEW: Reward for staying at V=0 when signal is RED
 
 
 DEFAULT_CONFIG = RewardConfig()
@@ -256,26 +257,18 @@ def _compute_creep_penalty(state: TrainState, config: RewardConfig) -> float:
 
 def _compute_patience_reward(state: TrainState, config: RewardConfig) -> float:
     """Reward for remaining stationary when required (Signals or Stations)."""
-    # 1. Stationary at Restrictive Signal
-    if state.signal_aspect < 3 and state.current_speed < 0.1:
-        return 0.5
+    # 1. Stationary at Restrictive Signal (Double Yellow or Yellow)
+    if (state.signal_aspect == 1 or state.signal_aspect == 2) and state.current_speed < 0.1:
+        return 2.0  # Encourage waiting for signals to clear
 
-    # 2. Stationary at Station (Dwell)
-    # If we are within 2 meters of a station and speed is zero, provide dwell bonus
-    # This prevents 'Heartbeat' and 'Existence' penalties from annoying the AI during stops.
+    # 2. Stationary at Station (Dwell) or RED Signal
+    # If we are within 5 meters of a station OR signal is RED, and speed is zero, provide dwell bonus
     dist_to_station = min(
         abs(state.current_position - state.last_station_position),
         abs(state.current_position - state.next_station_position)
     )
-    if dist_to_station < 2.0 and state.current_speed < 0.1:
-        return 1.5  # Strong bonus specifically for waiting correctly at stations
-
-    # 3. Precision Stop (Targeting the boundary of the next occupied zone)
-    # If we are stopped at a Red light, reward the AI for being as close to the next zone boundary as possible.
-    if state.signal_aspect == 0 and state.current_speed < 0.1:
-        d = state.distance_to_occupied
-        if d < 10.0:
-            return 5.0 * (1.0 - (d / 10.0))  # Scales up to +5.0 as you approach 0m
+    if (dist_to_station < 5.0 or state.signal_aspect == 0) and state.current_speed < 0.1:
+        return config.dwell_patience_bonus  # Strong bonus specifically for waiting correctly
 
     return 0.0
 
@@ -290,8 +283,8 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     bonus = config.signal_compliance_bonus
 
     # RESTART PUNISHMENT: Massive penalty for trying to move from stop at Red/Yellow/DoubleYellow
-    if v < 0.1 and a > 0.0 and state.signal_aspect < 3:
-        return -100.0  # Massive penalty for attempting to restart early
+    if v < 0.1 and a > 0.05 and state.signal_aspect < 3:
+        return -5000.0  # CRITICAL: Punish intent to run a red light BEFORE they even move
 
     if state.signal_aspect == 3:  # Green
         # 1. Punish if stationary at Green
