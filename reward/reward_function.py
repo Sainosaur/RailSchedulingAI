@@ -40,7 +40,7 @@ class RewardConfig:
     headway_violation_penalty: float = -50.0   # non-terminal
     collision_penalty: float = -100.0          # non-terminal
 
-    k_h: float = 0.2   # headway warning ramp: 0 at 3×TH → -0.2/step at 1×TH
+    k_h: float = 1.0   # headway warning ramp: 0 at 3×TH → -1.0/step at 1×TH
     k_vel: float = 0.1   # velocity reward: +k_vel at speed limit, 0 at standstill (green only)
     headway_warning_multiplier: float = 3.0
     headway_violation_multiplier: float = 1.0
@@ -107,9 +107,13 @@ class TrainState:
 
 
 def _compute_progress_reward(state: TrainState, config: RewardConfig) -> float:
-    # Segment-span fractional progress: reward is proportional to the fraction
-    # of the inter-station span covered, so the per-step signal is comparable
-    # regardless of segment length (5 km vs. 22 km).
+    # Segment-span fractional progress scaled by signal aspect (0–3).
+    # aspect/3 multiplier: Green=1.0, DblYellow=0.67, Yellow=0.33, Red=0.0
+    # This creates a speed gradient — slower is fine on yellow, stop on red.
+    aspect_scale = state.signal_aspect / 3.0
+    if aspect_scale == 0.0:
+        return 0.0
+
     span = state.next_station_position - state.last_station_position
     if span <= 0:
         return 0.0
@@ -117,7 +121,7 @@ def _compute_progress_reward(state: TrainState, config: RewardConfig) -> float:
     p_previous = (state.previous_position - state.last_station_position) / span
     p_current = max(0.0, min(1.0, p_current))
     p_previous = max(0.0, min(1.0, p_previous))
-    return config.k_p * (p_current - p_previous)
+    return config.k_p * aspect_scale * (p_current - p_previous)
 
 
 def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
