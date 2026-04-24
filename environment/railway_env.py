@@ -132,8 +132,14 @@ class ModernizedLine104(gym.Env):
         in_dwell = (
             hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time
         )
-        if in_dwell:
+
+        # Hard Interlock: Physically prevent restarting mid-track until a full Green (Aspect 3) is received.
+        is_stationary = self.v < 0.1
+        signal_restrictive = env_aspect < 3
+        if in_dwell or (is_stationary and signal_restrictive):
             proposed_a = 0.0
+
+        # --- VALIDATION LAYER ---
 
         # --- VALIDATION LAYER ---
         safe_a, safety_overridden = self.vl.get_safe_action(

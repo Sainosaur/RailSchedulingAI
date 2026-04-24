@@ -239,6 +239,20 @@ def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.jerk_penalty * (state.action_delta**2)
 
 
+def _compute_creep_penalty(state: TrainState, config: RewardConfig) -> float:
+    # Punish "creeping" (moving very slowly) when the signal is not Green
+    if state.signal_aspect < 3 and 0.1 <= state.current_speed <= 2.0:
+        return -5.0
+    return 0.0
+
+
+def _compute_patience_reward(state: TrainState, config: RewardConfig) -> float:
+    # Reward for remaining stationary at a restrictive signal
+    if state.signal_aspect < 3 and state.current_speed < 0.1:
+        return 0.5
+    return 0.0
+
+
 def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -> float:
     if state.safety_overridden:
         return 0.0
@@ -247,6 +261,10 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     v_lim = state.speed_limit
     a = state.proposed_acceleration  # Use proposed_acceleration to judge AI intent
     bonus = config.signal_compliance_bonus
+
+    # RESTART PUNISHMENT: Massive penalty for trying to move from stop at Red/Yellow/DoubleYellow
+    if v < 0.1 and a > 0.0 and state.signal_aspect < 3:
+        return -100.0  # Massive penalty for attempting to restart early
 
     if state.signal_aspect == 3:  # Green
         if v < 0.5:
@@ -360,6 +378,7 @@ class RewardOutput:
     r_clear_road: float
     r_cruise: float
     r_patience: float
+    r_creep: float
     # Event
     r_station: float
     r_time: float
@@ -385,17 +404,6 @@ def compute_reward(
 ) -> RewardOutput:
     r_existence = config.existence_penalty
 
-    # --- PATIENCE LOGIC ---
-    # Offset the existence penalty if correctly stopped at a station waiting for Green
-    r_patience = 0.0
-    if (
-        state.current_speed < 0.1
-        and state.signal_aspect < 3
-        and state.station_index > 0
-    ):
-        r_patience = abs(config.existence_penalty)
-    # ----------------------
-
     r_progress = _compute_progress_reward(state, config)
     r_headway = _compute_headway_penalty(state, config)
     r_speed = _compute_speed_reward(state, config)
@@ -403,6 +411,8 @@ def compute_reward(
     r_signal_compliance = _compute_signal_compliance_reward(state, config)
     r_clear_road = _compute_clear_road_bonus(state, config)
     r_cruise = _compute_cruise_reward(state, config)
+    r_patience = _compute_patience_reward(state, config)
+    r_creep = _compute_creep_penalty(state, config)
 
     r_station = _compute_station_reward(state, config)
     r_time = _compute_punctuality_penalty(state, config)
@@ -414,7 +424,7 @@ def compute_reward(
     r_collision, terminate_collision = _compute_collision_penalty(state, config)
     r_lateness, terminate_lateness = _compute_lateness_violation(state, config)
 
-    # Aggregate including r_patience
+    # Aggregate including r_patience and r_creep
     r_continuous = (
         r_progress
         + r_headway
@@ -425,6 +435,7 @@ def compute_reward(
         + r_cruise
         + r_existence
         + r_patience
+        + r_creep
     )
 
     r_event = r_station + r_time + r_override + r_jerk + r_energy
@@ -442,6 +453,7 @@ def compute_reward(
         r_clear_road=r_clear_road,
         r_cruise=r_cruise,
         r_patience=r_patience,
+        r_creep=r_creep,
         r_station=r_station,
         r_time=r_time,
         r_override=r_override,
