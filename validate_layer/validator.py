@@ -115,6 +115,12 @@ class ValidationLayer:
         if u < 0.1 and env_aspect == 0 and proposed_a <= 0:
             return 0.0, False
 
+        # --- PHYSICAL GOVERNOR ---
+        # If we are at or above the limit, cap accel at 0.0
+        v_ceiling = seg.limit_ms
+        if u >= v_ceiling - 0.01:
+            clamped_a = min(0.0, clamped_a)
+
         is_safe, constraint = self._check_action_safety(
             clamped_a, env_aspect, x, u, dtz
         )

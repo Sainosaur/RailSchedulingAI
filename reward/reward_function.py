@@ -212,10 +212,17 @@ def _compute_cruise_reward(state: TrainState, config: RewardConfig) -> float:
     # We reward being within 90% to 105% of the limit.
     v = state.current_speed
     v_lim = state.speed_limit
+    reward = 0.0
 
     if v_lim > 5.0 and 0.9 * v_lim <= v <= 1.05 * v_lim:
-        return config.cruise_bonus
-    return 0.0
+        reward += config.cruise_bonus
+
+    # Technical Instruction: Add a specific bonus (+2.0) if abs(applied_acceleration) < 0.01
+    # and the train is within 95% of the speed_limit.
+    if v >= 0.95 * v_lim and abs(state.applied_acceleration) < 0.01:
+        reward += 2.0
+
+    return reward
 
 
 def _compute_override_penalty(state: TrainState, config: RewardConfig) -> float:
