@@ -197,23 +197,27 @@ class ModernizedLine104(gym.Env):
         scheduled_arrival_time = None
         actual_arrival_time = None
 
+        # Detect arrival: Must be within 2m of station AND moving slowly (v < 0.2)
+        # OR simply passing it if they choose to zoom through (though discouraged by rewards)
         if next_st_idx < len(self.STATIONS) and self.x >= self.STATIONS[next_st_idx] - 2.0:
             reached_new_station = True
             self.last_station_idx = next_st_idx
             self.visited_stations.add(next_st_idx)
-            self.x = self.STATIONS[next_st_idx]
-            self.v = 0.0
-
+            
+            # Snap removed for free movement. v = 0.0 removed.
+            
             actual_arrival_time = self.time
             entry = self.timetable.get_entry(next_st_idx)
             scheduled_arrival_time = (
-                entry.scheduled_arrival if entry else self._ideal_schedule[next_st_idx]
+                entry.scheduled_arrival if entry else 0.0
             )
             self.ai_arrival_times[next_st_idx] = self.time
 
-            # NEW DWELL LOGIC: Random dwell (matching lead train behavior 20-40s)
-            if next_st_idx < len(self.STATIONS) - 1 and entry:
+            # Set departure time (Dwell: 20-40s)
+            if next_st_idx < len(self.STATIONS) - 1:
                 self.ai_departure_time = self.time + self.np_random.integers(20, 40)
+            else:
+                self.ai_departure_time = self.time + 999999.0 # End of line
 
         # --- REWARDS ---
         last_st_pos = self.STATIONS[self.last_station_idx]
@@ -372,16 +376,21 @@ class ModernizedLine104(gym.Env):
         nearest = self._nearest_obstruction(self.x)
         
         # Treat next station as obstruction for safety and speed control, 
-        # but NOT for the signal aspect calculation (to avoid early stop).
+        # but only if we haven't reached it or are still in dwell.
         if self.last_station_idx + 1 < len(self.STATIONS):
-            # We add a 2m buffer to ensure the train can actually reach the trigger point
-            nearest = min(nearest, self.STATIONS[self.last_station_idx + 1] + 2.0)
+            # If dwell is done, station is no longer an obstruction
+            in_dwell = hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time
+            if in_dwell:
+                nearest = min(nearest, self.STATIONS[self.last_station_idx + 1] + 2.0)
             
         return max(0.0, nearest - self.x)
 
     def _get_signal_aspect(self) -> int:
-        # Use the distance to TRUE obstructions (trains, hazards), NOT stations.
-        # This prevents the AI from getting confused by "Red" signals at empty platforms.
+        # Force RED during dwell
+        if hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time:
+            return 0
+
+        # Otherwise, follow lead train/hazards (TRUE obstructions)
         d = self._nearest_obstruction(self.x) - self.x
         sh = self.vl.get_segment(self.x).spatial_headway
         if d > 3 * sh:
@@ -393,6 +402,10 @@ class ModernizedLine104(gym.Env):
         return 0
 
     def _get_signal_aspect_from_cache(self) -> int:
+        # Force RED during dwell
+        if hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time:
+            return 0
+
         d = self._cached_nearest_pos - self.x
         sh = self.vl.get_segment(self.x).spatial_headway
         if d > 3 * sh:
@@ -406,7 +419,9 @@ class ModernizedLine104(gym.Env):
     def _dist_to_nearest_occupied_from_cache(self) -> float:
         nearest = self._cached_nearest_pos
         if self.last_station_idx + 1 < len(self.STATIONS):
-            nearest = min(nearest, self.STATIONS[self.last_station_idx + 1] + 2.0)
+            in_dwell = hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time
+            if in_dwell:
+                nearest = min(nearest, self.STATIONS[self.last_station_idx + 1] + 2.0)
         return max(0.0, nearest - self.x)
 
     def _compute_headway(self) -> float:
