@@ -24,15 +24,30 @@ def run_and_collect():
         "lead_x": [], "signal": [],
     }
 
-    for _ in range(env.MAX_STEPS):
-        action = np.array([0.5], dtype=np.float32)  # full throttle
-        obs, reward, terminated, truncated, info = env.step(action)
+    for idx in range(20000):  # Real time simulation
+        # PERFECT CONTROLLER: Act like a perfect AI agent
+        seg = env.vl.get_segment(env.x)
+        target_v = seg.limit_ms * 0.98  # Stay just under the limit
+        
+        # Simple proportional controller for acceleration
+        error = target_v - env.v
+        kp_accel = 0.5
+        ideal_a = error * kp_accel
+        clamped_a = max(-0.5, min(0.5, ideal_a))
+        
+        # Step the environment with our 'Ideal' action
+        obs, reward, terminated, truncated, info = env.step(np.array([clamped_a]))
+
+        if idx % 2000 == 0:
+            rb = info["reward_breakdown"]
+            leaks = {k: round(v, 2) for k, v in rb.items() if abs(v) > 0.1}
+            print(f"PERFECT DRIVER | Step {idx}: Pos={env.x/1000:.1f}km, V={env.v*3.6:.1f}km/h, Reward={reward:.2f}, Leaks={leaks}")
 
         rb = info["reward_breakdown"]
         data["position"].append(env.x)
         data["speed"].append(env.v)
         data["time"].append(env.time)
-        data["progress"].append(rb["progress"])
+        data["progress"].append(rb["progress"]) 
         data["headway"].append(rb["headway"])
         data["speed_rew"].append(rb["speed"])
         data["heartbeat"].append(rb["heartbeat"])
@@ -45,8 +60,10 @@ def run_and_collect():
         data["lead_x"].append(env.lead_x)
         data["signal"].append(info["aspect"])
 
-        if terminated or truncated:
-            break
+        # IGNORE TERMINATED for plotting: we want to see the whole line
+        # Only stop if we physically reached the end of the track
+        if env.x >= env.TRACK_END - 10:
+             break
 
     return {k: np.array(v) for k, v in data.items()}
 
@@ -64,7 +81,7 @@ def plot(data):
     ax2.plot(x, data["signal"], color="orange", alpha=0.4, linewidth=0.5, label="Signal Aspect")
     ax2.set_ylabel("Signal (0-3)")
     ax2.set_ylim(-0.5, 4)
-    ax.set_title("Speed & Signal Aspect vs Position")
+    ax.set_title("IDEAL TRAJECTORY: Speed & Signal Aspect (Lead Train as Model)")
     for s in stations_km:
         ax.axvline(s, color="gray", linestyle="--", alpha=0.3)
     ax.legend(loc="upper left")

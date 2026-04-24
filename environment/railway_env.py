@@ -133,27 +133,13 @@ class ModernizedLine104(gym.Env):
 
 
         # --- CLEAN INTERLOCK ---
-        # Departure Interlock: If we are in a dwell period, force accel to 0.0
-        in_dwell = (
-            hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time
-        )
-
-        # Hard Interlock: Physically prevent restarting mid-track until a full Green (Aspect 3) is received.
-        is_stationary = self.v < 0.1
-        signal_restrictive = env_aspect < 3
-        if in_dwell or (is_stationary and signal_restrictive):
-            proposed_a = 0.0
-
-        # --- VALIDATION LAYER ---
+        # Any physical interlocks have been removed to give full throttle control.
+        # We rely on rewards and the Validation Layer for safety.
 
         # --- VALIDATION LAYER ---
         safe_a, safety_overridden = self.vl.get_safe_action(
             proposed_a, env_aspect, self.x, self.v, self.dtz
         )
-
-        # Override safe_a if in dwell to ensure absolute stop
-        if in_dwell:
-            safe_a = 0.0
 
         action_delta = abs(safe_a - self.last_a)
         self.last_a = safe_a
@@ -238,6 +224,10 @@ class ModernizedLine104(gym.Env):
         next_entry = self.timetable.get_entry(next_idx)
         # Use the station entry for the scheduled time
         next_scheduled = next_entry.scheduled_arrival if next_entry else 0.0
+
+        in_dwell = (
+            hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time
+        )
 
         state = TrainState(
             current_position=self.x,
@@ -355,9 +345,9 @@ class ModernizedLine104(gym.Env):
         self.dtz = self.vl.compute_dtz(self.x)
 
     def _nearest_obstruction(self, from_x: float) -> float:
-        # Treat the end of the current segment (approaching station) as a barrier
-        current_seg = self.vl.get_segment(from_x)
-        nearest = current_seg.end
+        # We removed the 'end of segment is barrier' logic as it causes deadlocks.
+        # Barriers are now only actual trains and hazards.
+        nearest = self.TRACK_END
 
         # Also check for lead train
         nearest = min(nearest, self.lead_train.x)

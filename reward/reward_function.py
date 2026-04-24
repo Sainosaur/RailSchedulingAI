@@ -40,7 +40,8 @@ class RewardConfig:
     # 4. Punctuality & Temporal (The "Schedule")
     punctuality_factor: float = 0.5
     punctuality_tolerance: float = 60.0
-    ontime_bonus: float = 3000.0  # NEW: Massive carrot for hitting the window
+    ontime_bonus: float = 10000.0  # INCREASED: Massive carrot for hitting the window
+    station_destination_bonus: float = 50000.0  # NEW: The "Grand Prize" for reaching Nowy Sącz
     punctuality_penalty_cap: float = -1000.0  # Cap the punctuality "Black Hole"
 
     # 5. Continuous Taxes (The "Anti-Cowardice" clock)
@@ -304,10 +305,7 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
         if 3.0 * sh <= d_occ <= 4.0 * sh:
             return bonus * 5.0  # High reward for staying in the 'Sweet Spot'
         
-        elif d_occ > 4.0 * sh:
-            # 'Lazy' Penalty: Punishment for being too far back at Green
-            lazy_factor = (d_occ / sh) - 4.0
-            return -config.k_lazy * lazy_factor
+        # Removed lazy penalty to allow normal green signal progression
 
         # 3. Normal speed progression bonus for 0-3 blocks
         return config.signal_compliance_bonus * (v / v_lim)
@@ -344,7 +342,13 @@ def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
     if not state.reached_new_station:
         return 0.0
     escalation = 1.0 + state.station_index * config.station_escalation
-    return config.station_reward_base * escalation
+    reward = config.station_reward_base * escalation
+    
+    # DESTINATION BONUS: If this is the final station (Index 6: Nowy Sącz)
+    if state.station_index >= 6:
+        reward += config.station_destination_bonus
+        
+    return reward
 
 
 def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> float:

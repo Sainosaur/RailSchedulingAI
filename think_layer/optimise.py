@@ -31,7 +31,7 @@ from think_layer.config import TrainConfig
 _HPO_TOTAL_TIMESTEPS = 100_000  # short trial budget
 _HPO_N_ENVS = 12  # fewer workers → less SubprocVecEnv IPC overhead
 # for short trials the spawn cost dominates at 16
-_HPO_MAX_EP_STEPS = 5_000  # cap episode length so trials don't stall on one ep
+_HPO_MAX_EP_STEPS = 15_000  # cap episode length so trials don't stall on one ep
 _HPO_N_EVAL_EPS = 1  # sequential eval is the bottleneck; 1 ep is enough
 _HPO_TB_PREFIX = "PPO"  # saved as PPO_1, PPO_2 … never PPO_Line104_x
 
@@ -83,10 +83,10 @@ def objective(trial: optuna.Trial) -> float:
     # ── 1. Sample Hyperparameters ──────────────────────────────────────────────
     kwargs = {
         "learning_rate": trial.suggest_float("lr", 1e-5, 1e-3, log=True),
-        "batch_size": trial.suggest_categorical("batch_size", [256, 512]),
+        "batch_size": trial.suggest_categorical("batch_size", [128, 256, 512]),
         "n_steps": trial.suggest_categorical("n_steps", [1024, 2048, 4096]),
-        "gamma": trial.suggest_categorical("gamma", [0.99, 0.995, 0.999, 0.9999]),
-        "ent_coef": trial.suggest_float("ent_coef", 0.0001, 0.5, log=True),
+        "gamma": trial.suggest_categorical("gamma", [0.99, 0.999, 0.9999]),
+        "ent_coef": trial.suggest_float("ent_coef", 0.001, 0.5, log=True),
     }
 
     net_arch_type = trial.suggest_categorical("net_arch", ["small", "medium"])
