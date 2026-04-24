@@ -18,8 +18,8 @@ from typing import Optional
 # Data model
 # ---------------------------------------------------------------------------
 
-@dataclass
 
+@dataclass
 @dataclass
 class TimetableEntry:
     """One row of the timetable — a single station stop."""
@@ -78,21 +78,15 @@ def _compute_segment_travel_time(
     accel: float = 0.5,
     decel: float = 0.5,
 ) -> float:
-    """Compute travel time across a segment accounting for acceleration
-    from rest and deceleration to rest at segment boundaries.
+    # Ensure accel/decel are non-zero to avoid NaNs
+    accel = max(0.01, accel)
+    decel = max(0.01, decel)
+    speed_limit_ms = max(0.1, speed_limit_ms)
+    distance_m = max(0.0, distance_m)
 
-    Uses a trapezoidal velocity profile:
-        1. Accelerate from 0 → speed_limit at `accel` m/s²
-        2. Cruise at speed_limit
-        3. Decelerate from speed_limit → 0 at `decel` m/s²
+    if distance_m == 0:
+        return 0.0
 
-    If the segment is too short to reach full speed, uses a triangular
-    profile (accelerate then immediately decelerate).
-
-    This is used for **inter-station** travel (station stops require
-    braking to zero and accelerating from zero), giving a realistic
-    buffer over the naive distance/speed calculation.
-    """
     # Distance required to accelerate to limit
     d_accel = (speed_limit_ms**2) / (2 * accel)
     # Distance required to decelerate from limit
@@ -156,10 +150,11 @@ def compute_eta_to_station(
         # Portion of this segment the train must traverse
         seg_start = max(seg.start, current_position)
         seg_end = min(seg.end, target_position)
-        seg_dist = seg_end - seg_start
 
-        if seg_dist <= 0:
+        if seg_end <= seg_start:
             continue
+
+        seg_dist = seg_end - seg_start
 
         # Use segment speed limit with accel/decel buffer
         total_time += _compute_segment_travel_time(seg_dist, seg.limit_ms, accel, decel)

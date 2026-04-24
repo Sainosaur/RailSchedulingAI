@@ -38,7 +38,7 @@ class ValidationLayer:
     def compute_dtz(self, x: float) -> float:
         seg = self.get_segment(x)
         for boundary in seg.block_boundaries:
-            if boundary > x:
+            if boundary > x + 0.01:  # Use epsilon to avoid 0.0 dtz at boundaries
                 return boundary - x
         return seg.spatial_headway
 
@@ -126,12 +126,20 @@ class ValidationLayer:
         is_safe, constraint = self._check_action_safety(
             clamped_a, env_aspect, x, u, dtz
         )
+        if not is_safe:
+            print(
+                f"DEBUG: SAFETY VIOLATION! constraint={constraint}, x={x:.2f}, u={u:.2f}, dtz={dtz:.2f}, aspect={env_aspect}"
+            )
 
         if is_safe:
             return clamped_a, False
 
         # RESOLUTION LOGIC
         v_target, dist_avail = self._speed_for_aspect(env_aspect, seg, dtz, u)
+        if not is_safe:
+            print(
+                f"DEBUG: RESOLUTION! v_target={v_target:.2f}, dist_avail={dist_avail:.2f}"
+            )
 
         if "_Limit" in constraint:
             seg_id = constraint.split("_")[0]

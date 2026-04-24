@@ -124,6 +124,7 @@ class ModernizedLine104(gym.Env):
         self._cached_dist_to_occupied = self._dist_to_nearest_occupied_from_cache()
         env_aspect = self._get_signal_aspect_from_cache()
         self._cached_aspect = env_aspect
+        print(f"DEBUG: env_aspect={env_aspect}, dtz={self.dtz}")
 
         # --- CLEAN INTERLOCK ---
         # Departure Interlock: If we are in a dwell period, force accel to 0.0
