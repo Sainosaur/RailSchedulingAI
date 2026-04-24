@@ -9,17 +9,17 @@ import sys
 from pathlib import Path
 
 from stable_baselines3.common.callbacks import (
+    CallbackList,
     CheckpointCallback,
     EvalCallback,
-    CallbackList,
 )
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 # Ensure project-root imports work
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from think_layer.config import TrainConfig  # noqa: E402
 from think_layer.agent import build_agent, make_env  # noqa: E402
+from think_layer.config import TrainConfig  # noqa: E402
 
 
 def train(config: TrainConfig) -> None:
@@ -59,13 +59,15 @@ def train(config: TrainConfig) -> None:
     )
 
     # Separate eval environment (also normalised, but stats frozen)
-    eval_venv = DummyVecEnv([
-        make_env(
-            seed=config.seed + 1000,
-            lead_train_speed=config.lead_train_speed,
-            max_episode_steps=config.max_episode_steps,
-        )
-    ])
+    eval_venv = DummyVecEnv(
+        [
+            make_env(
+                seed=config.seed + 1000,
+                lead_train_speed=config.lead_train_speed,
+                max_episode_steps=config.max_episode_steps,
+            )
+        ]
+    )
     eval_venv = VecNormalize(
         eval_venv,
         norm_obs=config.normalize_obs,
@@ -74,8 +76,7 @@ def train(config: TrainConfig) -> None:
     )
     # Sync normalisation stats from training env
     eval_venv.obs_rms = vec_env.obs_rms
-    eval_venv.training = False   # freeze stats during evaluation
-    eval_venv.norm_reward = False
+    eval_venv.training = False  # freeze stats during evaluation
 
     # eval_freq is in _on_step calls (1 call = n_envs timesteps)
     eval_cb = EvalCallback(
