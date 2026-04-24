@@ -35,9 +35,9 @@ class ModernizedLine104(gym.Env):
     ACCEL: float = 0.5
     DECEL: float = -1.0
     MAX_STEPS: int = 10_000
+    STATIONS: list[float] = [582.0, 5481.0, 14951.0, 37160.0, 47017.0, 67394.0, 76651.0]
     TRACK_START: float = 582.0
     TRACK_END: float = 76651.0
-    STATIONS: list[float] = [582, 5481, 14951, 37160, 47017, 67394, 76651]
 
     def __init__(
         self,
@@ -92,7 +92,7 @@ class ModernizedLine104(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
-        self.x = self.TRACK_START
+        self.x = self.STATIONS[0]
         self.v = 0.0
         self.time = 0.0
         self.last_station_idx = 0
@@ -266,6 +266,8 @@ class ModernizedLine104(gym.Env):
         if hasattr(self, "_cached_nearest_pos"): del self._cached_nearest_pos
 
         info = {
+            "current_position": self.x,
+            "current_speed": self.v,
             "safety_overridden": safety_overridden,
             "safe_a": safe_a,
             "proposed_a": proposed_a,
@@ -368,12 +370,11 @@ class ModernizedLine104(gym.Env):
 
     def _dist_to_nearest_occupied(self) -> float:
         nearest = self._nearest_obstruction(self.x)
-        # Only treat next station as an obstruction if we are significantly before it
-        # This prevents the "Deadlock at 0m" issue.
+        # Treat next station as obstruction, but with a buffer so we can actually reach it
         if self.last_station_idx + 1 < len(self.STATIONS):
             next_st_pos = self.STATIONS[self.last_station_idx + 1]
-            if next_st_pos > self.x + 1.0:
-                nearest = min(nearest, next_st_pos)
+            # Use a 2m buffer for the "wall" to match station arrival detection
+            nearest = min(nearest, next_st_pos + 2.0)
         return max(0.0, nearest - self.x)
 
     def _get_signal_aspect(self) -> int:
@@ -403,8 +404,7 @@ class ModernizedLine104(gym.Env):
         nearest = self._cached_nearest_pos
         if self.last_station_idx + 1 < len(self.STATIONS):
             next_st_pos = self.STATIONS[self.last_station_idx + 1]
-            if next_st_pos > self.x + 1.0:
-                nearest = min(nearest, next_st_pos)
+            nearest = min(nearest, next_st_pos + 2.0)
         return max(0.0, nearest - self.x)
 
     def _compute_headway(self) -> float:
