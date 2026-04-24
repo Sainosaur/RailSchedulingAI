@@ -1,11 +1,11 @@
 """
 validate_layer/validator.py
-Anti-Lazy Update: Fixes the Zero-Authority bug at station boundaries.
+Safety-first validation layer for Polish Rail Line 104.
 """
 
 import math
 import time
-from typing import Tuple
+from typing import List, Tuple
 
 try:
     from graph.graph import VLSegment, build_vl_segments
@@ -14,6 +14,7 @@ except ImportError:
 
 from validate_layer.log_manager import append_row, init_log
 
+# Physical Constants
 ACCEL: float = 0.5
 SERVICE_DECEL: float = -0.5
 EMERGENCY_DECEL: float = -1.0
@@ -21,11 +22,12 @@ EMERGENCY_DECEL: float = -1.0
 
 class ValidationLayer:
     def __init__(self):
-        self.segments: list[VLSegment] = build_vl_segments()
+        self.segments: List[VLSegment] = build_vl_segments()
         init_log()
-        self.dt = 1.0  # Synchronized with env.DT
+        self.dt: float = 1.0  # Synchronized with env.DT
 
     def get_segment(self, x: float) -> VLSegment:
+        """Find the track segment containing position x."""
         if x <= self.segments[0].start:
             return self.segments[0]
         if x >= self.segments[-1].end:
@@ -36,34 +38,42 @@ class ValidationLayer:
         return self.segments[-1]
 
     def compute_dtz(self, x: float) -> float:
+        """Compute Distance To Zone (distance to the next block boundary)."""
         seg = self.get_segment(x)
         for boundary in seg.block_boundaries:
-            if boundary > x + 0.01:  # Use epsilon to avoid 0.0 dtz at boundaries
+            if boundary > x + 0.01:  # Epsilon to prevent 0.0 at boundaries
                 return boundary - x
-        return seg.spatial_headway
+        return float(seg.spatial_headway)
 
     def _speed_for_aspect(
         self, aspect: int, segment: VLSegment, dtz: float, current_v: float
     ) -> Tuple[float, float]:
-        sh = segment.spatial_headway
+        """
+        Calculates maximum allowed speed and total authority distance for a signal aspect.
+        """
+        sh = float(segment.spatial_headway)
 
-        # NEW COMPLEXITY: Only grant the 1km Departure Authority if the signal is GREEN (3).
-        # If the signal is Orange (1) or FlashGreen (2), the "Zero Distance" math stays
-        # at 0.0, keeping the train locked.
+        # Grant 'Green Departure Runway' (3 blocks) if stationary at Green
         if current_v < 0.1 and aspect == 3:
-            distance_available = dtz + 3 * sh  # The 'Green Departure Runway'
+            distance_available = dtz + (3.0 * sh)
         else:
-            # Normal authority calculation for all other states
-            distance_available = dtz + (aspect * sh)
+            distance_available = dtz + (float(aspect) * sh)
 
-        v_dynamic = math.sqrt(2 * abs(EMERGENCY_DECEL) * max(0.0, distance_available))
-        return min(v_dynamic, segment.limit_ms), distance_available
+        # Basic kinematic safety limit: v = sqrt(2 * a * s)
+        v_dynamic = math.sqrt(2.0 * abs(EMERGENCY_DECEL) * max(0.0, distance_available))
+
+        # Target speed is the lower of the kinematic safety and segment limit
+        v_target = min(v_dynamic, float(segment.limit_ms))
+
+        return v_target, distance_available
 
     def _project(
         self, x: float, u: float, proposed_a: float, v_ceil: float, t: float
     ) -> Tuple[float, float]:
+        """Predicts position and speed after t seconds using SUVAT."""
         if proposed_a == 0:
             return x + u * t, u
+
         if proposed_a > 0:
             if u >= v_ceil:
                 return x + v_ceil * t, v_ceil
@@ -77,93 +87,99 @@ class ValidationLayer:
             v = u + proposed_a * t
             x_proj = x + u * t + 0.5 * proposed_a * (t**2)
         else:
+            # Reached speed limit or stop mid-interval
             x_at_limit = x + u * t_to_limit + 0.5 * proposed_a * (t_to_limit**2)
             v = v_ceil if proposed_a > 0 else 0.0
             x_proj = x_at_limit + v * (t - t_to_limit)
+
         return x_proj, max(0.0, v)
 
     def _check_action_safety(
         self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float
     ) -> Tuple[bool, str]:
+        """Simulates trajectory to verify if an action violates safety constraints."""
         current_seg = self.get_segment(x)
         max_safe_v, dist_avail = self._speed_for_aspect(env_aspect, current_seg, dtz, u)
         boundary_x = x + dist_avail
 
+        # Look ahead based on stopping time
         t_stop = current_seg.limit_ms / abs(EMERGENCY_DECEL)
-        sim_steps = [max(1, math.floor(t_stop * f)) for f in [0.33, 0.67, 1.0]]
+        sim_steps = [max(1.0, math.floor(t_stop * f)) for f in [0.33, 0.67, 1.0]]
 
-        v_ceiling = current_seg.limit_ms
+        v_ceiling = float(current_seg.limit_ms)
         for t in sim_steps:
             x_proj, v = self._project(x, u, proposed_a, v_ceiling, t)
             proj_seg = self.get_segment(x_proj)
+
+            # Constraint 1: Spatial limit (Aspect Authority)
             if x_proj >= boundary_x:
                 return False, "Aspect_Spatial_Violation"
-            if v > max_safe_v + 0.5:
-                return False, "Kinematic_Target_Violation"
+
+            # Constraint 2: Speed limit of the current or future segment
             if v > proj_seg.limit_ms + 0.5:
                 return False, f"{proj_seg.id}_Limit"
+
+            # Constraint 3: Kinematic safety for the current aspect
+            if v > max_safe_v + 0.5:
+                return False, "Kinematic_Target_Violation"
+
         return True, ""
 
     def get_safe_action(
         self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float
     ) -> Tuple[float, bool]:
         """
-        Validates AI action. Includes logic to differentiate system clamps from safety failures.
+        Main entry point. Validates action and returns a safe alternative if needed.
         """
         seg = self.get_segment(x)
+
+        # 1. Hardware/Software Clamping
         clamped_a = max(EMERGENCY_DECEL, min(ACCEL, proposed_a))
 
-        # PROACTIVE SAFETY FIX: If stopped at Red and staying stopped, no override.
+        # 2. Stationary interlock
         if u < 0.1 and env_aspect == 0 and proposed_a <= 0:
             return 0.0, False
 
-        # --- PHYSICAL GOVERNOR ---
-        # If we are at or above the limit, cap accel at 0.0
-        v_ceiling = seg.limit_ms
-        if u >= v_ceiling - 0.01:
+        # 3. Speed Limit Governor
+        if u >= seg.limit_ms - 0.01:
             clamped_a = min(0.0, clamped_a)
 
+        # 4. Trajectory Safety Check
         is_safe, constraint = self._check_action_safety(
             clamped_a, env_aspect, x, u, dtz
         )
-        if not is_safe:
-            print(
-                f"DEBUG: SAFETY VIOLATION! constraint={constraint}, x={x:.2f}, u={u:.2f}, dtz={dtz:.2f}, aspect={env_aspect}"
-            )
 
         if is_safe:
             return clamped_a, False
 
-        # RESOLUTION LOGIC
+        # 5. RESOLUTION (If unsafe, find the best possible safe action)
         v_target, dist_avail = self._speed_for_aspect(env_aspect, seg, dtz, u)
-        if not is_safe:
-            print(
-                f"DEBUG: RESOLUTION! v_target={v_target:.2f}, dist_avail={dist_avail:.2f}"
-            )
 
         if "_Limit" in constraint:
+            # Resolve speed limit violations
             seg_id = constraint.split("_")[0]
-            target_limit = seg.limit_ms
+            target_limit = float(seg.limit_ms)
             for s in self.segments:
                 if str(s.id) == str(seg_id):
-                    target_limit = s.limit_ms
+                    target_limit = float(s.limit_ms)
                     break
             a_needed = (target_limit - u - 0.01) / self.dt
-            safe_a = float(max(EMERGENCY_DECEL, min(ACCEL, a_needed)))
+            safe_a = max(EMERGENCY_DECEL, min(ACCEL, a_needed))
         elif dist_avail > 0.1:
+            # Resolve spatial violations using SUVAT: v² = u² + 2as => a = -u² / 2s
             a_needed = -(u**2) / (2.0 * dist_avail)
-            safe_a = float(max(EMERGENCY_DECEL, min(0.0, a_needed)))
+            safe_a = max(EMERGENCY_DECEL, min(0.0, a_needed))
         else:
+            # Critical violation
             safe_a = EMERGENCY_DECEL
 
-        # Only set overridden=True if the AI was LESS safe than required.
-        # Clamping for speed limits is a 'System Clamp' (False).
+        # Only mark as 'overridden' if the AI's intent was less safe than the correction
         was_safety_failure = True if proposed_a > safe_a + 0.01 else False
         if "_Limit" in constraint:
-            was_safety_failure = False
+            was_safety_failure = False  # System-level speed limit clamp
 
         self._log_override(proposed_a, safe_a, constraint)
-        return safe_a, was_safety_failure
+        return float(safe_a), was_safety_failure
 
     @staticmethod
     def _log_override(original: float, corrected: float, constraint_id: str) -> None:
