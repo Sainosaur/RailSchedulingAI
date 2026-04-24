@@ -96,6 +96,7 @@ class ModernizedLine104(gym.Env):
         self.step_count = 0
         self.ai_dwell_timer = 0
         self.ai_arrival_times = {}
+        self.ai_departure_time = 0.0  # Initialize departure time
 
         # Reset the lead train ~2km ahead
         start_lead_x = self.TRACK_START + 2000.0
@@ -127,16 +128,22 @@ class ModernizedLine104(gym.Env):
         self._cached_aspect = env_aspect
 
         # --- CLEAN INTERLOCK ---
-        at_station = self.v < 0.1 and self.dtz < 0.5
-        if self.ai_dwell_timer > 0 or (at_station and env_aspect < 3):
-            if self.ai_dwell_timer > 0:
-                self.ai_dwell_timer -= 1
+        # Departure Interlock: If we are in a dwell period, force accel to 0.0
+        in_dwell = (
+            hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time
+        )
+        if in_dwell:
             proposed_a = 0.0
 
         # --- VALIDATION LAYER ---
         safe_a, safety_overridden = self.vl.get_safe_action(
             proposed_a, env_aspect, self.x, self.v, self.dtz
         )
+
+        # Override safe_a if in dwell to ensure absolute stop
+        if in_dwell:
+            safe_a = 0.0
+
         action_delta = abs(safe_a - self.last_a)
         self.last_a = safe_a
 
@@ -200,19 +207,21 @@ class ModernizedLine104(gym.Env):
             self.x = self.STATIONS[next_st_idx]
             self.v = 0.0
 
-            if next_st_idx < len(self.STATIONS) - 1:
-                self.ai_dwell_timer = int(
-                    self.np_random.integers(
-                        LeadTrain.LEAD_DWELL_RANGE[0], LeadTrain.LEAD_DWELL_RANGE[1]
-                    )
-                )
-
             actual_arrival_time = self.time
             entry = self.timetable.get_entry(next_st_idx)
             scheduled_arrival_time = (
                 entry.scheduled_arrival if entry else self._ideal_schedule[next_st_idx]
             )
             self.ai_arrival_times[next_st_idx] = self.time
+
+            # NEW DWELL LOGIC:
+            if next_st_idx < len(self.STATIONS) - 1 and entry:
+                # If early or on-time, wait until scheduled departure
+                if actual_arrival_time <= entry.scheduled_arrival:
+                    self.ai_departure_time = entry.scheduled_departure
+                else:
+                    # If late, wait exactly 60 seconds (1 minute recovery)
+                    self.ai_departure_time = self.time + 60.0
 
         # --- REWARDS ---
         last_st_pos = self.STATIONS[self.last_station_idx]
@@ -335,7 +344,14 @@ class ModernizedLine104(gym.Env):
         self.dtz = self.vl.compute_dtz(self.x)
 
     def _nearest_obstruction(self, from_x: float) -> float:
-        nearest = self.lead_train.x
+        # Treat the end of the current segment (approaching station) as a barrier
+        current_seg = self.vl.get_segment(from_x)
+        nearest = current_seg.end
+
+        # Also check for lead train
+        nearest = min(nearest, self.lead_train.x)
+
+        # Also check for active hazards
         for h_start, _ in self.active_hazards:
             if h_start > from_x:
                 nearest = min(nearest, h_start)
