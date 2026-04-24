@@ -269,12 +269,9 @@ def _compute_patience_reward(state: TrainState, config: RewardConfig) -> float:
         return 2.0  # Encourage waiting for signals to clear
 
     # 2. Stationary at Station (Dwell) or RED Signal
-    # If we are within 5 meters of a station OR signal is RED, and speed is zero, provide dwell bonus
-    dist_to_station = min(
-        abs(state.current_position - state.last_station_position),
-        abs(state.current_position - state.next_station_position)
-    )
-    if (dist_to_station < 5.0 or state.signal_aspect == 0) and state.current_speed < 0.1:
+    # BUG FIX: Only reward station-stop if the train is actually in a mandatory dwell period.
+    # Otherwise, the AI is encouraged to stay at stations forever.
+    if (state.is_dwelling or state.signal_aspect == 0) and state.current_speed < 0.1:
         return config.dwell_patience_bonus  # Strong bonus specifically for waiting correctly
 
     return 0.0
@@ -289,8 +286,10 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     a = state.proposed_acceleration  # Use proposed_acceleration to judge AI intent
     bonus = config.signal_compliance_bonus
 
-    # RESTART PUNISHMENT: Massive penalty for trying to move from stop at Red/Yellow/DoubleYellow
-    if v < 0.1 and a > 0.05 and state.signal_aspect < 3:
+    # RESTART PUNISHMENT: Massive penalty for trying to move from stop at RED
+    # BUG FIX: Removed punishment for Yellow/Double Yellow (aspect 1 and 2), 
+    # as movement is allowed (though cautious) under those signals.
+    if v < 0.1 and a > 0.05 and state.signal_aspect == 0:
         return -5000.0  # CRITICAL: Punish intent to run a red light BEFORE they even move
     # YELLOW TAX: Punish for staying in restricted signals while moving
     # Encourages transitioning to stop or backing off into Green.
