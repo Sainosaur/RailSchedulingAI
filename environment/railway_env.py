@@ -76,7 +76,6 @@ class ModernizedLine104(gym.Env):
         self.visited_stations: set[int] = set()
         self.last_a: float = 0.0
         self.step_count: int = 0
-        self.ai_dwell_timer: int = 0
 
         self._ideal_schedule = self._compute_ideal_schedule()
         self.timetable: Timetable = generate_timetable(
@@ -94,7 +93,6 @@ class ModernizedLine104(gym.Env):
         self.visited_stations = {0}
         self.last_a = 0.0
         self.step_count = 0
-        self.ai_dwell_timer = 0
         self.ai_arrival_times = {}
         self.ai_departure_time = 0.0  # Initialize departure time
 
