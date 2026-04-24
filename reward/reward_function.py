@@ -95,6 +95,7 @@ class TrainState:
 
     # Default parameters that must follow non-defaults (to fix dataclass syntax error)
     temporal_headway: float = 12.5  # default to highest TH
+    spatial_headway: float = 500.0  # distance of one block
 
     # Validation / Smoothing (Defaults set to safe values so the environment won't break until we integrate them)
     safety_overridden: bool = False
@@ -200,9 +201,14 @@ def _compute_heartbeat_penalty(state: TrainState, config: RewardConfig) -> float
 
 
 def _compute_clear_road_bonus(state: TrainState, config: RewardConfig) -> float:
-    # Bonus for having a lot of "green" space ahead (e.g., 3+ zones).
-    # Logic: if d_to_occupied is high, give points to encourage "filling the gap".
-    if state.signal_aspect == 3 and state.distance_to_occupied > 3000.0:
+    # Bonus for being in the "Sweet Spot": Green signal but just barely.
+    # Encourages the train to close the gap and stay at the front of the green wave (exactly 3-4 zones back).
+    # If d < 3*SH, aspect is no longer 3 (turns to Double Yellow).
+    # If d > 4*SH, we cut the bonus to prevent the AI from lagging too far behind.
+    sh = state.spatial_headway
+    d = state.distance_to_occupied
+
+    if state.signal_aspect == 3 and (3.0 * sh <= d <= 4.0 * sh):
         return config.clear_road_bonus
     return 0.0
 
