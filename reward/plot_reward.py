@@ -161,9 +161,11 @@ def plot(data, breakdown):
         ax_item.grid(True, which='both', linestyle=':', alpha=0.5)
     
     plt.tight_layout()
-    output_path = "reward/reward_landscape.png"
-    plt.savefig(output_path, dpi=150)
-    print(f"Detailed plot saved to {os.path.abspath(output_path)}")
+    # Save in the same directory as the script
+    script_dir = Path(__file__).resolve().parent
+    output_path = script_dir / "reward_landscape.png"
+    plt.savefig(str(output_path), dpi=150)
+    print(f"Detailed plot saved to {output_path}")
     try:
         plt.show()
     except Exception:
