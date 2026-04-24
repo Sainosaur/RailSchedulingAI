@@ -52,20 +52,21 @@ class RewardConfig:
     override_penalty: float = -25.0  # High cost for triggerring VL
     jerk_penalty: float = -0.1
     comfortable_acceleration: float = 0.5
-    comfortable_deceleration: float = 0.5
+    comfortable_deceleration: float = 0.3  # REDUCED: Force earlier, smoother braking
     energy_penalty_weight: float = 0.0
 
     # 7. Headway & Collision (The "Disasters")
     k_h: float = 3.0
     headway_warning_multiplier: float = 3.0
     headway_violation_multiplier: float = 1.0
-    headway_violation_penalty: float = -100000.0  # FATAL: Run this and lose everything
+    headway_violation_penalty: float = -100000.0  # FATAL
     collision_penalty: float = -100000.0  # FATAL
 
     # 8. Lateness & Dwell (The "Professionalism")
     lateness_violation_threshold: float = 600.0 
     lateness_violation_penalty: float = -10000.0 
-    dwell_patience_bonus: float = 5.0  # NEW: Reward for staying at V=0 when signal is RED
+    dwell_patience_bonus: float = 10.0  # NEW: Reward for staying at V=0 when signal is RED
+    transitional_signal_tax: float = -2.0  # NEW: Penalty for 'hanging out' in Yellow/Dbl Yellow
 
 
 DEFAULT_CONFIG = RewardConfig()
@@ -175,8 +176,14 @@ def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
     d_brake: float = min(d_to, state.distance_to_occupied)
 
     # v_target is the min of the speed limit and the square-root braking curve
+    # SMOOTH BRAKE FIX: Use the shallower curve (0.3 m/s2) for longer lookahead
     v_brake = math.sqrt(2 * config.comfortable_deceleration * d_brake)
-    v_target: float = min(v_max, v_brake)
+    
+    # PROACTIVE BRAKE: Even if in Green, if we are within 5x SH, start considering v_brake
+    if state.distance_to_occupied < 5.0 * state.spatial_headway:
+        v_target: float = min(v_max, v_brake)
+    else:
+        v_target: float = v_max
 
     overspeed = max(0.0, v - v_target)
     underspeed = max(0.0, v_target - v)
@@ -285,6 +292,10 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
     # RESTART PUNISHMENT: Massive penalty for trying to move from stop at Red/Yellow/DoubleYellow
     if v < 0.1 and a > 0.05 and state.signal_aspect < 3:
         return -5000.0  # CRITICAL: Punish intent to run a red light BEFORE they even move
+    # YELLOW TAX: Punish for staying in restricted signals while moving
+    # Encourages transitioning to stop or backing off into Green.
+    if 0.5 < v <= v_lim and (state.signal_aspect == 1 or state.signal_aspect == 2):
+        return config.transitional_signal_tax
 
     if state.signal_aspect == 3:  # Green
         # 1. Punish if stationary at Green

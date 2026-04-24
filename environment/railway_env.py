@@ -360,12 +360,17 @@ class ModernizedLine104(gym.Env):
 
     def _dist_to_nearest_occupied(self) -> float:
         nearest = self._nearest_obstruction(self.x)
+        # Only treat next station as an obstruction if we are significantly before it
+        # This prevents the "Deadlock at 0m" issue.
         if self.last_station_idx + 1 < len(self.STATIONS):
-            nearest = min(nearest, self.STATIONS[self.last_station_idx + 1])
+            next_st_pos = self.STATIONS[self.last_station_idx + 1]
+            if next_st_pos > self.x + 1.0:
+                nearest = min(nearest, next_st_pos)
         return max(0.0, nearest - self.x)
 
     def _get_signal_aspect(self) -> int:
-        d = self._nearest_obstruction(self.x) - self.x
+        # Use the distance that includes stations
+        d = self._dist_to_nearest_occupied()
         sh = self.vl.get_segment(self.x).spatial_headway
         if d > 3 * sh:
             return 3
@@ -389,7 +394,9 @@ class ModernizedLine104(gym.Env):
     def _dist_to_nearest_occupied_from_cache(self) -> float:
         nearest = self._cached_nearest_pos
         if self.last_station_idx + 1 < len(self.STATIONS):
-            nearest = min(nearest, self.STATIONS[self.last_station_idx + 1])
+            next_st_pos = self.STATIONS[self.last_station_idx + 1]
+            if next_st_pos > self.x + 1.0:
+                nearest = min(nearest, next_st_pos)
         return max(0.0, nearest - self.x)
 
     def _compute_headway(self) -> float:
