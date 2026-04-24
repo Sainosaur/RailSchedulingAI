@@ -18,14 +18,14 @@ class TrainConfig:
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 5_000_000
-    learning_rate: float = 1e-4
-    n_steps: int = 4096
+    learning_rate: float = 0.0005426
+    n_steps: int = 2048
     batch_size: int = 512
     n_epochs: int = 5
-    gamma: float = 0.9999
+    gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    ent_coef: float = 0.01  # Increase exploration (was 0.005)
+    ent_coef: float = 0.00157
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
 
