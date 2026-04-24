@@ -21,60 +21,97 @@ MODEL_PATH = os.path.join(MODEL_DIR, "best_model.zip")
 STATS_PATH = os.path.join(MODEL_DIR, "final_vecnormalize.pkl")
 
 def run_and_collect():
-    """Run full episode with max-throttle policy, collect reward breakdown."""
+    """Run full episode and collect reward breakdown."""
     env = ModernizedLine104(lead_train_speed=25.0, training_mode=False)
-    # Wrap in VecNormalize (Crucial for HPO-tuned models)
-    venv = DummyVecEnv([lambda: env])
-    venv = VecNormalize.load(STATS_PATH, venv)
-    venv.training = False
-    venv.norm_reward = False
-
-    # Load Model
-    model = PPO.load(MODEL_PATH, env=venv)
     
+    use_model = os.path.exists(MODEL_PATH) and os.path.exists(STATS_PATH)
+    
+    if use_model:
+        print(f"--- Plotting AI Mode (Using model {MODEL_PATH}) ---")
+        venv = DummyVecEnv([lambda: env])
+        venv = VecNormalize.load(STATS_PATH, venv)
+        venv.training = False
+        venv.norm_reward = False
+        model = PPO.load(MODEL_PATH, env=venv)
+        obs = venv.reset()
+    else:
+        print("--- Plotting Heuristic Mode (Simulating 'Perfect' Driver) ---")
+        env.reset()
+        obs = None
+
     data = {
         "position": [], "speed": [], "reward": [], 
         "total_reward": [], "limit": [],
         "lead_x": [], "signal": [],
     }
 
-    # Initial obs
-    obs = venv.reset()
     total_rew = 0
     
-    for idx in range(25000):
-        # 1. Store the state BEFORE the step
-        real_env = venv.envs[0].unwrapped
-        current_x = real_env.x
-        current_v = real_env.v
-        current_lead_x = real_env.lead_train.x
-        current_signal = real_env._get_signal_aspect()
-        current_limit = real_env.vl.get_segment(current_x).limit_ms * 3.6
+    for idx in range(30000):
+        # 1. State BEFORE step (for plotting consistency)
+        current_x = env.x
+        current_v = env.v
+        current_signal = env._get_signal_aspect()
+        current_limit = env.vl.get_segment(current_x).limit_ms * 3.6
 
-        # 2. Predict and Step
-        action, _ = model.predict(obs, deterministic=True)
-        obs, rewards, terminated, info = venv.step(action)
-        
-        # 3. Append the pre-step state (The true state of the journey)
-        data["position"].append(current_x)
-        data["speed"].append(current_v)
-        data["reward"].append(rewards[0])
+        # 2. Predict or Heuristic
+        if use_model:
+            action, _ = model.predict(obs, deterministic=True)
+            obs, rewards, is_done_vec, info_vec = venv.step(action)
+            step_reward = rewards[0]
+            is_done = is_done_vec[0]
+            info = info_vec[0]
+        else:
+            # HEURISTIC: Stay still if dwelling
+            if hasattr(env, "ai_departure_time") and env.time < env.ai_departure_time:
+                target_v = 0.0
+            else:
+                seg = env.vl.get_segment(env.x)
+                v_lim = seg.limit_ms
+                if current_signal == 0:
+                    dist_to_st = 99999.0
+                    if env.last_station_idx + 1 < len(env.STATIONS):
+                        dist_to_st = env.STATIONS[env.last_station_idx + 1] - env.x
+                    if dist_to_st < seg.spatial_headway + 10.0:
+                        target_v = 3.0 
+                    else:
+                        target_v = 0.0
+                elif current_signal == 1: target_v = v_lim * 0.4
+                elif current_signal == 2: target_v = v_lim * 0.7
+                else: target_v = v_lim
+            
+            if current_v < target_v - 0.2: action_val = 1.0
+            elif current_v > target_v + 0.2: action_val = -1.0
+            else: action_val = 0.0
+            
+            action = np.array([action_val], dtype=np.float32)
+            _obs, step_reward, terminated, truncated, info = env.step(action)
+            is_done = terminated or truncated
+
+        total_rew += step_reward
+
+        # 3. Append data (Store the result of the step)
+        data["position"].append(env.x)
+        data["speed"].append(env.v)
+        data["reward"].append(step_reward)
         data["total_reward"].append(total_rew)
-        data["limit"].append(current_limit)
-        data["lead_x"].append(current_lead_x)
-        data["signal"].append(current_signal)
+        data["limit"].append(env.vl.get_segment(env.x).limit_ms * 3.6)
+        data["signal"].append(env._get_signal_aspect())
 
-        total_rew += rewards[0]
-
-        if terminated[0]:
-            print(f"Journey ended at {current_x/1000:.2f} km")
+        if is_done:
+            print(f"Journey ended at {env.x/1000:.2f} km")
+            print(f"Final Total Reward: {total_rew:+.2f}")
+            if 'reward_breakdown' in info:
+                print("Final Step Reward Breakdown:")
+                for k, v in info['reward_breakdown'].items():
+                    if abs(v) > 0.01: print(f"  {k:15}: {v:+.2f}")
             break
 
     return {k: np.array(v) for k, v in data.items()}
 
 def plot(data):
     """Plot the reward landscape across the line."""
-    stations_km = [0, 15, 28, 42, 55, 68, 76] 
+    stations_km = [0.58, 5.48, 14.95, 37.16, 47.01, 67.39, 76.65] 
     x = data["position"] / 1000.0
     
     fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
@@ -87,28 +124,33 @@ def plot(data):
     ax2.plot(x, data["signal"], color="orange", alpha=0.3, label="Signal")
     ax.set_ylabel("Speed (km/h)")
     ax2.set_ylabel("Signal (0-3)")
-    ax.set_title("SPEED AUDIT: Trained Agent vs. Limits")
+    ax.set_title("SPEED AUDIT: Journey Profile")
     ax.legend(loc="upper left")
 
-    # 2. Reward density
+    # 2. Step Reward
     ax = axes[1]
     ax.plot(x, data["reward"], color="green", linewidth=0.5)
     ax.set_ylabel("Step Reward")
-    ax.set_title("Reward Spikes (Stations/Violations)")
+    ax.set_title("Reward Spikes (Check for massive negative dips here)")
 
-    # 3. Total Reward
+    # 3. Cumulative Reward
     ax = axes[2]
     ax.plot(x, data["total_reward"], color="black", linewidth=2.0)
     ax.set_ylabel("Cumulative Score")
     ax.set_xlabel("Position (km)")
-    ax.set_title("The Golden Curve")
+    ax.set_title("Cumulative Reward (Look for the +50,000 jump at 76.6km)")
     
     for ax_item in axes:
         for s in stations_km: ax_item.axvline(s, color="gray", linestyle="--", alpha=0.2)
     
     plt.tight_layout()
-    plt.savefig("reward_landscape.png", dpi=150)
-    plt.show()
+    output_path = "reward_landscape.png"
+    plt.savefig(output_path, dpi=150)
+    print(f"Plot saved to {os.path.abspath(output_path)}")
+    try:
+        plt.show()
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     data = run_and_collect()
