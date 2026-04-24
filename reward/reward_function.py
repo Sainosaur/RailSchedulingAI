@@ -286,13 +286,23 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
         return -100.0  # Massive penalty for attempting to restart early
 
     if state.signal_aspect == 3:  # Green
+        # 1. Punish if stationary at Green
         if v < 0.5:
-            return -config.k_stall
+            return -config.k_stall * 2.0  # Increased penalty for stalling
 
-        # when below the speed limit.
-        if v < v_lim - 1.0 and a > 0.4:
-            return config.signal_compliance_bonus * 2.0
+        # 2. Sweet Spot Logic: Formation Driving (3-4 blocks behind lead)
+        d_occ = state.distance_to_occupied
+        sh = state.spatial_headway
+        
+        if 3.0 * sh <= d_occ <= 4.0 * sh:
+            return bonus * 5.0  # High reward for staying in the 'Sweet Spot'
+        
+        elif d_occ > 4.0 * sh:
+            # 'Lazy' Penalty: Punishment for being too far back at Green
+            lazy_factor = (d_occ / sh) - 4.0
+            return -config.k_lazy * lazy_factor
 
+        # 3. Normal speed progression bonus for 0-3 blocks
         return config.signal_compliance_bonus * (v / v_lim)
 
     elif state.signal_aspect == 2:  # Double Yellow — MUST decelerate

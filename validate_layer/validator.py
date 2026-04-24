@@ -112,7 +112,10 @@ class ValidationLayer:
             proj_seg = self.get_segment(x_proj)
 
             # Constraint 1: Spatial limit (Aspect Authority)
-            if x_proj >= boundary_x:
+            # TOLERANCE: If speed is very low (< 1 m/s) and we are close to the boundary (< 2m), 
+            # allow a small overshoot to prevent nuisance overrides during station stops.
+            tolerance = 2.0 if (u < 1.0 and dist_avail < 2.0) else 0.0
+            if x_proj >= boundary_x + tolerance:
                 return False, "Aspect_Spatial_Violation"
 
             # Constraint 2: Speed limit of the current or future segment
