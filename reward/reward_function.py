@@ -49,7 +49,7 @@ class RewardConfig:
     heartbeat_penalty: float = -0.5  # Forces movement at Green signals
 
     # 6. Safety & Operational (The "Guardrails")
-    override_penalty: float = -25.0  # High cost for triggerring VL
+    override_penalty: float = -100.0  # High cost for triggerring VL
     jerk_penalty: float = -0.1
     comfortable_acceleration: float = 0.5
     comfortable_deceleration: float = 0.3  # REDUCED: Force earlier, smoother braking
