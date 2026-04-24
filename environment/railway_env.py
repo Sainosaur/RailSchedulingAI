@@ -158,8 +158,12 @@ class ModernizedLine104(gym.Env):
         self.step_count = 0
         self.ai_dwell_timer = 0
 
-        # Lead train begins ~2 km ahead
-        self.lead_x = self.TRACK_START + 2000.0
+        # Lead train starts at a random gap so the agent sees varied headway
+        # scenarios from episode to episode. Range 500–4000 m keeps the lead
+        # within the first segment (end ≈ 5 481 m) so lead_station_idx=1 is
+        # always correct without extra logic.
+        gap = float(self.np_random.uniform(500.0, 4000.0))
+        self.lead_x = self.TRACK_START + gap
         lead_seg = self.vl.get_segment(self.lead_x)
         self.lead_v = lead_seg.limit_ms   # ideal train cruises at segment limit
         self.lead_stalled = False
@@ -314,12 +318,11 @@ class ModernizedLine104(gym.Env):
                     self.ai_arrival_times[next_st_idx] = self.time
                     # No forced snap or dwell — agent chooses its own speed through stations.
 
-        # ----- 5. Collision snap-back (training only) -----
-        # Capture the collision flag BEFORE snapping so the reward sees it.
+        # ----- 5. Collision — freeze at lead position -----
+        # Capture flag before clamping so the reward sees it.
         collision_occurred = self.x >= self.lead_x
-        if self.training_mode and collision_occurred:
-            snap_seg = self.vl.get_segment(min(self.lead_x, self.TRACK_END - 1.0))
-            self.x = max(self.TRACK_START, self.lead_x - 2.0 * snap_seg.spatial_headway)
+        if collision_occurred:
+            self.x = self.lead_x  # physically stopped against lead
             self.v = 0.0
 
         # ----- 6. Reward computation -----
@@ -344,6 +347,7 @@ class ModernizedLine104(gym.Env):
             actual_arrival_time=actual_arrival_time,
             collision=collision_occurred,
             temporal_headway=seg.temporal_headway,
+            signal_aspect=env_aspect,
             overridden=overridden,
             action_delta=action_delta,
             applied_traction=applied_traction,

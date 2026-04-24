@@ -41,7 +41,7 @@ class RewardConfig:
     collision_penalty: float = -100.0          # non-terminal
 
     k_h: float = 0.2   # headway warning ramp: 0 at 3×TH → -0.2/step at 1×TH
-    k_vel: float = 0.05  # velocity reward: +k_vel at speed limit, 0 at standstill
+    k_vel: float = 0.1   # velocity reward: +k_vel at speed limit, 0 at standstill (green only)
     headway_warning_multiplier: float = 3.0
     headway_violation_multiplier: float = 1.0
 
@@ -91,6 +91,7 @@ class TrainState:
 
     # Default parameters that must follow non-defaults (to fix dataclass syntax error)
     temporal_headway: float = 12.5  # default to highest TH
+    signal_aspect: int = 3  # 0=Red, 1=Yellow, 2=Double-Yellow, 3=Green
     
     # Validation / Smoothing (Defaults set to safe values so the environment won't break until we integrate them)
     overridden: bool = False
@@ -147,13 +148,13 @@ def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
 def _compute_velocity_bonus(state: TrainState, config: RewardConfig) -> float:
     """Continuous positive reward proportional to speed / speed_limit.
 
-    This replaces the underspeed penalty with a direct incentive:
-    faster = more reward.  Suppressed during environment-enforced
-    station dwells so the agent isn't punished for physics it can't control.
+    Only active on a Green signal — no benefit to going faster when the
+    track ahead is not clear.  This encourages full-speed cruising on
+    green and removes any incentive to rush through yellow/red zones.
     """
-    if state.dwelling or state.speed_limit <= 0:
+    if state.signal_aspect != 3 or state.speed_limit <= 0:
         return 0.0
-    return config.k_vel * (state.current_speed / state.speed_limit)
+    return config.k_vel * min(1.0, state.current_speed / state.speed_limit)
 
 
 def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
@@ -176,7 +177,10 @@ def _compute_energy_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.energy_penalty_weight * state.applied_traction
 
 def _compute_heartbeat_penalty(state: TrainState, config: RewardConfig) -> float:
-    # Only penalise genuine stalls — not the passage of time while cruising.
+    # Only penalise stalling on a Green signal — on yellow/red the agent
+    # should be free to stop without being punished for it.
+    if state.signal_aspect != 3:
+        return 0.0
     return config.heartbeat_penalty if state.current_speed < 0.5 else 0.0
 
 def _compute_override_penalty(state: TrainState, config: RewardConfig) -> float:
