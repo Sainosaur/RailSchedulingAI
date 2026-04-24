@@ -13,9 +13,14 @@ const stopSimulation = async () => {
     return res.data;
 }
 
+const resetSimulation = async () => {
+    const res = await axios.post(`${BASE_URL}/reset`);
+    return res.data;
+}
+
 const simStatus = async () => {
     const res = await axios.get(`${BASE_URL}/status`);
     return res.data;
 }
 
-export { startSimulation, stopSimulation, simStatus };
+export { startSimulation, stopSimulation, resetSimulation, simStatus };

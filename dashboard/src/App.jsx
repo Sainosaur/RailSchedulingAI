@@ -14,6 +14,8 @@ import OverrideLogPanel from "@/components/dashboard/OverrideLogPanel/OverrideLo
 import StatsPanel from "@/components/dashboard/StatsPanel/StatsPanel";
 import TimetablePanel from "@/components/dashboard/TimetablePanel/TimetablePanel";
 import SimulationControlPanel from "@/components/dashboard/SimulationControlPanel/SimulationControlPanel";
+import StopwatchPanel from "@/components/dashboard/StopwatchPanel/StopwatchPanel";
+import { simStatus } from "@/services/simulation";
 
 const simSocket = new WebSocket("ws://localhost:8000/ws/sim");
 
@@ -25,6 +27,8 @@ export default function App() {
   const [timetable, setTimetable] = useState(null);
   const [punctuality, setPunctuality] = useState(null);
   const [leadState, setLeadState] = useState({ stalled: false, held: false });
+  const [simTime, setSimTime] = useState(0);
+  const [isRunning, setIsRunning] = useState(false);
 
   useEffect(() => {
     simSocket.onopen = () => console.log("Backend connected (Simulation)");
@@ -37,6 +41,8 @@ export default function App() {
         setTimetable(data.timetable);
         setPunctuality(data.punctuality);
         setLeadState({ stalled: data.lead.stalled, held: data.lead.held });
+        setSimTime(data.time);
+        setIsRunning(true);
       }
     };
 
@@ -44,6 +50,10 @@ export default function App() {
 
     getKillStatus().then((status) => {
       setKillState(status);
+    });
+
+    simStatus().then((status) => {
+      setIsRunning(status.status);
     });
 
     // Poll for logs every 2 seconds
@@ -134,10 +144,18 @@ export default function App() {
 
         <OverrideLogPanel logs={logs} onReset={handleResetLogs} />
         <StatsPanel aiStats={aiStats} />
-        <TimetablePanel
-          timetable={timetable || undefined}
-          punctuality={punctuality || undefined}
-        />
+        
+        <div className="flex flex-col gap-2 min-h-0">
+          <TimetablePanel
+            timetable={timetable || undefined}
+            punctuality={punctuality || undefined}
+          />
+          <StopwatchPanel 
+            simTime={simTime} 
+            isRunning={isRunning} 
+            onSimChange={setIsRunning} 
+          />
+        </div>
       </div>
     </div>
   );

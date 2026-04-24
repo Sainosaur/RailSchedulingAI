@@ -386,6 +386,12 @@ async def stop_sim():
     return {"status": "stopped"}
 
 
+@app.post("/api/sim/reset")
+async def reset_sim():
+    await simulation_runner.reset()
+    return {"status": "reset"}
+
+
 @app.get("/api/sim/status")
 async def sim_status():
     return {"status": simulation_runner.is_running}
