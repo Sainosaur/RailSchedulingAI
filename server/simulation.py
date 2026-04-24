@@ -45,6 +45,7 @@ class SimulationRunner:
             # Workaround for numpy 2.x pickle loaded in numpy 1.x (and vice versa)
             import sys
             import importlib
+            import numpy
 
             # 1. Defensive imports of internal modules to satisfy Pyright/static analysis
             try:
