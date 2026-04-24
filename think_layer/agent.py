@@ -25,6 +25,7 @@ from think_layer.config import TrainConfig  # noqa: E402
 def make_env(
     seed: int = 42,
     lead_train_speed: float = 20.0,
+    slack_factor: float = 1.1,
     max_episode_steps: int = 15_000,
 ) -> Callable[[], gym.Env]:
     """
@@ -35,7 +36,11 @@ def make_env(
     """
 
     def _init() -> gym.Env:
-        env = ModernizedLine104(lead_train_speed=lead_train_speed, training_mode=True)
+        env = ModernizedLine104(
+            lead_train_speed=lead_train_speed,
+            slack_factor=slack_factor,
+            training_mode=True,
+        )
         # Wrap in TimeLimit for episode truncation
         env = gym.wrappers.TimeLimit(env, max_episode_steps=max_episode_steps)
         # filename=None: disable per-episode .monitor.csv disk writes.
@@ -65,6 +70,7 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         make_env(
             seed=config.seed + i,
             lead_train_speed=config.lead_train_speed,
+            slack_factor=config.slack_factor,
             max_episode_steps=config.max_episode_steps,
         )
         for i in range(config.n_envs)

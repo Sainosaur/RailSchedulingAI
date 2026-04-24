@@ -42,6 +42,7 @@ class ModernizedLine104(gym.Env):
     def __init__(
         self,
         lead_train_speed: float = 20.0,
+        slack_factor: float = 1.1,
         render_mode: str | None = None,
         training_mode: bool = False,
     ):
@@ -49,6 +50,7 @@ class ModernizedLine104(gym.Env):
         self.render_mode = render_mode
         self.lead_train_speed = lead_train_speed
         self.training_mode = training_mode
+        self.slack_factor = slack_factor
         self.active_hazards: set[tuple[float, float]] = set()
 
         self.vl = ValidationLayer()
@@ -79,7 +81,10 @@ class ModernizedLine104(gym.Env):
 
         self._ideal_schedule = self._compute_ideal_schedule()
         self.timetable: Timetable = generate_timetable(
-            self.vl.segments, self.STATIONS, float(LeadTrain.LEAD_DWELL_RANGE[1])
+            self.vl.segments,
+            self.STATIONS,
+            dwell_seconds=float(LeadTrain.LEAD_DWELL_RANGE[1]),
+            slack_factor=self.slack_factor,
         )
         self.ai_arrival_times: dict[int, float] = {}
 

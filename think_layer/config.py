@@ -37,6 +37,7 @@ class TrainConfig:
     lead_train_speed: float = 25.0
     max_episode_steps: int = 20_000
     n_envs: int = 512
+    slack_factor: float = 1.15  # 15% operational buffer for RL stability
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True

@@ -182,6 +182,7 @@ def generate_timetable(
     segments: list,
     station_positions: list[float],
     dwell_seconds: float = 120.0,
+    slack_factor: float = 1.10,  # 10% operational buffer
     station_names: list[str] | None = None,
     accel: float = 0.5,
     decel: float = 0.5,
@@ -197,6 +198,7 @@ def generate_timetable(
     segments          : list of VLSegment objects from the Validation Layer.
     station_positions : list of station positions in metres (ascending).
     dwell_seconds     : float  Scheduled dwell time at intermediate stations.
+    slack_factor      : float  Multiplier for travel times (1.10 = 10% slack).
     station_names     : optional list of human-readable station names.
                         Falls back to STATION_NAMES if not provided.
     accel             : float  Traction acceleration (m/s²).
@@ -234,6 +236,9 @@ def generate_timetable(
         # Travel time from previous station to this one
         prev_pos = station_positions[i - 1]
         travel_time = compute_eta_to_station(prev_pos, pos, segments, accel, decel)
+
+        # Apply slack to the travel time portion
+        travel_time *= slack_factor
 
         # Add departure dwell from previous station (except origin handled above)
         if i > 1:
