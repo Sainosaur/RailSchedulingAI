@@ -63,7 +63,7 @@ class RewardConfig:
     collision_penalty: float = -100000.0  # FATAL
 
     # 8. Lateness & Dwell (The "Professionalism")
-    lateness_violation_threshold: float = 600.0 
+    lateness_violation_threshold: float = 1200.0 
     lateness_violation_penalty: float = -10000.0 
     dwell_patience_bonus: float = 10.0  # NEW: Reward for staying at V=0 when signal is RED
     transitional_signal_tax: float = -2.0  # NEW: Penalty for 'hanging out' in Yellow/Dbl Yellow
