@@ -128,13 +128,14 @@ async def root():
 
 # Returns the logs to front end client
 @app.get("/api/dashboard/logs")
-async def log():
+async def log(limit: int = 100):
     path = log_manager.get_log_path()
     if not os.path.exists(path):
         return {"logs": []}
     with open(path, "r") as f:
         reader = csv.DictReader(f)
-        return {"logs": list(reader)}
+        logs = list(reader)
+        return {"logs": logs[-limit:] if limit > 0 else logs}
 
 
 @app.post("/api/dashboard/logs/reset")
