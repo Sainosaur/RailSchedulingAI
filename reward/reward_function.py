@@ -269,6 +269,13 @@ def _compute_patience_reward(state: TrainState, config: RewardConfig) -> float:
     if dist_to_station < 2.0 and state.current_speed < 0.1:
         return 1.5  # Strong bonus specifically for waiting correctly at stations
 
+    # 3. Precision Stop (Targeting the boundary of the next occupied zone)
+    # If we are stopped at a Red light, reward the AI for being as close to the next zone boundary as possible.
+    if state.signal_aspect == 0 and state.current_speed < 0.1:
+        d = state.distance_to_occupied
+        if d < 10.0:
+            return 5.0 * (1.0 - (d / 10.0))  # Scales up to +5.0 as you approach 0m
+
     return 0.0
 
 
@@ -319,12 +326,12 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
             return -config.override_penalty * 0.8
         return 0.0
 
-    elif state.signal_aspect == 0:  # Red
+    elif state.signal_aspect == 0:  # RED: Next Zone Occupied — Stop within current zone
         if v > 0.1:
             if a < -0.1:
-                return bonus * 5.0  # Massive reward for active braking at Red
+                return bonus * 5.0  # Massive reward for active braking to target stop line
             else:
-                return -config.override_penalty  # Critical penalty for not braking
+                return -config.override_penalty  # Critical penalty for not slowing down
         return 0.0
 
     return 0.0
