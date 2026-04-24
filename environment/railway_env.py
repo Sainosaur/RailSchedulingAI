@@ -30,6 +30,9 @@ from environment.timetable import (                             # noqa: E402
 )
 from dataclasses import dataclass
 
+from environment.timetable import compute_eta_to_station
+
+
 @dataclass
 class Landslide:
     """A named, toggleable hazard at a specific track position."""
@@ -421,10 +424,11 @@ class ModernizedLine104(gym.Env):
         """
         times = [0.0]
         cumulative = 0.0
-        for seg in self.vl.segments:
-            dist = seg.end - seg.start
-            cumulative += dist / seg.limit_ms
-            times.append(cumulative)
+        for i, station_pos in enumerate(self.STATIONS[1:], start=1):
+            cumulative += compute_eta_to_station(
+            self.STATIONS[i - 1], station_pos, self.vl.segments
+        )
+        times.append(cumulative)
         return times
 
     def _advance_lead_train(self) -> None:
@@ -650,7 +654,13 @@ class ModernizedLine104(gym.Env):
         """Toggle the landslide at *idx* on/off.  Returns the new active state."""
         ls = self.landslides[idx]
         ls.active = not ls.active
-        self.set_block_hazard(ls._block_start, ls._block_end, ls.active)
+        # Only deactivate block if no other landslide in the same block is still active
+        block_still_needed = any(
+        other.active and other._block_start == ls._block_start
+        for i, other in self.landslides.items() if i != idx
+        )
+        if ls.active or not block_still_needed:
+            self.set_block_hazard(ls._block_start, ls._block_end, ls.active)
         return ls.active
 
     def clear_landslide(self, idx: int) -> None:
