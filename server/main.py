@@ -88,9 +88,22 @@ app.add_middleware(
 @app.post("/api/hazard/{segmentPosition}/{block}/{status}")
 async def hazard(segmentPosition: int, block: int, status: bool):
     nodes = [data["data"] for _, data in g.nodes(data=True)]
-    start = next(s for s in nodes if s.position == segmentPosition)
-    end = next(s for s in nodes if s.position == segmentPosition + 1)
+    try:
+        start = next(s for s in nodes if s.position == segmentPosition)
+        end = next(s for s in nodes if s.position == segmentPosition + 1)
+    except StopIteration:
+        return {
+            "success": False,
+            "error": f"No segment found at position {segmentPosition}",
+        }
+
     edge = g.get_edge_data(start.name, end.name)
+    if not edge:
+        return {
+            "success": False,
+            "error": f"No edge found between {start.name} and {end.name}",
+        }
+
     edge["data"].block_boundaries[block].hazard = status
     edge["data"].hazard = any(b.hazard for b in edge["data"].block_boundaries)
     # Propagate hazard to the running simulation environment

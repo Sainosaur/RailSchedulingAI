@@ -95,12 +95,13 @@ class ValidationLayer:
         v_ceiling = current_seg.limit_ms
         for t in sim_steps:
             x_proj, v = self._project(x, u, proposed_a, v_ceiling, t)
+            proj_seg = self.get_segment(x_proj)
             if x_proj >= boundary_x:
                 return False, "Aspect_Spatial_Violation"
             if v > max_safe_v + 0.5:
                 return False, "Kinematic_Target_Violation"
-            if v > v_ceiling + 0.5:
-                return False, f"{current_seg.id}_Limit"
+            if v > proj_seg.limit_ms + 0.5:
+                return False, f"{proj_seg.id}_Limit"
         return True, ""
 
     def get_safe_action(
@@ -133,7 +134,13 @@ class ValidationLayer:
         v_target, dist_avail = self._speed_for_aspect(env_aspect, seg, dtz, u)
 
         if "_Limit" in constraint:
-            a_needed = (v_target - u - 0.01) / self.dt
+            seg_id = constraint.split("_")[0]
+            target_limit = seg.limit_ms
+            for s in self.segments:
+                if s.id == seg_id:
+                    target_limit = s.limit_ms
+                    break
+            a_needed = (target_limit - u - 0.01) / self.dt
             safe_a = float(max(EMERGENCY_DECEL, min(ACCEL, a_needed)))
         elif dist_avail > 0.1:
             a_needed = -(u**2) / (2.0 * dist_avail)
