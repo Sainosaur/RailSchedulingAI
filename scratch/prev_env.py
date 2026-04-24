@@ -35,9 +35,9 @@ class ModernizedLine104(gym.Env):
     ACCEL: float = 0.5
     DECEL: float = -1.0
     MAX_STEPS: int = 10_000
-    STATIONS: list[float] = [582.0, 5481.0, 14951.0, 37160.0, 47017.0, 67394.0, 76651.0]
     TRACK_START: float = 582.0
     TRACK_END: float = 76651.0
+    STATIONS: list[float] = [582, 5481, 14951, 37160, 47017, 67394, 76651]
 
     def __init__(
         self,
@@ -92,7 +92,7 @@ class ModernizedLine104(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
-        self.x = self.STATIONS[0]
+        self.x = self.TRACK_START
         self.v = 0.0
         self.time = 0.0
         self.last_station_idx = 0
@@ -266,8 +266,6 @@ class ModernizedLine104(gym.Env):
         if hasattr(self, "_cached_nearest_pos"): del self._cached_nearest_pos
 
         info = {
-            "current_position": self.x,
-            "current_speed": self.v,
             "safety_overridden": safety_overridden,
             "safe_a": safe_a,
             "proposed_a": proposed_a,
@@ -370,19 +368,17 @@ class ModernizedLine104(gym.Env):
 
     def _dist_to_nearest_occupied(self) -> float:
         nearest = self._nearest_obstruction(self.x)
-        
-        # Treat next station as obstruction for safety and speed control, 
-        # but NOT for the signal aspect calculation (to avoid early stop).
+        # Only treat next station as an obstruction if we are significantly before it
+        # This prevents the "Deadlock at 0m" issue.
         if self.last_station_idx + 1 < len(self.STATIONS):
-            # We add a 2m buffer to ensure the train can actually reach the trigger point
-            nearest = min(nearest, self.STATIONS[self.last_station_idx + 1] + 2.0)
-            
+            next_st_pos = self.STATIONS[self.last_station_idx + 1]
+            if next_st_pos > self.x + 1.0:
+                nearest = min(nearest, next_st_pos)
         return max(0.0, nearest - self.x)
 
     def _get_signal_aspect(self) -> int:
-        # Use the distance to TRUE obstructions (trains, hazards), NOT stations.
-        # This prevents the AI from getting confused by "Red" signals at empty platforms.
-        d = self._nearest_obstruction(self.x) - self.x
+        # Use the distance that includes stations
+        d = self._dist_to_nearest_occupied()
         sh = self.vl.get_segment(self.x).spatial_headway
         if d > 3 * sh:
             return 3
@@ -406,7 +402,9 @@ class ModernizedLine104(gym.Env):
     def _dist_to_nearest_occupied_from_cache(self) -> float:
         nearest = self._cached_nearest_pos
         if self.last_station_idx + 1 < len(self.STATIONS):
-            nearest = min(nearest, self.STATIONS[self.last_station_idx + 1] + 2.0)
+            next_st_pos = self.STATIONS[self.last_station_idx + 1]
+            if next_st_pos > self.x + 1.0:
+                nearest = min(nearest, next_st_pos)
         return max(0.0, nearest - self.x)
 
     def _compute_headway(self) -> float:
