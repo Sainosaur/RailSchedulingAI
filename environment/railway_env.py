@@ -197,7 +197,7 @@ class ModernizedLine104(gym.Env):
         scheduled_arrival_time = None
         actual_arrival_time = None
 
-        if next_st_idx < len(self.STATIONS) and self.x >= self.STATIONS[next_st_idx]:
+        if next_st_idx < len(self.STATIONS) and self.x >= self.STATIONS[next_st_idx] - 2.0:
             reached_new_station = True
             self.last_station_idx = next_st_idx
             self.visited_stations.add(next_st_idx)
@@ -287,6 +287,7 @@ class ModernizedLine104(gym.Env):
                 "creep": reward_out.r_creep,
                 "violation": reward_out.r_violation,
                 "collision": reward_out.r_collision,
+                "lateness": reward_out.r_lateness,
             },
             "punctuality_status": self.get_punctuality_status(),
         }

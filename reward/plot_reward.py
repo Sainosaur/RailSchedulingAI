@@ -13,7 +13,6 @@ import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from environment.railway_env import ModernizedLine104
-from reward.reward_function import compute_reward, TrainState, RewardConfig
 
 # Paths to trained model
 MODEL_DIR = "/home/dharms/RailSchedulingAI/think_layer/models"
@@ -42,18 +41,18 @@ def run_and_collect():
     data = {
         "position": [], "speed": [], "reward": [], 
         "total_reward": [], "limit": [],
-        "lead_x": [], "signal": [],
+        "signal": [],
     }
+    breakdown_data = {}
 
     total_rew = 0
     
     for idx in range(30000):
-        # 1. State BEFORE step (for plotting consistency)
+        # 1. State BEFORE step
         current_x = env.x
         current_v = env.v
         current_signal = env._get_signal_aspect()
-        current_limit = env.vl.get_segment(current_x).limit_ms * 3.6
-
+        
         # 2. Predict or Heuristic
         if use_model:
             action, _ = model.predict(obs, deterministic=True)
@@ -62,7 +61,6 @@ def run_and_collect():
             is_done = is_done_vec[0]
             info = info_vec[0]
         else:
-            # HEURISTIC: Stay still if dwelling
             if hasattr(env, "ai_departure_time") and env.time < env.ai_departure_time:
                 target_v = 0.0
             else:
@@ -90,7 +88,7 @@ def run_and_collect():
 
         total_rew += step_reward
 
-        # 3. Append data (Store the result of the step)
+        # 3. Append data
         data["position"].append(env.x)
         data["speed"].append(env.v)
         data["reward"].append(step_reward)
@@ -98,60 +96,79 @@ def run_and_collect():
         data["limit"].append(env.vl.get_segment(env.x).limit_ms * 3.6)
         data["signal"].append(env._get_signal_aspect())
 
+        # Collect breakdown
+        if "reward_breakdown" in info:
+            for k, v in info["reward_breakdown"].items():
+                if k not in breakdown_data: breakdown_data[k] = []
+                breakdown_data[k].append(v)
+
         if is_done:
             print(f"Journey ended at {env.x/1000:.2f} km")
             print(f"Final Total Reward: {total_rew:+.2f}")
-            if 'reward_breakdown' in info:
-                print("Final Step Reward Breakdown:")
-                for k, v in info['reward_breakdown'].items():
-                    if abs(v) > 0.01: print(f"  {k:15}: {v:+.2f}")
             break
 
-    return {k: np.array(v) for k, v in data.items()}
+    return {k: np.array(v) for k, v in data.items()}, {k: np.array(v) for k, v in breakdown_data.items()}
 
-def plot(data):
+def plot(data, breakdown):
     """Plot the reward landscape across the line."""
     stations_km = [0.58, 5.48, 14.95, 37.16, 47.01, 67.39, 76.65] 
     x = data["position"] / 1000.0
     
-    fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=(14, 16), sharex=True)
     
     # 1. Speed & Limits
     ax = axes[0]
-    ax.plot(x, data["speed"] * 3.6, label="Agent Speed", linewidth=2.0, color="blue")
-    ax.plot(x, data["limit"], label="Speed Limit", color="red", linestyle="--", alpha=0.8)
+    ax.plot(x, data["speed"] * 3.6, label="Agent Speed", linewidth=2.0, color="#1f77b4")
+    ax.plot(x, data["limit"], label="Speed Limit", color="#d62728", linestyle="--", alpha=0.8)
     ax2 = ax.twinx()
-    ax2.plot(x, data["signal"], color="orange", alpha=0.3, label="Signal")
+    ax2.plot(x, data["signal"], color="#ff7f0e", alpha=0.3, label="Signal")
     ax.set_ylabel("Speed (km/h)")
-    ax2.set_ylabel("Signal (0-3)")
-    ax.set_title("SPEED AUDIT: Journey Profile")
+    ax2.set_ylabel("Signal")
+    ax.set_title("JOURNEY PROFILE: Speed vs. Limit", fontweight="bold")
     ax.legend(loc="upper left")
 
-    # 2. Step Reward
+    # 2. Component Breakdown (Stacked-ish or just key ones)
     ax = axes[1]
-    ax.plot(x, data["reward"], color="green", linewidth=0.5)
-    ax.set_ylabel("Step Reward")
-    ax.set_title("Reward Spikes (Check for massive negative dips here)")
+    # Filter for interesting ones
+    keys = ["progress", "speed", "signal_compliance", "override", "heartbeat", "lateness"]
+    for k in keys:
+        if k in breakdown:
+            ax.plot(x, breakdown[k], label=k, alpha=0.7)
+    ax.set_ylabel("Component Reward")
+    ax.set_title("REWARD COMPONENTS (Detailed Audit)", fontweight="bold")
+    ax.legend(loc="upper left", ncol=3, fontsize='small')
+    ax.set_ylim(-10, 20) # Focus on steady state rewards
 
-    # 3. Cumulative Reward
+    # 3. MileStone Rewards (Log scale or high limit to see station jumps)
     ax = axes[2]
-    ax.plot(x, data["total_reward"], color="black", linewidth=2.0)
+    if "station" in breakdown:
+        ax.plot(x, breakdown["station"], label="Station Milestone", color="gold", linewidth=2)
+    if "violation" in breakdown:
+        ax.plot(x, breakdown["violation"], label="Violation", color="red", linestyle=":")
+    ax.set_ylabel("Milestone Reward")
+    ax.set_title("MILESTONES & FATALITIES", fontweight="bold")
+    ax.legend(loc="upper left")
+
+    # 4. Cumulative Reward
+    ax = axes[3]
+    ax.plot(x, data["total_reward"], color="black", linewidth=2.5)
     ax.set_ylabel("Cumulative Score")
     ax.set_xlabel("Position (km)")
-    ax.set_title("Cumulative Reward (Look for the +50,000 jump at 76.6km)")
+    ax.set_title("THE GOLDEN CURVE: Cumulative Reward", fontweight="bold")
     
     for ax_item in axes:
         for s in stations_km: ax_item.axvline(s, color="gray", linestyle="--", alpha=0.2)
+        ax_item.grid(True, which='both', linestyle=':', alpha=0.5)
     
     plt.tight_layout()
-    output_path = "reward_landscape.png"
+    output_path = "reward/reward_landscape.png"
     plt.savefig(output_path, dpi=150)
-    print(f"Plot saved to {os.path.abspath(output_path)}")
+    print(f"Detailed plot saved to {os.path.abspath(output_path)}")
     try:
         plt.show()
     except Exception:
         pass
 
 if __name__ == "__main__":
-    data = run_and_collect()
-    plot(data)
+    data, breakdown = run_and_collect()
+    plot(data, breakdown)
