@@ -1,82 +1,62 @@
 RAIL SCHEDULING AI: GYMNASIUM ENVIRONMENT DOCUMENTATION
-=====================================================
+Current Revision: Final Prototype v1.0 (Synchronized)
+
 File: environment/railway_env.py
 
-This document explains the architecture, flow, and math behind the Reinforcement Learning (RL) custom environment. The `ModernizedLine104` class is built using the standard Gymnasium `gym.Env` framework, meaning it is perfectly compatible with RL libraries like Stable Baselines 3 (SB3) for PPO training.
-
-------------------------------------------------------------------
 1. CORE CONCEPT (THE CONVOY MODEL)
-------------------------------------------------------------------
-The environment simulates two trains running on a single track across the 76km Polish Rail Line 104 line. 
-- The Lead Train: A "dummy" train that spawns ahead of our AI and cruises at a flat constant speed.
-- The AI Train (The Agent): The train driven by the RL model trying to get from station to station quickly, smoothly, and safely without crashing into the lead train or violating ETCS speed bounds.
+The environment simulates a single AI-controlled train traversing the 76km Polish Rail Line 104, interacting with a persistent lead train.
+- Lead Train: Spawns 2,000m ahead of the AI. It follows a realistic schedule, dwelling for 20-40s at every station and adhering to segment speed limits and signal aspects.
+- The AI Train: Guided by the RL model, it must maintain a smooth, punctual, and safe trajectory from Chabówka to Nowy Sącz.
 
-------------------------------------------------------------------
 2. AGENT COMMUNICATION (SPACES)
-------------------------------------------------------------------
 
 A. Observation Space (What the AI Sees)
-A 7-dimensional Box matrix (array) of floats that feeds real-time telemetry to the AI every single second.
-- [0] position: How many meters down the track the train is.
-- [1] speed: Current velocity in m/s.
-- [2] dtz (Distance-To-Zone): Distance to the next fixed-block ETCS boundary.
-- [3] signal_aspect: The standard 4-aspect signal (0=Red, 1=Yellow, 2=Dbl-Yellow, 3=Green) showing how many blocks ahead are clear.
-- [4] distance_to_next_station: Crucial for calculating the dynamic trapezoidal braking curve.
-- [5] speed_limit: The maximum speed allowed in the current segment.
-- [6] headway: The time gap separating the AI from the lead train in seconds.
+A 7-dimensional Box space (array of floats) providing real-time telemetry every second:
+- [0] Position: Current meters traveled along the 76,651m track.
+- [1] Speed: Current velocity (m/s).
+- [2] DTZ (Distance-To-Zone): Distance to the next fixed-block signal boundary (m).
+- [3] Signal Aspect: 0=Red, 1=Yellow, 2=Double Yellow, 3=Green.
+- [4] Distance to Occupied: Physical distance to the nearest obstruction (lead train or hazard).
+- [5] Lead Train Speed: Current velocity of the train ahead (m/s).
+- [6] Sim Time: Elapsed time in seconds since the start of the journey.
 
 B. Action Space (What the AI Does)
-A continuous Box space with a single float in [-1.0, 0.5] representing the proposed acceleration (m/s²):
-- -1.0: Emergency braking
--  0.0: Coast (no acceleration or braking)
-- +0.5: Maximum traction acceleration
+A continuous Box space [-1.0, 1.0].
+- Remapping: The environment maps [0, 1] to [0.0, 0.5] (Acceleration) and [-1, 0] to [-1.0, 0.0] (Deceleration).
+- Safety Intercept: The Validation Layer (VL) intercepts the proposed action. If unsafe, it is overridden (typically to emergency braking).
 
-The agent outputs a raw acceleration request. The Validation Layer then checks
-whether that acceleration is safe; if not, it overrides to emergency braking (-1.0).
+3. THE SIMULATION STEP (1.0s DT)
 
-------------------------------------------------------------------
-3. THE SIMULATION LOOP (step() function)
-------------------------------------------------------------------
-The environment steps forward exactly 1 Second (DT = 1.0) at a time by executing the following 6 phases inside the `step()` function:
+PHASE 1: Validation & Interlock
+The VL evaluates the action using an adaptive kinematic lookahead (Projecting for the duration of a full stopping distance). 
+- Red Signal Interlock: If speed < 0.1 and signal is Red, acceleration is forced to 0.0.
+- Speed Limit Governor: If at the speed limit, acceleration is capped to 0.0 or lower.
 
-PHASE 1: The Validation Sieve
-The environment hands the AI's requested continuous acceleration to the Validation Layer (`validator.py`). The VL runs a multi-step lookahead simulation (5, 10, 15 seconds) against the ETCS aspect boundaries. If the proposed acceleration would cause a spatial, temporal, kinematic, or segment-limit violation in the lookahead, the VL overrides the action to emergency braking (-1.0 m/s²). The absolute difference between the last executed acceleration and the new one is logged as `action_delta` to measure passenger jerk.
-
-PHASE 2: Two-Phase SUVAT Physics
-The environment applies the safe acceleration using a two-phase kinematic model that matches the Validation Layer's `_project()` function:
-- If accelerating and the speed limit would be reached mid-step: accelerate to the limit, then coast for the remainder of the timestep.
-- If braking and zero speed would be reached mid-step: brake to zero, then remain stationary for the remainder.
-- Otherwise: standard SUVAT (s = ut + ½at²) for the full 1-second timestep.
-This ensures the safety projection and actual physics are consistent — what the VL predicts is exactly what happens.
+PHASE 2: SUVAT Physics
+Applies the (potentially overridden) acceleration using a two-phase check:
+- Boundary Awareness: If the train would hit 0 m/s or the Speed Limit mid-step, the environment calculates the exact fractional second of movement and caps the velocity for the remainder of the step.
 
 PHASE 3: Lead Train Advancement
-The lead train advances through three states each timestep:
+The Lead Train (`lead_train.py`) advances through Dwell, Braking, and Cruise states. The AI must manage its own headway to avoid collisions or critical safety violations.
 
-- DWELLING: If lead_dwell_timer > 0, the train is stopped at a station. The 
-  timer counts down by 1 each step (LEAD_DWELL_TIME = 30 seconds). When it 
-  reaches 0, the train departs — restoring lead_v to lead_train_speed and 
-  advancing lead_station_idx to the next target station. At the final station 
-  (Nowy Sącz), the train instead pulls forward one spatial headway block (34.7m) 
-  past the station and parks permanently with lead_v = 0.
+PHASE 4: Station Management
+- Detection: Arrival is triggered at Position >= (Station_Pos - 2.0m).
+- Dwell Logic: Upon arrival, a random dwell period (20-40s) is assigned. The signal aspect is forced to RED (0) during this period.
+- Departure: Position tracking resumes only after the dwell timer expires.
 
-- BRAKING: If the lead train is within its SUVAT braking distance of the next 
-  station (braking_distance = lead_v² / 2|DECEL|), it decelerates by DECEL 
-  each step. When it reaches the station position or lead_v hits 0, it snaps 
-  cleanly to the station coordinate and starts the dwell timer.
-
-- CRUISING: Otherwise, the lead train advances at lead_v * DT.
-
-After all state transitions, dtz is always recalculated via _update_dtz() regardless of which branch executed.
-
-PHASE 4: Station Checkmarks
-If the AI Train's position crosses the coordinate boundary of the next target station, the station index shifts, unlocking the "Arrival Reward".
-
-PHASE 5: Reward Calculation
-The environment packages all the live data (speed, limits, headways, traction, override-flags) into the `TrainState` dataclass from `reward_function.py`. The Reward Function crunches the data and returns `total_reward`, composed of:
-  - Continuous rewards (every step): progress, headway, speed profile, heartbeat
-  - Event rewards (on occurrence): station arrival, punctuality, override penalty, jerk penalty, energy penalty
-  - Terminal penalties (once, ends episode): headway violation, collision
+PHASE 5: Reward Synthesis
+Live telemetry is passed to `reward_function.py`. The "Golden Curve" reward is composed of:
+- Dense Metrics: Progress per step, Speed Envelope compliance, Signal "Sweet Spot" bonuses.
+- Sparse Events: Station arrival milestones (escalating), Punctuality bonuses (+10k), and Jerk/Override penalties.
 
 PHASE 6: Termination & Truncation
-- Termination occurs if the train finishes the 76km track, OR if it triggers a terminal penalty (collision or critical headway violation at 1x TH).
-- Truncation (Max Steps) occurs if the simulated time hits 10,000 steps (~2.8 hours). This breaks the simulation artificially if an untrained AI decides to stall at 0 km/h forever, preventing the training software from hanging infinitely.
+- Termination: Occurs at Track End (76,651m), Collision, Critical Headway Violation (<1x TH), or exceeding the 20-minute Lateness Threshold.
+- Truncation: A hard cap of 10,000 steps (~2.8 hours) prevents hung training sessions.
+
+4. TELEMETRY (Info Dictionary)
+On every step, the environment returns an 'info' dictionary for debugging:
+- current_position / current_speed: Raw physical data.
+- safety_overridden: Boolean flag for VL intervention.
+- aspect / segment: Current track-side telemetry.
+- reward_breakdown: Granular breakdown (Progress, Speed, Lateness, etc.).
+- punctuality_status: ETA vs Scheduled Arrival for the next station.
