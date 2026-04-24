@@ -4,6 +4,10 @@
   "executionEnvironments": [
     {
       "root": ".",
-    },
+      "extraPaths": [
+        "/usr/lib64/python3.14/site-packages",
+        "/home/dharms/.local/lib/python3.14/site-packages"
+      ]
+    }
   ],
 }

@@ -1,13 +1,14 @@
 import asyncio
 import sys
 from pathlib import Path
+import numpy as np
 
 # Ensure the environment can be imported correctly regardless of cwd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3 import PPO  # type: ignore
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize  # type: ignore
 
 from environment.railway_env import ModernizedLine104
 from environment.timetable import STATION_NAMES
@@ -246,8 +247,6 @@ class SimulationRunner:
                     )
                 else:
                     # Fallback: Just coast (0 acceleration) if no model exists
-                    import numpy as np
-
                     action = [np.array([0.0], dtype=np.float32)]
 
                 self._current_obs, rewards, dones, infos = self.venv.step(action)
