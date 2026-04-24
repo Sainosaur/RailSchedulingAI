@@ -42,15 +42,32 @@ class SimulationRunner:
         # 3. Load Normalisation Stats
         vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "best_vecnormalize.pkl"
         if vecnorm_path.exists():
-            # Workaround for numpy 2.x pickle loaded in numpy 1.x where _core was renamed to core
+            # Workaround for numpy 2.x pickle loaded in numpy 1.x
             import sys
 
             import numpy.core.multiarray
             import numpy.core.numeric
+            import numpy.random._pickle
 
+            # 1. Core aliases (numpy 2.x renamed core to _core)
             sys.modules.setdefault("numpy._core", numpy.core)
             sys.modules.setdefault("numpy._core.numeric", numpy.core.numeric)
             sys.modules.setdefault("numpy._core.multiarray", numpy.core.multiarray)
+
+            # 2. Monkeypatch __bit_generator_ctor to handle BitGenerator classes
+            # being passed instead of strings (common when loading numpy 2.x pickles in 1.x)
+            # Use getattr to avoid name mangling inside the class method
+            if not hasattr(numpy.random._pickle, "_patched"):
+                orig_ctor = getattr(numpy.random._pickle, "__bit_generator_ctor")
+
+                def patched_ctor(bit_generator_name):
+                    if not isinstance(bit_generator_name, str):
+                        if hasattr(bit_generator_name, "__name__"):
+                            bit_generator_name = bit_generator_name.__name__
+                    return orig_ctor(bit_generator_name)
+
+                setattr(numpy.random._pickle, "__bit_generator_ctor", patched_ctor)
+                setattr(numpy.random._pickle, "_patched", True)
 
             self.venv = VecNormalize.load(str(vecnorm_path), self.venv)
             self.venv.training = False
