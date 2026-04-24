@@ -17,10 +17,10 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 5_000_000
-    learning_rate: float = 8.01e-5
-    n_steps: int = 1024
-    batch_size: int = 256
+    total_timesteps: int = 10_000_000
+    learning_rate: float = 3e-4
+    n_steps: int = 2048
+    batch_size: int = 512
     n_epochs: int = 10
     gamma: float = 0.99
     gae_lambda: float = 0.95
@@ -36,7 +36,7 @@ class TrainConfig:
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 25.0
     max_episode_steps: int = 10_000
-    n_envs: int = 10
+    n_envs: int = 16
     slack_factor: float = 1.1  # 10% operational buffer for RL stability
 
     # ── Normalisation ────────────────────────────────────────────────
