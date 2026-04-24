@@ -145,20 +145,34 @@ def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
         if zone_width <= 0:
             return 0.0
         t = (warning_thresh - h) / zone_width  # 0 → 1 as h drops to violation_thresh
-        return -config.k_h * t
+        # Scale penalty by signal aspect — amber signals carry less braking
+        # pressure so the agent can still move at reduced speed, while red
+        # keeps the full penalty to reinforce stopping.
+        #   Red (0): 1.00 × k_h  — full penalty
+        #   Yellow (1): 0.05 × k_h  — gentle, ~15 km/h equilibrium
+        #   Dbl Yellow (2): 0.10 × k_h  — moderate, ~30 km/h equilibrium
+        #   Green (3): 1.00 × k_h  — full (agent is never in zone on green)
+        aspect_penalty_scale = [1.0, 0.05, 0.10, 1.0][state.signal_aspect]
+        return -config.k_h * t * aspect_penalty_scale
     return 0.0
 
 
 def _compute_velocity_bonus(state: TrainState, config: RewardConfig) -> float:
     """Continuous positive reward proportional to speed / speed_limit.
 
-    Only active on a Green signal — no benefit to going faster when the
-    track ahead is not clear.  This encourages full-speed cruising on
-    green and removes any incentive to rush through yellow/red zones.
+    Scaled by signal aspect so the agent has a reason to keep moving on
+    yellow/double-yellow, just not at full speed:
+        Green (3):        1.00 × k_vel  (+0.100/step at limit)
+        Double Yellow (2): 0.75 × k_vel  (+0.075/step at limit)
+        Yellow (1):        0.50 × k_vel  (+0.050/step at limit)
+        Red (0):           0.00          (no incentive to move)
     """
-    if state.signal_aspect != 3 or state.speed_limit <= 0:
+    if state.speed_limit <= 0:
         return 0.0
-    return config.k_vel * min(1.0, state.current_speed / state.speed_limit)
+    vel_scale = [0.0, 0.5, 0.75, 1.0][state.signal_aspect]
+    if vel_scale == 0.0:
+        return 0.0
+    return config.k_vel * vel_scale * min(1.0, state.current_speed / state.speed_limit)
 
 
 def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
