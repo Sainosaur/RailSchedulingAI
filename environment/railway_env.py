@@ -138,7 +138,7 @@ class ModernizedLine104(gym.Env):
 
         # --- VALIDATION LAYER ---
         safe_a, safety_overridden = self.vl.get_safe_action(
-            proposed_a, env_aspect, self.x, self.v, self.dtz
+            proposed_a, env_aspect, self.x, self.v, self.dtz, self._cached_dist_to_occupied
         )
 
         action_delta = abs(safe_a - self.last_a)
@@ -246,10 +246,10 @@ class ModernizedLine104(gym.Env):
             safety_overridden=safety_overridden,
             action_delta=action_delta,
             applied_traction=applied_traction,
-            distance_to_occupied=self._cached_dist_to_occupied,
+            distance_to_occupied=self._dist_to_nearest_occupied(),
             is_dwelling=in_dwell,
             station_index=self.last_station_idx,
-            signal_aspect=env_aspect,
+            signal_aspect=self._get_signal_aspect(),
             applied_acceleration=safe_a,
             proposed_acceleration=proposed_a,
             current_time=self.time,
@@ -259,6 +259,11 @@ class ModernizedLine104(gym.Env):
         reward_out = compute_reward(state)
         terminated = bool(self.x >= self.TRACK_END or reward_out.terminate)
         truncated = bool(self.step_count >= self.MAX_STEPS)
+
+        # Clear cache before returning observation to ensure next state gets fresh data
+        if hasattr(self, "_cached_aspect"): del self._cached_aspect
+        if hasattr(self, "_cached_dist_to_occupied"): del self._cached_dist_to_occupied
+        if hasattr(self, "_cached_nearest_pos"): del self._cached_nearest_pos
 
         info = {
             "safety_overridden": safety_overridden,
@@ -278,6 +283,8 @@ class ModernizedLine104(gym.Env):
                 "override": reward_out.r_override,
                 "jerk": reward_out.r_jerk,
                 "energy": reward_out.r_energy,
+                "patience": reward_out.r_patience,
+                "creep": reward_out.r_creep,
                 "violation": reward_out.r_violation,
                 "collision": reward_out.r_collision,
             },
