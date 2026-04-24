@@ -22,7 +22,7 @@ class TrainConfig:
     n_steps: int = 4096
     batch_size: int = 512
     n_epochs: int = 5
-    gamma: float = 0.9999
+    gamma: float = 0.999
     gae_lambda: float = 0.95
     clip_range: float = 0.2
     ent_coef: float = 0.05
@@ -35,9 +35,9 @@ class TrainConfig:
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 25.0
-    max_episode_steps: int = 30_000
+    max_episode_steps: int = 10_000
     n_envs: int = 12
-    slack_factor: float = 1.15  # 15% operational buffer for RL stability
+    slack_factor: float = 1.1  # 10% operational buffer for RL stability
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True
