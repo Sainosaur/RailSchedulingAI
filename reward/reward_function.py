@@ -315,24 +315,24 @@ def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -
 
     elif state.signal_aspect == 2:  # Double Yellow — MUST decelerate
         if a < -0.1:
-            return bonus * 4.0  # DOUBLED: Reward active braking more aggressively
+            return bonus * 4.0  # Reward active braking
         elif a > 0.05:
-            return config.override_penalty * 0.5
+            return -abs(config.override_penalty) * 0.5 # Penalty for accelerating into restricted signal
         return 0.0
 
     elif state.signal_aspect == 1:  # Yellow — MUST decelerate
         if a < -0.1:
-            return bonus * 6.0  # DOUBLED: Very high reward for braking at yellow
+            return bonus * 6.0  # High reward for braking at yellow
         elif a > 0.01:
-            return config.override_penalty * 0.8
+            return -abs(config.override_penalty) * 0.8 # Higher penalty for accelerating into Yellow
         return 0.0
 
-    elif state.signal_aspect == 0:  # RED: Next Zone Occupied — Stop within current zone
+    elif state.signal_aspect == 0:  # RED
         if v > 0.1:
             if a < -0.1:
-                return bonus * 5.0  # Massive reward for active braking to target stop line
+                return bonus * 5.0
             else:
-                return config.override_penalty  # Critical penalty for not slowing down
+                return -abs(config.override_penalty) # Max penalty for not braking at Red
         return 0.0
 
     return 0.0
