@@ -45,10 +45,17 @@ class RewardConfig:
     headway_warning_multiplier: float = 3.0
     headway_violation_multiplier: float = 1.0
 
+    # --- Station stopping ---
+    station_reward: float = 100.0             # one-shot on clean arrival
+    station_overshoot_penalty: float = -25.0 # one-shot on overspeed pass-through
+    station_arrival_speed_limit: float = 0.5  # m/s — must arrive nearly stopped
+    station_approach_zone: float = 500.0      # metres — taper + braking shaping zone
+    k_brake: float = 0.2   # kinematic braking shaping: penalises v > v_stop inside zone
+    max_decel: float = 1.0  # m/s² — physical max braking (mirrors environment DECEL)
+    dwell_reward: float = 0.75  # per-step reward while dwelling at a station
+    approach_heartbeat_scale: float = 0.3  # heartbeat inside zone = penalty × this (reduced, not zero)
+
     # --- Zeroed (reintroduce one at a time) ---
-    station_reward: float = 0.0
-    station_overshoot_penalty: float = 0.0
-    station_arrival_speed_limit: float = 2.0   # kept for when station_reward is re-enabled
     punctuality_factor: float = 0.0
     punctuality_tolerance: float = 60.0
 
@@ -166,13 +173,21 @@ def _compute_velocity_bonus(state: TrainState, config: RewardConfig) -> float:
         Double Yellow (2): 0.75 × k_vel  (+0.075/step at limit)
         Yellow (1):        0.50 × k_vel  (+0.050/step at limit)
         Red (0):           0.00          (no incentive to move)
+
+    Tapers linearly to zero inside the station approach zone so there is a
+    passive incentive to decelerate before reaching the platform.
     """
     if state.speed_limit <= 0:
         return 0.0
     vel_scale = [0.0, 0.5, 0.75, 1.0][state.signal_aspect]
     if vel_scale == 0.0:
         return 0.0
-    return config.k_vel * vel_scale * min(1.0, state.current_speed / state.speed_limit)
+    dist_to_station = state.next_station_position - state.current_position
+    # Taper from 1.0 outside zone to 0.5 at the platform — agent still has
+    # reason to move, just not at full speed.
+    zone_frac = min(1.0, max(0.0, dist_to_station / config.station_approach_zone))
+    approach_scale = 0.5 + 0.5 * zone_frac
+    return config.k_vel * vel_scale * approach_scale * min(1.0, state.current_speed / state.speed_limit)
 
 
 def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
@@ -197,9 +212,38 @@ def _compute_energy_penalty(state: TrainState, config: RewardConfig) -> float:
 def _compute_heartbeat_penalty(state: TrainState, config: RewardConfig) -> float:
     # Only penalise stalling on a Green signal — on yellow/red the agent
     # should be free to stop without being punished for it.
+    # Suppressed in the approach zone so the agent isn't penalised for braking
+    # toward the station on an otherwise-green line.
     if state.signal_aspect != 3:
         return 0.0
-    return config.heartbeat_penalty if state.current_speed < 0.5 else 0.0
+    if state.current_speed >= 0.5:
+        return 0.0
+    dist_to_station = state.next_station_position - state.current_position
+    if dist_to_station < config.station_approach_zone:
+        # Reduced penalty inside approach zone — still pushes agent to move
+        # but doesn't overwhelm the braking gradient.
+        return config.heartbeat_penalty * config.approach_heartbeat_scale
+    return config.heartbeat_penalty
+
+def _compute_braking_reward(state: TrainState, config: RewardConfig) -> float:
+    """Dense kinematic shaping inside the station approach zone.
+
+    Computes v_stop = sqrt(2 × max_decel × dist) — the maximum speed that
+    still allows a full stop at the station.  Any excess above v_stop is
+    penalised quadratically, giving the agent a dense per-step gradient that
+    grows as it falls further behind the ideal braking curve.
+    """
+    dist_to_station = state.next_station_position - state.current_position
+    if dist_to_station >= config.station_approach_zone or dist_to_station <= 0:
+        return 0.0
+    v_stop = math.sqrt(2.0 * config.max_decel * dist_to_station)
+    excess = state.current_speed - v_stop
+    if excess <= 0:
+        return 0.0
+    return -config.k_brake * excess ** 2
+
+def _compute_dwell_reward(state: TrainState, config: RewardConfig) -> float:
+    return config.dwell_reward if state.dwelling else 0.0
 
 def _compute_override_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.override_penalty if state.overridden else 0.0
@@ -210,18 +254,22 @@ def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
 
 def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
     """Station arrival reward — conditional on arrival speed.
-    
-    +station_reward  if the train arrives slowly (< station_arrival_speed_limit)
-    +overshoot_penalty if the train blasts through at high speed
+
+    Provides a gradient of rewards to guide the agent to a clean stop.
     """
     if not state.reached_new_station:
         return 0.0
     # Use arrival_speed (pre-snap) if available, otherwise current_speed
     check_speed = state.arrival_speed if state.arrival_speed is not None else state.current_speed
+
     if check_speed <= config.station_arrival_speed_limit:
         return config.station_reward
-    return config.station_overshoot_penalty
- 
+    elif check_speed <= 2.0:
+        return 10.0
+    elif check_speed <= 5.0:
+        return -5.0
+    else:
+        return config.station_overshoot_penalty 
 def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> float:
     """Penalty for arriving at a station outside the on-time tolerance window.
 
@@ -264,6 +312,8 @@ class RewardOutput:
     r_speed: float
     r_heartbeat: float
     r_velocity: float
+    r_brake: float
+    r_dwell: float
     # Event
     r_station: float
     r_time: float
@@ -296,20 +346,22 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
     r_speed     = _compute_speed_reward(state, config)
     r_heartbeat = _compute_heartbeat_penalty(state, config)
     r_velocity  = _compute_velocity_bonus(state, config)
- 
+    r_brake     = _compute_braking_reward(state, config)
+    r_dwell     = _compute_dwell_reward(state, config)
+
     # --- Event ---
     r_station   = _compute_station_reward(state, config)
     r_time      = _compute_punctuality_penalty(state, config)
     r_override  = _compute_override_penalty(state, config)
     r_jerk      = _compute_jerk_penalty(state, config)
     r_energy    = _compute_energy_penalty(state, config)
- 
+
     # --- Terminal ---
     r_violation, terminate_violation = _compute_headway_violation(state, config)
     r_collision, terminate_collision = _compute_collision_penalty(state, config)
- 
+
     # Aggregates
-    r_continuous = r_progress + r_headway + r_speed + r_heartbeat + r_velocity
+    r_continuous = r_progress + r_headway + r_speed + r_heartbeat + r_velocity + r_brake + r_dwell
     r_event      = r_station + r_time + r_override + r_jerk + r_energy
     r_terminal   = r_violation + r_collision
     r_total      = r_continuous + r_event + r_terminal
@@ -321,6 +373,8 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
         r_speed=r_speed,
         r_heartbeat=r_heartbeat,
         r_velocity=r_velocity,
+        r_brake=r_brake,
+        r_dwell=r_dwell,
         r_station=r_station,
         r_time=r_time,
         r_override=r_override,

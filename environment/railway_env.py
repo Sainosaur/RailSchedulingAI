@@ -52,8 +52,8 @@ class ModernizedLine104(gym.Env):
     LEAD_DWELL_RANGE: tuple[int, int] = (15, 60)  # random dwell bounds (seconds)
     LEAD_SERVICE_DECEL: float = -0.5  # comfortable service braking for lead (m/s²)
 
-    # --- AI train dwell ---
-    AI_DWELL_TIME: int = 30  # seconds the AI train dwells at each station
+    # --- AI train dwell (mirrors lead train range) ---
+    AI_DWELL_RANGE: tuple[int, int] = (15, 60)  # random dwell bounds (seconds)
 
     # --- Physics ---
     DT: float = 1.0      # timestep  (seconds)
@@ -308,7 +308,7 @@ class ModernizedLine104(gym.Env):
             if next_st_idx < len(self.STATIONS):
                 if self.x >= self.STATIONS[next_st_idx]:
                     reached_new_station = True
-                    arrival_speed = prev_v  # record speed BEFORE snap
+                    arrival_speed = self.v  # post-physics speed at crossing
                     self.last_station_idx = next_st_idx
                     self.visited_stations.add(next_st_idx)
 
@@ -316,7 +316,16 @@ class ModernizedLine104(gym.Env):
                     entry = self.timetable.get_entry(next_st_idx)
                     scheduled_arrival_time = entry.scheduled_arrival if entry else self._ideal_schedule[next_st_idx]
                     self.ai_arrival_times[next_st_idx] = self.time
-                    # No forced snap or dwell — agent chooses its own speed through stations.
+
+                    # Clean arrival: snap to platform and start random dwell.
+                    # Overspeed arrivals (> 0.5 m/s) take the reward penalty
+                    # and ride on — no dwell forced.
+                    if self.v <= 0.5:
+                        self.x = self.STATIONS[next_st_idx]
+                        self.v = 0.0
+                        self.ai_dwell_timer = int(self.np_random.integers(
+                            self.AI_DWELL_RANGE[0], self.AI_DWELL_RANGE[1]
+                        ))
 
         # ----- 5. Collision — freeze at lead position -----
         # Capture flag before clamping so the reward sees it.
@@ -375,6 +384,8 @@ class ModernizedLine104(gym.Env):
                 "speed": reward_out.r_speed,
                 "heartbeat": reward_out.r_heartbeat,
                 "velocity": reward_out.r_velocity,
+                "brake": reward_out.r_brake,
+                "dwell": reward_out.r_dwell,
                 "station": reward_out.r_station,
                 "punctuality": reward_out.r_time,
                 "override": reward_out.r_override,
