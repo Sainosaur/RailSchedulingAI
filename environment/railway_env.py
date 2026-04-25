@@ -30,8 +30,6 @@ from environment.timetable import (                             # noqa: E402
 )
 from dataclasses import dataclass
 
-from environment.timetable import compute_eta_to_station
-
 
 @dataclass
 class Landslide:
