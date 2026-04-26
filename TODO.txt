@@ -68,7 +68,14 @@ v is final speed (0), a is acceleration (0.5 m/s/s). Override reward 2 in the re
 And again, we can add optimal_braking_distance to the observation space or as an internal variable in the env, so AI can learn (not VL, 
 as VL only deals with safety). 
 
-Layer 2 is excessive. The 3 lookahead times is redundant, we dont need time at all. To check for violation 
+Layer 2 is excessive. The 3 lookahead times is redundant, we dont need time at all. To check for violation use new logic:
+1/ use the SUVAT v*v - u*u = 2ad, so d = (v*v - u*u) / 2a, where u is current speed, v is final speed (0), a is acceleration (-1 m/s/s).
+Rearrange for d so, dist_vio_check = (u*u - v*v) / 2a. Use this SUVAT version. 2/ Use this logic:
+ if x_ai_zone_end + dist_vio_check >= x_obs_zone_start, then violation (which is fail), else pass.
+ By the way ensure VL runs timestep (idk how, just connect it to env properly).
+
+ 
+
 
 
 
