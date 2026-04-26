@@ -1,0 +1,228 @@
+================================================================================
+RAIL SCHEDULING AI — REWARD REBALANCE & TERMINATION REMOVAL INSTRUCTIONS
+================================================================================
+
+Read all uploaded source files before making any changes.
+Make changes file by file in the order listed below.
+Do not change anything not listed here.
+
+================================================================================
+FILE 1: environment/railway_env.py
+================================================================================
+
+FIX 1 — Remove all hard terminations except spatial violation (aspect == -1).
+
+In the step() function, locate the termination block near the end:
+
+    terminated = False
+    if self.x >= self.TRACK_END:
+        terminated = True
+    if train_aspect == -1:
+        terminated = True
+    if reward_out.terminate:
+        terminated = True
+
+Replace with:
+
+    terminated = False
+    if train_aspect == -1:
+        terminated = True  # Only true zone overlap ends the episode
+
+Remove the TRACK_END termination — the episode should naturally end via
+truncation at MAX_STEPS. The agent must learn to stop itself before the
+terminus.
+
+FIX 2 — Remove the two early hard-return terminations at the top of step().
+
+Locate this block near the top of step():
+
+    raw_action = float(action[0])
+    if raw_action > 0.5 or raw_action < -1.0:
+        seg = self.vl.get_segment(self.x)
+        lead_seg = self.vl.get_segment(self.lead_train.x)
+        lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+        x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+        fallback_obs = self._get_obs(0, 0, x_lead_zone_start, 0.0)
+        return fallback_obs, -100.0, True, False, {"error": "Physically impossible action"}
+
+Replace with:
+
+    raw_action = float(action[0])
+    if raw_action > 0.5 or raw_action < -1.0:
+        raw_action = max(-1.0, min(0.5, raw_action))  # clamp silently, VL logs violation
+
+Remove the negative speed hard termination entirely:
+
+    if prev_v + proposed_a * dt < -0.01:
+        lead_seg = self.vl.get_segment(self.lead_train.x)
+        lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+        x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+        fallback_obs = self._get_obs(0, 0, x_lead_zone_start, 0.0)
+        return fallback_obs, -100.0, True, False, {"error": "Negative speed violation"}
+
+Delete this entire block. Negative speed is already clamped to 0.0 by:
+    new_v = max(0.0, new_v)
+so it cannot actually go negative. The VL will log the violation and the
+reward function will penalise it.
+
+FIX 3 — Remove reward_out.terminate from termination logic.
+
+Since we are removing hard terminations, the reward function must no longer
+be able to trigger termination. Ensure the line:
+
+    if reward_out.terminate:
+        terminated = True
+
+is deleted (already covered by FIX 1 above, confirm it is gone).
+
+================================================================================
+FILE 2: reward/reward_function.py
+================================================================================
+
+Read the entire reward function carefully before making any changes.
+
+The guiding principles from the reward design literature are:
+  - Penalise every step (small negative constant) to drive directed exploration.
+  - Reward subgoals (stations) with gradually increasing rewards as the agent
+    approaches the terminus — earlier stations get less reward than later ones.
+  - Use dense rewards that are nonzero on every step, designed carefully so
+    that intermediate rewards do not become more attractive than the goal.
+  - Maximise the action gap — keep all weights in [-10, +10] so the agent
+    can clearly distinguish good actions from bad ones at every state.
+  - Do not double-count the same bad behaviour with redundant penalties.
+
+FIX 4 — Remove the collision penalty component entirely.
+
+The episode terminates on zone overlap (aspect == -1). A terminal penalty is
+never experienced by the agent because there are no future steps after
+termination. The termination itself is the consequence. Remove any reward
+component that applies a penalty specifically for collision or zone overlap.
+Do not replace it with anything.
+
+FIX 5 — Remove the headway penalty component entirely.
+
+Headway violation is the precursor state to collision. The signal aspect
+reward components (speed compliance under red/yellow/double-yellow) already
+shape the agent away from dangerous proximity to the lead train. A separate
+headway penalty double-counts the same bad behaviour. Remove it entirely.
+Do not replace it with anything.
+
+FIX 6 — Add a small step penalty on every timestep.
+
+Per the reward design literature, penalising every step taken induces faster
+and more directed exploration than rewarding only the goal. Add the following
+at the start of compute_reward(), before any other component:
+
+    # Step penalty — drives directed exploration toward the terminus
+    out.r_step = -0.5
+
+This should be added to the total reward on every step regardless of state.
+Add r_step as a field to the RewardOutput dataclass if it does not exist.
+
+FIX 7 — Replace flat station arrival rewards with a graduated subgoal profile.
+
+Per the reward design literature, subgoal rewards should gradually increase
+as the agent gets closer to the final goal. Replace any flat station arrival
+reward (e.g. a constant +8.0 for every station) with the following graduated
+scale based on station index (0 = origin Chabówka, 6 = terminus Nowy Sącz):
+
+    STATION_REWARDS = {
+        1: +2.0,   # Rabka-Zdrój
+        2: +3.0,   # Mszana Dolna
+        3: +4.0,   # Tymbark
+        4: +5.0,   # Limanowa
+        5: +7.0,   # Marcinkowice
+        6: +10.0,  # Nowy Sącz (terminus — maximum reward)
+    }
+
+When a new station is reached, award STATION_REWARDS[station_index].
+Keep the on-time arrival bonus separate and additive (see FIX 8 below).
+
+FIX 8 — Rescale all remaining reward component weights to [-10, +10].
+
+Apply the following weight changes. Find each value by its context/comment
+and replace only the numeric literal, not the surrounding logic.
+Do not remove any component not listed in FIX 4 and FIX 5.
+
+SPEED COMPLIANCE (aspect-based):
+  Reward for service braking at correct rate (~0.5 m/s²):       +5.0
+  Penalty for harder than service braking but not emergency:     -2.0
+  Penalty for unnecessary emergency braking:                     -8.0
+  Penalty for moving at red without adequate braking:            -5.0
+  Penalty for speed limit deviation on green aspect:
+      out.r_speed = max(-10.0, -abs(u - state.speed_limit))
+
+PUNCTUALITY / ON-TIME ARRIVAL:
+  Bonus for on-time arrival at a station (additive with subgoal): +5.0
+  Penalty for late arrival at a station:                          -4.0
+
+JERK / COMFORT:
+  Reward for jerk below comfortable threshold (<0.5 m/s³):       +2.0
+  Penalty for jerk above uncomfortable threshold (>1.0 m/s³):    -4.0
+
+ENERGY EFFICIENCY / REGENERATIVE BRAKING:
+  Reward for braking at regenerative rate (~0.5 m/s²):           +3.0
+  Penalty for excessive energy use (if present):                  -3.0
+
+ANY REMAINING COMPONENTS:
+  Audit every remaining numeric literal in compute_reward().
+  Any value below -10.0: set to -10.0.
+  Any value above +10.0: set to +10.0.
+  Add an inline comment on each changed line: # rescaled from <old_value>
+
+FIX 9 — Remove the terminate flag from RewardOutput.
+
+If the RewardOutput dataclass has a field called terminate or
+should_terminate, remove it entirely. If compute_reward() sets this field
+anywhere, remove those assignments too. The environment no longer reads it.
+
+================================================================================
+FILE 3: validate_layer/log_manager.py
+================================================================================
+
+FIX 10 — Ensure LOG_ENABLED is True during training.
+
+Locate:
+    LOG_ENABLED: bool = False   (or whatever its current value is)
+
+Ensure it is set to:
+    LOG_ENABLED: bool = True
+
+Violations are no longer episode-ending (except zone overlap). All other
+violations must be logged to override_log.csv so they can be monitored
+during and after training.
+
+================================================================================
+VERIFICATION CHECKLIST
+================================================================================
+
+After all changes, confirm the following by reading the modified files:
+
+1. step() in railway_env.py has exactly ONE termination condition:
+       if train_aspect == -1: terminated = True
+   No other terminated = True assignments exist.
+
+2. The collision penalty component has been removed from reward_function.py.
+
+3. The headway penalty component has been removed from reward_function.py.
+
+4. A step penalty of -0.5 is applied on every timestep.
+
+5. Station arrival rewards follow the graduated scale:
+   +2, +3, +4, +5, +7, +10 for stations 1 through 6.
+
+6. No reward component numeric value is outside the range [-10, +10].
+
+7. RewardOutput no longer has a terminate field.
+
+8. LOG_ENABLED is True in log_manager.py.
+
+9. The negative speed clamp (new_v = max(0.0, new_v)) is still present
+   in step() after the physics block.
+
+10. The action clamp (raw_action = max(-1.0, min(0.5, raw_action))) is
+    present at the top of step() before physics are applied.
+
+================================================================================
+END OF INSTRUCTIONS
+================================================================================
