@@ -292,6 +292,8 @@ class ModernizedLine104(gym.Env):
         terminated = False
         if train_aspect == -1: # Collision / Zone overlap
             terminated = True
+        if self.x >= self.TRACK_END and self.v < 0.1:
+            terminated = True
             
         truncated = bool(self.step_count >= self.MAX_STEPS)
 
