@@ -383,6 +383,32 @@ class ModernizedLine104(gym.Env):
     def _compute_headway(self) -> float:
         return (self.lead_train.x - self.x) / self.v if self.v > 0.01 else 9999.0
 
+    def _get_signal_aspect(self) -> int:
+        """Dashboard helper: The current most restrictive signal aspect."""
+        seg = self.vl.get_segment(self.x)
+        # 1. Aspect based on lead train position
+        lead_seg = self.vl.get_segment(self.lead_train.x)
+        lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+        x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+        train_aspect = self.vl.compute_signal_aspect(self.x, seg, x_lead_zone_start)
+
+        # 2. Aspect based on station clearance
+        station_aspect = 3 if self.station_cleared else 0
+        return int(min(train_aspect, station_aspect))
+
+    def _dist_to_nearest_occupied(self) -> float:
+        """Dashboard helper: distance in metres to the nearest occupied zone start."""
+        seg = self.vl.get_segment(self.x)
+        lead_seg = self.vl.get_segment(self.lead_train.x)
+        lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+        x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+
+        if not self.station_cleared:
+            x_station_zone_start = seg.end - seg.spatial_headway
+            return max(0.0, x_station_zone_start - self.x)
+
+        return max(0.0, x_lead_zone_start - self.x)
+
 
     # --- EXTERNAL COMMANDS ---
     def stall_lead(self):
