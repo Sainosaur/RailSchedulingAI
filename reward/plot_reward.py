@@ -178,9 +178,8 @@ def plot(data, breakdown):
     # 4. Cumulative Reward
     ax = axes[3]
     ax.plot(x, data["total_reward"], color="black", linewidth=2.5)
-    ax.set_ylabel("Cumulative Score")
-    ax.set_xlabel("Position (km)")
-    ax.set_title("THE GOLDEN CURVE: Cumulative Reward", fontweight="bold")
+    ax.set_yscale('symlog', linthresh=100) # Shows linear detail near 0, log detail for large values
+    ax.set_ylabel("Cumulative Score (SymLog)")
     
     for ax_item in axes:
         for s in stations_km: ax_item.axvline(s, color="gray", linestyle="--", alpha=0.2)
