@@ -34,7 +34,7 @@ class TrainConfig:
     value_net: list[int] = field(default_factory=lambda: [256, 256])
 
     # ── Environment ──────────────────────────────────────────────────
-    lead_train_speed: float = 25.0
+    lead_train_speed: float = 20.0
     max_episode_steps: int = 10_000
     n_envs: int = 12
     slack_factor: float = 1.1  # 10% operational buffer for RL stability
