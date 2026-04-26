@@ -66,7 +66,9 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     dt = 1.0
     u = state.current_speed
     a = state.applied_acceleration
-    
+    x_ai_zone_end = info.get("x_ai_zone_end", state.current_position)
+    x_diff = x_lead_zone_start - x_ai_zone_end  # zones between AI and lead train
+
     out = RewardOutput()
 
     # Step penalty — drives directed exploration toward the terminus
@@ -111,12 +113,12 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         else:
             out.r_speed = -5.0   # Moving at Red without adequate braking
 
-    # 4. Jerk Reward/Penalty
+    # 4. Jerk Penalty (penalty-only — smooth control is the expected baseline, not a bonus)
+    # A constant +2.0 bonus every cruise step was inflating cumulative reward by ~30,000+
     jerk = abs(state.applied_acceleration - info.get("previous_a", 0.0)) / dt
-    if jerk < 0.5:
-        out.r_jerk = 2.0
-    elif jerk > 1.0:
+    if jerk > 1.0:
         out.r_jerk = -4.0
+    # else: 0.0 — smooth control is expected, not rewarded
 
     # 5. Signal Compliance
     # Train Signal
@@ -124,8 +126,6 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         out.r_signal_compliance = -10.0
     if train_aspect == 3:
         # Sweet spot bonus
-        x_ai_zone_end = info.get("x_ai_zone_end", state.current_position)
-        x_diff = x_lead_zone_start - x_ai_zone_end
         if 3*sh <= x_diff <= 4*sh:
             out.r_signal_compliance = 5.0
 
@@ -159,10 +159,9 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     if state.is_dwelling and u < 0.1:
         out.r_patience = 5.0
     elif station_cleared and train_aspect == 3 and u < 0.1:
-        # Check if we should be moving
-        x_ai_zone_end = info.get("x_ai_zone_end", state.current_position)
-        x_diff = x_lead_zone_start - x_ai_zone_end
-        if x_diff > 3*sh:
+        # Only penalise if station was already cleared last step too (avoid race condition
+        # on the exact frame clearance flips — agent has no chance to react that step)
+        if info.get("station_cleared_prev", False) and x_diff > 3*sh:
             out.r_patience = -10.0
 
     # Sum all
