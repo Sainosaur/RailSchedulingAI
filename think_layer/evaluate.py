@@ -94,7 +94,7 @@ def evaluate(
         ep_rows = []
 
         while not done:
-            action = [[0.5]] 
+            action, _ = model.predict(obs, deterministic=True)
             obs, reward, dones, infos = venv.step(action)
 
             info = infos[0]
