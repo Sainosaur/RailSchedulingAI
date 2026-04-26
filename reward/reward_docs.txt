@@ -1,70 +1,68 @@
 RAIL SCHEDULING AI: REWARD & PENALTY DOCUMENTATION
-Current Revision: Final Prototype v1.0 (Synchronized)
+Current Revision: Final Prototype v2.0 (Arithmetic VL & Direct Control)
 
-The total reward (r_total) is calculated every timestep as:
-r_total = r_continuous + r_event + r_terminal
+The total reward (r_total) is calculated every timestep as a weighted sum:
+r_total = sum of all active components.
 
 ------------------------------------------------------------------
 A. CONTINUOUS REWARDS (Calculated every physical timestep)
 ------------------------------------------------------------------
 
-1. Progress Reward (_compute_progress_reward)
-- Goal: Incentivize forward movement towards the goal.
-- Logic: Rewards based on the change in percentage progress between the last station and the next station.
-- Scale: k_p = 2000.0 (High density signal).
+1. Progress Reward
+- Goal: Incentivize forward movement.
+- Logic: Change in percentage progress between stations.
+- Lead Protection: Suspend accumulation if the lead train is stalled or held.
 
-2. Speed Target & Braking Envelope (_compute_speed_reward)
-- Goal: Create smooth, ETCS-compliant velocity curves.
-- Logic: Targets a physics-driven "Perfect Speed" based on the track limit and a proactive braking curve (v = sqrt(2ad)) when approaching stations or obstacles.
-- Penalty: Linear penalties for overspeeding (k_over) and underspeeding (k_under).
+2. Speed Compliance (Optimal Braking)
+- Goal: Smooth, safe velocity curves.
+- Normal: Penalty for deviation from the speed limit when the path is clear.
+- Approaching Obstacle: Reward for braking at exactly 0.5 m/s² when within optimal braking distance (u² / 2*0.5).
 
-3. Cruise & Standing Bonus (_compute_cruise_reward)
-- Goal: Maintain stability at high speeds.
-- Reward: Bonus for maintaining 90% to 105% of the Speed Limit.
-- Efficiency: Additional +2.0 bonus for "Active Coasting" (near-zero acceleration at high speed).
+3. Regenerative Braking
+- Goal: Energy efficiency.
+- Reward: +2.0 per step if deceleration is between -0.5 and -0.01 m/s².
+- Penalty: Small penalty for non-regenerative deceleration between -1.0 and -0.5 m/s².
 
-4. Signal Compliance & "Sweet Spot" (_compute_signal_compliance_reward)
-- Goal: Professional interaction with the signal wave.
-- Sweet Spot: High bonus for staying 3-4 blocks behind the lead train (maintaining the "Green Wave").
-- Yellow Tax: Small penalty for "hanging out" in restricted (Yellow/Double Yellow) signals while moving.
-- Red Punishment: Massive penalty (-5000) for any attempt to accelerate from a stop at a Red signal.
+4. Jerk Compliance
+- Goal: Passenger comfort.
+- Reward: +1.0 per step if jerk < 0.5 m/s³/s.
+- Penalty: Proportional to (jerk - 1.0) if jerk > 1.0.
 
-5. Headway Penalty (_compute_headway_penalty)
-- Goal: Maintain safe spacing without triggering terminal violations.
-- Logic: A linear ramp penalty that activates at 3x Temporal Headway and scales to -k_h as the train approaches the critical violation boundary.
+5. Signal Compliance
+- Lead Train Signal: Massive penalty for accelerating at a Red train aspect. Sweet spot bonus (+5.0) for staying 3-4 zones behind the lead train.
+- Station Signal: Penalty for approaching station zone at speed during dwell.
 
-6. Patience & Stall Logic (_compute_patience_reward / _compute_heartbeat_penalty)
-- Patience: Positive reward (+10.0) for remaining perfectly stationary during mandatory Dwells or at Red signals.
-- Stalling: Severe penalty (-40.0) for being stationary at a Green signal when the road is clear.
-- Existence Penalty: Constant -0.1 per step to encourage the AI to eventually finish the episode.
+6. Headway Penalty
+- Logic: Linear ramp penalty activating when x_diff < 3*SH.
+- x_diff = x_lead_zone_start - x_ai_zone_end.
+- Scale: 0 at 3*SH to -k_h at 1*SH.
+
+7. Patience & Stall Logic
+- Patience: +10.0 per step while stationary during mandatory dwell.
+- Stalling: -20.0 per step if stationary at a Green signal with a clear road.
+- Existence: -0.1 per step tax.
 
 ------------------------------------------------------------------
 B. EVENT REWARDS (Triggered on specific conditions)
 ------------------------------------------------------------------
 
-7. Station Milestones (_compute_station_reward)
-- Logic: Positive reward granted upon arrival at the station border.
-- Escalation: Rewards increase by 30% for each subsequent station to pull the agent through the whole route.
-- Grand Prize: A massive +50,000 bonus for reaching the final terminal (Nowy Sącz).
+8. Station Milestones
+- Rewards increase by 30% per station.
+- Grand Prize: +50,000 for reaching Nowy Sącz.
 
-8. Punctuality & Schedule (_compute_punctuality_penalty)
-- Carrot: A massive +10,000 bonus for arriving within a 60-second window of the timetable.
-- Stick: Scaling deduction for arriving early or late outside that tolerance window.
-
-9. Override Penalty (_compute_override_penalty)
-- Goal: Train the AI to be "Autonomous Ready."
-- Penalty: Violently punishes the model (-100.0) whenever the Validation Layer (VL) has to forcefully override an unsafe action.
-
-10. Operational Jerk & Energy (_compute_jerk_penalty / _compute_energy_penalty)
-- Jerk: Penalizes the square of the acceleration delta to prevent whiplash-inducing control changes.
-- Energy: (Optional) Penalizes the magnitude of traction applications.
+9. Punctuality
+- +10,000 bonus for arriving within a 60-second window.
 
 ------------------------------------------------------------------
 C. TERMINAL PENALTIES (Triggers "Terminate = True")
 ------------------------------------------------------------------
 
-11. Collision & Headway Violation
-- Penalty: -100,000 (Fatal). Episode ends immediately in total failure if the train collides with the lead train or crosses the critical safety headway.
+10. Collision (Zone Overlap)
+- Penalty: -100,000. Triggers if x_diff <= 0.
 
-12. Lateness Threshold
-- Penalty: -10,000 (Failure). Episode ends if the train fails to reach the next station within 20 minutes (1200s) of its scheduled arrival time. This prevents the AI from "parking" on the track to avoid other penalties.
+11. Safety Violation
+- Small penalty (-10.0) for any violation logged by the VL.
+- Episode may terminate based on violation type (handled in env).
+
+12. Removal of Lateness Threshold
+- Lateness is no longer a terminal condition; it is handled by the existence penalty and punctuality bonus.

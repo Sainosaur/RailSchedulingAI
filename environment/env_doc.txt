@@ -1,5 +1,5 @@
 RAIL SCHEDULING AI: GYMNASIUM ENVIRONMENT DOCUMENTATION
-Current Revision: Final Prototype v1.0 (Synchronized)
+Current Revision: Final Prototype v2.0 (Arithmetic VL & Direct Control)
 
 File: environment/railway_env.py
 
@@ -11,52 +11,54 @@ The environment simulates a single AI-controlled train traversing the 76km Polis
 2. AGENT COMMUNICATION (SPACES)
 
 A. Observation Space (What the AI Sees)
-A 7-dimensional Box space (array of floats) providing real-time telemetry every second:
-- [0] Position: Current meters traveled along the 76,651m track.
-- [1] Speed: Current velocity (m/s).
-- [2] DTZ (Distance-To-Zone): Distance to the next fixed-block signal boundary (m).
-- [3] Signal Aspect: 0=Red, 1=Yellow, 2=Double Yellow, 3=Green.
-- [4] Distance to Occupied: Physical distance to the nearest obstruction (lead train or hazard).
-- [5] Lead Train Speed: Current velocity of the train ahead (m/s).
-- [6] Sim Time: Elapsed time in seconds since the start of the journey.
+An 8-dimensional Box space (array of floats) providing real-time telemetry every second:
+- [0] position (m): Current meters traveled along the 76,651m track.
+- [1] speed (m/s): Current velocity.
+- [2] dtz (m): Distance to the end of the current fixed-block zone.
+- [3] train_aspect: Signal aspect relative to lead train (0=Red, 1=Yellow, 2=DY, 3=Green).
+- [4] station_aspect: Signal aspect relative to next station (0=Red, 3=Green).
+- [5] distance_to_lead_zone_start (m): Start position of the zone containing the lead train.
+- [6] optimal_braking_distance (m): Braking at 0.5 m/s² to a full stop (u² / 2*0.5).
+- [7] sim_time (s): Elapsed time in seconds.
 
 B. Action Space (What the AI Does)
 A continuous Box space [-1.0, 1.0].
-- Remapping: The environment maps [0, 1] to [0.0, 0.5] (Acceleration) and [-1, 0] to [-1.0, 0.0] (Deceleration).
-- Safety Intercept: The Validation Layer (VL) intercepts the proposed action. If unsafe, it is overridden (typically to emergency braking).
+- Remapping: The environment maps [0, 0.5] to Acceleration and [-1.0, 0.0] to Deceleration.
+- Direct Control: The Validation Layer (VL) no longer overrides actions. It only logs violations.
+- Physics Termination: If proposed_a > 0.5 or < -1.0, the episode terminates immediately.
 
 3. THE SIMULATION STEP (1.0s DT)
 
-PHASE 1: Validation & Interlock
-The VL evaluates the action using an adaptive kinematic lookahead (Projecting for the duration of a full stopping distance). 
-- Red Signal Interlock: If speed < 0.1 and signal is Red, acceleration is forced to 0.0.
-- Speed Limit Governor: If at the speed limit, acceleration is capped to 0.0 or lower.
+PHASE 1: Physics (SUVAT)
+Applies the proposed acceleration using standard equations of motion.
+- Negative Speed Guard: If the resulting speed would be negative, the episode terminates.
 
-PHASE 2: SUVAT Physics
-Applies the (potentially overridden) acceleration using a two-phase check:
-- Boundary Awareness: If the train would hit 0 m/s or the Speed Limit mid-step, the environment calculates the exact fractional second of movement and caps the velocity for the remainder of the step.
+PHASE 2: Validation & Logging
+The VL evaluates the state after movement:
+- Log-Only: Violations are written to `override_log.csv` but the action is never altered.
+- Constraint IDs: SPATIAL_VIOLATION, SPEED_LIMIT_VIOLATION, STATION_SIGNAL_VIOLATION, etc.
 
 PHASE 3: Lead Train Advancement
-The Lead Train (`lead_train.py`) advances through Dwell, Braking, and Cruise states. The AI must manage its own headway to avoid collisions or critical safety violations.
+The Lead Train (`lead_train.py`) advances through Dwell, Braking, and Cruise states.
 
 PHASE 4: Station Management
-- Detection: Arrival is triggered at Position >= (Station_Pos - 2.0m).
-- Dwell Logic: Upon arrival, a random dwell period (20-40s) is assigned. The signal aspect is forced to RED (0) during this period.
-- Departure: Position tracking resumes only after the dwell timer expires.
+- Detection: Arrival is triggered when `x >= x_station_zone_start` (the start of the last zone of the current segment).
+- Dwell Logic: Upon arrival, a random dwell period (20-40s) is assigned. `station_cleared` is set to False.
+- Departure: `station_cleared` becomes True after the dwell timer expires.
 
 PHASE 5: Reward Synthesis
-Live telemetry is passed to `reward_function.py`. The "Golden Curve" reward is composed of:
-- Dense Metrics: Progress per step, Speed Envelope compliance, Signal "Sweet Spot" bonuses.
-- Sparse Events: Station arrival milestones (escalating), Punctuality bonuses (+10k), and Jerk/Override penalties.
+Live telemetry and violation flags are passed to `reward_function.py`.
+- Dense Metrics: Progress, Speed Compliance (relative to optimal braking), Regenerative Braking rewards.
+- Sparse Events: Station milestones, Punctuality bonuses.
 
 PHASE 6: Termination & Truncation
-- Termination: Occurs at Track End (76,651m), Collision, Critical Headway Violation (<1x TH), or exceeding the 20-minute Lateness Threshold.
-- Truncation: A hard cap of 10,000 steps (~2.8 hours) prevents hung training sessions.
+- Termination: Track End, Collision (zone overlap, x_diff <= 0), Negative Speed, or Impossible Action.
+- Truncation: A hard cap of 10,000 steps (~2.8 hours).
 
 4. TELEMETRY (Info Dictionary)
 On every step, the environment returns an 'info' dictionary for debugging:
-- current_position / current_speed: Raw physical data.
-- safety_overridden: Boolean flag for VL intervention.
-- aspect / segment: Current track-side telemetry.
-- reward_breakdown: Granular breakdown (Progress, Speed, Lateness, etc.).
-- punctuality_status: ETA vs Scheduled Arrival for the next station.
+- train_aspect / station_aspect: Signal state.
+- station_cleared: Dwell status.
+- x_ai_zone_end / x_lead_zone_start / x_station_zone_start: Zone boundaries.
+- optimal_braking_distance: Calculated safety threshold.
+- violations: Dictionary of violation flags returned by the VL.

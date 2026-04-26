@@ -24,7 +24,7 @@ class ValidationLayer:
     def __init__(self):
         self.segments: List[VLSegment] = build_vl_segments()
         init_log()
-        self.dt: float = 1.0  # Synchronized with env.DT
+        self.dt: float = 1.0
 
     def get_segment(self, x: float) -> VLSegment:
         """Find the track segment containing position x."""
@@ -37,160 +37,135 @@ class ValidationLayer:
                 return seg
         return self.segments[-1]
 
-    def compute_dtz(self, x: float) -> float:
-        """Compute Distance To Zone (distance to the next block boundary)."""
-        seg = self.get_segment(x)
-        for boundary in seg.block_boundaries:
-            if boundary > x + 0.01:  # Epsilon to prevent 0.0 at boundaries
-                return boundary - x
-        return float(seg.spatial_headway)
+    def compute_zone_boundaries(self, x: float, seg: VLSegment) -> Tuple[float, float]:
+        """Return (x_ai_zone_end, zone_idx) for position x within seg.
 
-    def _speed_for_aspect(
-        self, aspect: int, segment: VLSegment, dtz: float, current_v: float
-    ) -> Tuple[float, float]:
+        The last zone of each segment is oversized (>= SH) because the safety merge
+        absorbs any short fractional remainder into it. Must detect and handle this.
+        n_full = number of full SH-length zones before the oversized last zone.
+        Any x past start + n_full*SH belongs to the last zone, which ends at seg.end.
         """
-        Calculates maximum allowed speed and total authority distance for a signal aspect.
+        sh = seg.spatial_headway
+        n_full = int((seg.end - seg.start) / sh)
+        zone_idx = int((x - seg.start) / sh)
+        zone_idx = min(zone_idx, n_full)
+        x_zone_end = seg.start + (zone_idx + 1) * sh
+        if x_zone_end > seg.end:
+            x_zone_end = seg.end
+        return x_zone_end, zone_idx
+
+    def compute_dtz(self, x: float, seg: VLSegment) -> float:
+        """Distance from x to the end of the current zone."""
+        x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
+        return max(0.0, x_ai_zone_end - x)
+
+    def compute_signal_aspect(
+        self,
+        x: float,
+        seg: VLSegment,
+        x_obs_zone_start: float
+    ) -> int:
         """
-        sh = float(segment.spatial_headway)
-
-        # Grant 'Green Departure Runway' (3 blocks) if stationary at Green
-        if current_v < 0.1 and aspect == 3:
-            distance_available = dtz + (3.0 * sh)
-        else:
-            distance_available = dtz + (float(aspect) * sh)
-
-        # Basic kinematic safety limit: v = sqrt(2 * a * s)
-        v_dynamic = math.sqrt(2.0 * abs(EMERGENCY_DECEL) * max(0.0, distance_available))
-
-        # Target speed is the lower of the kinematic safety and segment limit
-        v_target = min(v_dynamic, float(segment.limit_ms))
-
-        return v_target, distance_available
-
-    def _project(
-        self, x: float, u: float, proposed_a: float, v_ceil: float, t: float
-    ) -> Tuple[float, float]:
-        """Predicts position and speed after t seconds using SUVAT."""
-        if proposed_a == 0:
-            return x + u * t, u
-
-        if proposed_a > 0:
-            if u >= v_ceil:
-                return x + v_ceil * t, v_ceil
-            t_to_limit = (v_ceil - u) / proposed_a
-        else:
-            if u <= 0.0:
-                return x, 0.0
-            t_to_limit = (0.0 - u) / proposed_a
-
-        if t <= t_to_limit:
-            v = u + proposed_a * t
-            x_proj = x + u * t + 0.5 * proposed_a * (t**2)
-        else:
-            # Reached speed limit or stop mid-interval
-            x_at_limit = x + u * t_to_limit + 0.5 * proposed_a * (t_to_limit**2)
-            v = v_ceil if proposed_a > 0 else 0.0
-            x_proj = x_at_limit + v * (t - t_to_limit)
-
-        return x_proj, max(0.0, v)
-
-    def _check_action_safety(
-        self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float, d_occ: float = 99999.0
-    ) -> Tuple[bool, str]:
-        """Simulates trajectory to verify if an action violates safety constraints."""
-        current_seg = self.get_segment(x)
-        max_safe_v, dist_avail = self._speed_for_aspect(env_aspect, current_seg, dtz, u)
-        
-        # BUG FIX: Authority must also respect the actual physical distance to the lead train/hazard.
-        # This prevents collisions when the lead train is in the same block as the AI train.
-        dist_avail = min(dist_avail, d_occ)
-        boundary_x = x + dist_avail
-
-        # Look ahead based on stopping time
-        t_stop = current_seg.limit_ms / abs(EMERGENCY_DECEL)
-        sim_steps = [max(1.0, math.floor(t_stop * f)) for f in [0.33, 0.67, 1.0]]
-
-        v_ceiling = float(current_seg.limit_ms)
-        for t in sim_steps:
-            x_proj, v = self._project(x, u, proposed_a, v_ceiling, t)
-            proj_seg = self.get_segment(x_proj)
-
-            # Constraint 1: Spatial limit (Aspect Authority)
-            # BUG FIX: Use strict inequality (>) and ensure stationary trains don't trigger violations.
-            tolerance = 2.0 if (u < 1.0 and dist_avail < 2.0) else 0.0
-            if x_proj > boundary_x + tolerance + 0.01:
-                # If stationary and not intending to move, this isn't a violation
-                if u < 0.1 and proposed_a <= 0:
-                    continue
-                return False, "Aspect_Spatial_Violation"
-
-            # Constraint 2: Speed limit of the current or future segment
-            if v > proj_seg.limit_ms + 0.5:
-                return False, f"{proj_seg.id}_Limit"
-
-            # Constraint 3: Kinematic safety for the current aspect
-            if v > max_safe_v + 0.5:
-                return False, "Kinematic_Target_Violation"
-
-        return True, ""
-
-    def get_safe_action(
-        self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float, d_occ: float = 99999.0
-    ) -> Tuple[float, bool]:
+        Compute train signal aspect from zone geometry.
+        x_obs_zone_start: start of the zone containing the obstacle (lead train or station).
+        Returns: 0=Red, 1=Yellow, 2=Double Yellow, 3=Green.
         """
-        Main entry point. Validates action and returns a safe alternative if needed.
-        """
-        seg = self.get_segment(x)
+        x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
+        sh = seg.spatial_headway
+        x_diff = x_obs_zone_start - x_ai_zone_end
 
-        # 1. Hardware/Software Clamping
-        clamped_a = max(EMERGENCY_DECEL, min(ACCEL, proposed_a))
-
-        # 2. Stationary interlock
-        if u < 0.1 and env_aspect == 0 and proposed_a <= 0:
-            return 0.0, False
-
-        # 3. Speed Limit Governor
-        if u >= seg.limit_ms - 0.01:
-            clamped_a = min(0.0, clamped_a)
-
-        # 4. Trajectory Safety Check
-        is_safe, constraint = self._check_action_safety(
-            clamped_a, env_aspect, x, u, dtz, d_occ
-        )
-
-        if is_safe:
-            return clamped_a, False
-
-        # 5. RESOLUTION (If unsafe, find the best possible safe action)
-        v_target, dist_avail = self._speed_for_aspect(env_aspect, seg, dtz, u)
-        dist_avail = min(dist_avail, d_occ)
-
-        if "_Limit" in constraint:
-            # Resolve speed limit violations
-            seg_id = constraint.split("_")[0]
-            target_limit = float(seg.limit_ms)
-            for s in self.segments:
-                if str(s.id) == str(seg_id):
-                    target_limit = float(s.limit_ms)
-                    break
-            a_needed = (target_limit - u - 0.01) / self.dt
-            safe_a = max(EMERGENCY_DECEL, min(ACCEL, a_needed))
-        elif dist_avail > 0.1:
-            # Resolve spatial violations using SUVAT: v² = u² + 2as => a = -u² / 2s
-            a_needed = -(u**2) / (2.0 * dist_avail)
-            safe_a = max(EMERGENCY_DECEL, min(0.0, a_needed))
+        if x_diff <= 0:
+            return -1  # Violation — episode termination (handled in env)
+        elif x_diff <= sh:
+            return 0   # Red
+        elif x_diff <= 2 * sh:
+            return 1   # Yellow
+        elif x_diff <= 3 * sh:
+            return 2   # Double Yellow
         else:
-            # Critical violation
-            safe_a = EMERGENCY_DECEL
+            return 3   # Green
 
-        # Only mark as 'overridden' if the AI's intent was less safe than the correction
-        was_safety_failure = True if proposed_a > safe_a + 0.01 else False
-        if "_Limit" in constraint:
-            was_safety_failure = False  # System-level speed limit clamp
+    def check_and_log(
+        self,
+        x: float,
+        u: float,
+        proposed_a: float,
+        seg: VLSegment,
+        x_obs_zone_start: float,
+        train_aspect: int,
+        station_cleared: bool
+    ) -> dict:
+        """
+        Check all constraints. Log any violations. Return dict of violation flags.
+        Does NOT override the action. Returns results for env/reward to use.
 
-        self._log_override(proposed_a, safe_a, constraint)
-        return float(safe_a), was_safety_failure
+        Returns dict with keys:
+          spatial_violation: bool
+          speed_limit_violation: bool
+          station_signal_violation: bool
+          lead_train_signal_violation: bool
+          negative_speed_violation: bool
+          accel_not_zero_violation: bool
+          any_violation: bool
+        """
+        sh = seg.spatial_headway
+        x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
+        violations = {
+            "spatial_violation": False,
+            "speed_limit_violation": False,
+            "station_signal_violation": False,
+            "lead_train_signal_violation": False,
+            "negative_speed_violation": False,
+            "accel_not_zero_violation": False,
+            "any_violation": False,
+        }
 
-    @staticmethod
-    def _log_override(original: float, corrected: float, constraint_id: str) -> None:
-        append_row(time.time(), original, corrected, constraint_id)
+        # 1. Negative speed check
+        projected_v = u + proposed_a * self.dt
+        if projected_v < 0.0:
+            violations["negative_speed_violation"] = True
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "NEGATIVE_SPEED_VIOLATION")
+
+        # 2. Speed limit check
+        if u > seg.limit_ms + 0.01:
+            violations["speed_limit_violation"] = True
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "SPEED_LIMIT_VIOLATION")
+
+        # 3. Accel not zero at stationary or at speed limit
+        if (u < 0.1 and abs(proposed_a) > 0.01) or \
+           (abs(u - seg.limit_ms) < 0.01 and proposed_a > 0.01):
+            violations["accel_not_zero_violation"] = True
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "ACCEL_NOT_ZERO_VIOLATION")
+
+        # 4. Spatial violation (SUVAT stopping distance check)
+        # dist_vio_check = u^2 / (2 * |EMERGENCY_DECEL|)
+        dist_vio_check = (u * u) / (2.0 * abs(EMERGENCY_DECEL))
+        if x_ai_zone_end + dist_vio_check >= x_obs_zone_start:
+            violations["spatial_violation"] = True
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "SPATIAL_VIOLATION")
+
+        # 5. Station signal violation
+        # If the obstacle IS the station and dwell not complete, and train tries to pass
+        if not station_cleared and x >= x_obs_zone_start:
+            violations["station_signal_violation"] = True
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "STATION_SIGNAL_VIOLATION")
+
+        # 6. Lead train signal violation
+        # If aspect is Red and train is accelerating
+        if train_aspect == 0 and proposed_a > 0.01:
+            violations["lead_train_signal_violation"] = True
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "LEAD_TRAIN_SIGNAL_VIOLATION")
+
+        violations["any_violation"] = any([
+            violations["spatial_violation"],
+            violations["speed_limit_violation"],
+            violations["station_signal_violation"],
+            violations["lead_train_signal_violation"],
+            violations["negative_speed_violation"],
+            violations["accel_not_zero_violation"],
+        ])
+
+        return violations
+
+    def _log(self, x_ai_zone_end: float, x_obs_zone_start: float, speed: float, constraint_id: str):
+        append_row(time.time(), x_ai_zone_end, x_obs_zone_start, speed, constraint_id)

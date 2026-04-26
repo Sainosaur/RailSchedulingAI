@@ -40,7 +40,7 @@ class LeadTrain:
         # --- Random Stalls for Training Mode ---
         if training_mode and self.dwell_timer == 0 and not self.stalled and not self.held:
             if self.np_random.random() < 0.001:
-                self.random_stall_timer = self.np_random.integers(15, 60)
+                self.random_stall_timer = self.np_random.integers(15, 61)
 
         # --- Stall override: emergency brake to stop ---
         if self.stalled or self.random_stall_timer > 0:
@@ -146,5 +146,5 @@ class LeadTrain:
                 self.x = next_station
                 self.v = 0.0
                 self.dwell_timer = self.np_random.integers(
-                    self.LEAD_DWELL_RANGE[0], self.LEAD_DWELL_RANGE[1]
+                    self.LEAD_DWELL_RANGE[0], self.LEAD_DWELL_RANGE[1] + 1
                 )

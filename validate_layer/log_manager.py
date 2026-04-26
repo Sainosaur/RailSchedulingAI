@@ -22,7 +22,7 @@ _LOG_DIR = str(Path(__file__).resolve().parent)
 _LOG_FILENAME = "override_log.csv"
 _LOG_PATH = os.path.join(_LOG_DIR, _LOG_FILENAME)
 
-_HEADER = ["timestamp", "original_ppo_a", "corrected_a", "constraint_id"]
+_HEADER = ["timestamp", "x_ai_zone_end", "x_obs_zone_start", "ai_speed", "constraint_id"]
 
 
 def get_log_path() -> str:
@@ -50,14 +50,14 @@ def init_log() -> None:
 
 
 def append_row(
-    timestamp: float, original: float, corrected: float, constraint_id: str
+    timestamp: float, x_ai_zone_end: float, x_obs_zone_start: float, ai_speed: float, constraint_id: str
 ) -> None:
     """Append a single override event row to the log."""
     if not LOG_ENABLED:
         return
 
     with open(_LOG_PATH, "a", newline="") as fh:
-        csv.writer(fh).writerow([timestamp, original, corrected, constraint_id])
+        csv.writer(fh).writerow([timestamp, x_ai_zone_end, x_obs_zone_start, ai_speed, constraint_id])
 
 
 def clear_log() -> None:

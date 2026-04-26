@@ -5,12 +5,12 @@ from pathlib import Path
 
 _HEADWAY_TABLE: dict[int, tuple[float, float]] = {
     # index: (SH in metres, TH in seconds)
-    0: (312.5, 12.5),  # S0  90 km/h
-    1: (312.5, 12.5),  # S1  90 km/h
-    2: (138.9, 8.3),  # S2  60 km/h
-    3: (34.7, 4.2),  # S3  30 km/h
-    4: (34.7, 4.2),  # S4  30 km/h
-    5: (34.7, 4.2),  # S5  30 km/h
+    0: (390.0, 15.6),
+    1: (390.0, 15.6),
+    2: (170.0, 10.2),
+    3: (40.0, 4.8),
+    4: (40.0, 4.8),
+    5: (40.0, 4.8),
 }
 
 
@@ -65,7 +65,6 @@ class Segment:
     gradient: float
     speed_limit: int | None
     hazard: bool
-    block_boundaries: list[Block] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -89,10 +88,6 @@ class VLSegment:
     limit_ms: float  # speed limit  (m/s)
     spatial_headway: float  # SH — metres, no buffer
     temporal_headway: float  # TH — seconds, no buffer
-    block_boundaries: list[float] = field(default_factory=list)
-    # Ascending list of absolute positions (metres) where fixed blocks
-    # begin within this segment.  The first boundary equals self.start;
-    # subsequent boundaries are spaced SH apart.
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +195,6 @@ def graph() -> net.Graph:
                     / (next_station.distance - station.distance),
                     limits[i],
                     False,
-                    boundaries,
                 ),
             )
 
@@ -233,21 +227,7 @@ def build_vl_segments() -> list[VLSegment]:
 
         sh, th = _HEADWAY_TABLE[edge.position]
 
-        boundaries: list[float] = []
-        pos = float(start_m)
-        while pos < end_m:
-            boundaries.append(pos)
-            pos += sh
-        if boundaries[-1] < end_m:
-            boundaries.append(float(end_m))
-        # Merge the last zone into the second-to-last if it is shorter
-        # than SH — matching the Block-level merge above.
-        if len(boundaries) >= 3:
-            last_zone_len = boundaries[-1] - boundaries[-2]
-            if last_zone_len < sh:
-                # Remove the second-to-last boundary so the final zone
-                # absorbs both and has length >= SH.
-                del boundaries[-2]
+        block_boundaries = []
 
         segments.append(
             VLSegment(
@@ -257,7 +237,6 @@ def build_vl_segments() -> list[VLSegment]:
                 limit_ms=limit_ms,
                 spatial_headway=sh,
                 temporal_headway=th,
-                block_boundaries=boundaries,
             )
         )
 

@@ -57,14 +57,15 @@ class ModernizedLine104(gym.Env):
         self.lead_train = LeadTrain(stations=self.STATIONS)  # <-- INITIALIZE LEAD TRAIN
 
         # Spaces: We use a symmetric [-1, 1] space for the agent.
-        # Inside step(), we map [-1, 0] -> [DECEL, 0] and [0, 1] -> [0, ACCEL]
+        # Inside step(), we map [-1, 0] -> [-1.0, 0.0] and [0, 1] -> [0.0, 0.5]
         self.action_space = gym.spaces.Box(
             low=-1.0, high=1.0, shape=(1,), dtype=np.float32
         )
+        # New observation space: 8 dimensions
         self.observation_space = gym.spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            low=np.array([0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
             high=np.array(
-                [80000.0, 30.0, 80000.0, 3.0, 80000.0, 30.0, 10000.0], dtype=np.float32
+                [80000.0, 30.0, 1000.0, 3.0, 3.0, 80000.0, 2000.0, 10000.0], dtype=np.float32
             ),
             dtype=np.float32,
         )
@@ -77,9 +78,9 @@ class ModernizedLine104(gym.Env):
         self.last_station_idx: int = 0
         self.visited_stations: set[int] = set()
         self.last_a: float = 0.0
+        self.previous_a: float = 0.0
         self.step_count: int = 0
-
-        self.step_count = 0
+        self.station_cleared: bool = False
 
         self.timetable: Timetable = generate_timetable(
             self.vl.segments,
@@ -98,9 +99,11 @@ class ModernizedLine104(gym.Env):
         self.last_station_idx = 0
         self.visited_stations = {0}
         self.last_a = 0.0
+        self.previous_a = 0.0
         self.step_count = 0
         self.ai_arrival_times = {}
-        self.ai_departure_time = 0.0  # Initialize departure time
+        self.ai_departure_time = 0.0
+        self.station_cleared = False
 
         # Reset the lead train ~2km ahead
         start_lead_x = self.TRACK_START + 2000.0
@@ -110,211 +113,215 @@ class ModernizedLine104(gym.Env):
         )
 
         self._update_dtz()
-        return self._get_obs(), {
+
+        # Initial aspects for obs
+        seg = self.vl.get_segment(self.x)
+        lead_seg = self.vl.get_segment(self.lead_train.x)
+        lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+        x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+        train_aspect = self.vl.compute_signal_aspect(self.x, seg, x_lead_zone_start)
+        station_aspect = 0 # Not cleared yet
+        optimal_braking_distance = (self.v ** 2) / (2 * 0.5)
+
+        return self._get_obs(train_aspect, station_aspect, x_lead_zone_start, optimal_braking_distance), {
             "overridden": False,
             "timetable": self.timetable.to_dict(),
         }
 
     def step(self, action: np.ndarray):
-        # Action Remapping: Map symmetric [-1, 1] to physical [DECEL, ACCEL]
-        # This ensures that an initial random action of 0.0 maps to 0.0 (coasting).
+        # 1. Action space termination check
         raw_action = float(action[0])
+        if raw_action > 0.5 or raw_action < -1.0:
+            return self._get_obs(), -100.0, True, False, {"error": "Physically impossible action"}
+
+        # Remap action: [0, 0.5] and [-1.0, 0]
         if raw_action >= 0:
-            proposed_a = raw_action * self.ACCEL
+            proposed_a = raw_action # Already in [0, 0.5] range if valid
         else:
-            proposed_a = (
-                abs(raw_action) * self.DECEL
-            )  # DECEL is negative, so we use abs()
-
-        self._cached_nearest_pos = self._nearest_obstruction(self.x)
-        self._cached_dist_to_occupied = self._dist_to_nearest_occupied_from_cache()
-        env_aspect = self._get_signal_aspect_from_cache()
-        self._cached_aspect = env_aspect
-
-
-        # --- CLEAN INTERLOCK ---
-        # Any physical interlocks have been removed to give full throttle control.
-        # We rely on rewards and the Validation Layer for safety.
-
-        # --- VALIDATION LAYER ---
-        safe_a, safety_overridden = self.vl.get_safe_action(
-            proposed_a, env_aspect, self.x, self.v, self.dtz, self._cached_dist_to_occupied
-        )
-
-        action_delta = abs(safe_a - self.last_a)
-        self.last_a = safe_a
-
-        # --- AI PHYSICS ---
+            proposed_a = raw_action # Already in [-1.0, 0] range if valid
+        
+        # 2. Physics & State Update (AI Train)
         prev_x, prev_v = self.x, self.v
         seg = self.vl.get_segment(self.x)
+        
+        # Apply traction (simple SUVAT for now, using proposed_a as if it was safe_a for physics)
+        # But wait, we should apply safe_a after VL check? 
+        # Instructions say: "On every step, after computing x and u: ... Call vl.check_and_log(...)"
+        # This implies we compute the resulting x and u first? 
+        # But check_and_log takes proposed_a.
+        
+        # I'll follow the physics logic from before but using proposed_a
         limit_v = seg.limit_ms
-
-        if safe_a == 0.0:
-            self.v = min(prev_v, limit_v)
-            dx = self.v * self.DT
-        elif safe_a > 0.0:
+        dt = self.DT
+        
+        if proposed_a == 0.0:
+            new_v = min(prev_v, limit_v)
+            dx = new_v * dt
+        elif proposed_a > 0.0:
             if prev_v >= limit_v:
-                self.v, dx = limit_v, limit_v * self.DT
+                new_v, dx = limit_v, limit_v * dt
             else:
-                t_to_limit = (limit_v - prev_v) / safe_a
-                if self.DT <= t_to_limit:
-                    self.v = prev_v + safe_a * self.DT
-                    dx = prev_v * self.DT + 0.5 * safe_a * self.DT**2
+                t_to_limit = (limit_v - prev_v) / proposed_a
+                if dt <= t_to_limit:
+                    new_v = prev_v + proposed_a * dt
+                    dx = prev_v * dt + 0.5 * proposed_a * dt**2
                 else:
-                    dx = (
-                        prev_v * t_to_limit
-                        + 0.5 * safe_a * t_to_limit**2
-                        + limit_v * (self.DT - t_to_limit)
-                    )
-                    self.v = limit_v
+                    dx = (prev_v * t_to_limit + 0.5 * proposed_a * t_to_limit**2 + limit_v * (dt - t_to_limit))
+                    new_v = limit_v
         else:
             if prev_v <= 0.0:
-                self.v, dx = 0.0, 0.0
+                new_v, dx = 0.0, 0.0
             else:
-                t_to_zero = prev_v / abs(safe_a)
-                if self.DT <= t_to_zero:
-                    self.v = prev_v + safe_a * self.DT
-                    dx = prev_v * self.DT + 0.5 * safe_a * self.DT**2
+                t_to_zero = prev_v / abs(proposed_a)
+                if dt <= t_to_zero:
+                    new_v = prev_v + proposed_a * dt
+                    dx = prev_v * dt + 0.5 * proposed_a * dt**2
                 else:
-                    dx = prev_v * t_to_zero + 0.5 * safe_a * t_to_zero**2
-                    self.v = 0.0
+                    dx = prev_v * t_to_zero + 0.5 * proposed_a * t_to_zero**2
+                    new_v = 0.0
+        
+        new_v = max(0.0, new_v)
+        new_x = min(prev_x + max(0.0, dx), self.TRACK_END)
+        
+        # Negative speed guard
+        if prev_v + proposed_a * dt < -0.01:
+             return self._get_obs(), -100.0, True, False, {"error": "Negative speed violation"}
 
-        self.v = max(0.0, self.v)
-        self.x = min(prev_x + max(0.0, dx), self.TRACK_END)
-        applied_traction = max(0.0, safe_a)
-        self.time += self.DT
+        self.x = new_x
+        self.v = new_v
+        self.time += dt
         self.step_count += 1
-
-        # --- LEAD TRAIN UPDATE ---
-        self.lead_train.advance(
-            self.DT, self.vl, self.active_hazards, self.training_mode
-        )
-        self._update_dtz()
-
-        # --- STATION ARRIVAL ---
-        reached_new_station = False
+        
+        # 3. Lead Train Update
+        self.lead_train.advance(dt, self.vl, self.active_hazards, self.training_mode)
+        
+        # 4. Aspect & Signal Calculations
+        seg = self.vl.get_segment(self.x)
+        sh = seg.spatial_headway
+        
+        # Lead train zone start
+        lead_seg = self.vl.get_segment(self.lead_train.x)
+        lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+        x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+        
+        train_aspect = self.vl.compute_signal_aspect(self.x, seg, x_lead_zone_start)
+        
+        # Station aspect
+        x_station_zone_start = seg.end - sh
+        
+        # Check for station arrival
         next_st_idx = self.last_station_idx + 1
-        scheduled_arrival_time = None
-        actual_arrival_time = None
+        reached_new_station = False
+        if next_st_idx < len(self.STATIONS) and self.x >= x_station_zone_start:
+            # Arrived at station zone
+            if next_st_idx not in self.visited_stations:
+                reached_new_station = True
+                self.last_station_idx = next_st_idx
+                self.visited_stations.add(next_st_idx)
+                self.station_cleared = False
+                dwell_time = self.np_random.integers(20, 41) # 20-40 inclusive
+                self.ai_departure_time = self.time + dwell_time
+                self.ai_arrival_times[next_st_idx] = self.time
 
-        # Detect arrival: Must be within 2m of station AND moving slowly (v < 0.2)
-        # OR simply passing it if they choose to zoom through (though discouraged by rewards)
-        if next_st_idx < len(self.STATIONS) and self.x >= self.STATIONS[next_st_idx] - 2.0:
-            reached_new_station = True
-            self.last_station_idx = next_st_idx
-            self.visited_stations.add(next_st_idx)
+        if not self.station_cleared:
+            if hasattr(self, "ai_departure_time") and self.time >= self.ai_departure_time:
+                self.station_cleared = True
+        
+        if not self.station_cleared:
+            station_aspect = 0
+        else:
+            station_aspect = 3
             
-            # Snap removed for free movement. v = 0.0 removed.
-            
-            actual_arrival_time = self.time
-            entry = self.timetable.get_entry(next_st_idx)
-            scheduled_arrival_time = (
-                entry.scheduled_arrival if entry else 0.0
-            )
-            self.ai_arrival_times[next_st_idx] = self.time
-
-            # Set departure time (Dwell: 20-40s)
-            if next_st_idx < len(self.STATIONS) - 1:
-                self.ai_departure_time = self.time + self.np_random.integers(20, 40)
-            else:
-                self.ai_departure_time = self.time + 999999.0 # End of line
-
-        # --- REWARDS ---
-        last_st_pos = self.STATIONS[self.last_station_idx]
-        next_idx = min(self.last_station_idx + 1, len(self.STATIONS) - 1)
-        next_st_pos = self.STATIONS[next_idx]
-
-        # Calculate the next scheduled arrival time
-        next_entry = self.timetable.get_entry(next_idx)
-        # Use the station entry for the scheduled time
-        next_scheduled = next_entry.scheduled_arrival if next_entry else 0.0
-
-        in_dwell = (
-            hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time
+        # 5. Validation Layer Integration
+        violations = self.vl.check_and_log(
+            self.x, self.v, proposed_a, seg, x_lead_zone_start, train_aspect, self.station_cleared
         )
-
+        
+        # 6. Rewards
+        self._update_dtz()
+        optimal_braking_distance = (self.v ** 2) / (2 * 0.5)
+        
         state = TrainState(
             current_position=self.x,
             previous_position=prev_x,
-            last_station_position=last_st_pos,
-            next_station_position=next_st_pos,
+            last_station_position=self.STATIONS[self.last_station_idx],
+            next_station_position=self.STATIONS[min(self.last_station_idx + 1, len(self.STATIONS) - 1)],
             current_speed=self.v,
             speed_limit=seg.limit_ms,
             headway=self._compute_headway(),
             temporal_headway=seg.temporal_headway,
-            spatial_headway=seg.spatial_headway,
+            spatial_headway=sh,
             reached_new_station=reached_new_station,
-            scheduled_arrival_time=scheduled_arrival_time,
-            actual_arrival_time=actual_arrival_time,
-            collision=(self.x >= self.lead_train.x),
-            safety_overridden=safety_overridden,
-            action_delta=action_delta,
-            applied_traction=applied_traction,
-            distance_to_occupied=self._dist_to_nearest_occupied(),
-            is_dwelling=in_dwell,
+            scheduled_arrival_time=self.timetable.get_entry(self.last_station_idx).scheduled_arrival if self.timetable.get_entry(self.last_station_idx) else 0.0,
+            actual_arrival_time=self.ai_arrival_times.get(self.last_station_idx),
+            collision=(train_aspect == -1),
+            safety_overridden=False, # Overrides removed
+            action_delta=abs(proposed_a - self.previous_a),
+            applied_traction=max(0.0, proposed_a),
+            distance_to_occupied=x_lead_zone_start - self.x,
+            is_dwelling=not self.station_cleared,
             station_index=self.last_station_idx,
-            signal_aspect=self._get_signal_aspect(),
-            applied_acceleration=safe_a,
+            signal_aspect=train_aspect, # Use train_aspect for now
+            applied_acceleration=proposed_a,
             proposed_acceleration=proposed_a,
             current_time=self.time,
-            next_scheduled_arrival_time=next_scheduled,
+            next_scheduled_arrival_time=self.timetable.get_entry(min(self.last_station_idx + 1, len(self.STATIONS) - 1)).scheduled_arrival if self.timetable.get_entry(min(self.last_station_idx + 1, len(self.STATIONS) - 1)) else 0.0,
         )
+        # We need to pass more info to reward function as per instructions
+        reward_info = {
+            "train_aspect": train_aspect,
+            "station_aspect": station_aspect,
+            "station_cleared": self.station_cleared,
+            "x_lead_zone_start": x_lead_zone_start,
+            "x_station_zone_start": x_station_zone_start,
+            "optimal_braking_distance": optimal_braking_distance,
+            "violations": violations,
+            "lead_train_stalled": self.lead_train.stalled,
+            "lead_train_held": self.lead_train.held,
+            "previous_a": self.previous_a
+        }
+        
+        reward_out = compute_reward(state, reward_info)
+        self.previous_a = proposed_a
 
-        reward_out = compute_reward(state)
-        terminated = bool(self.x >= self.TRACK_END or reward_out.terminate)
+        # 7. Termination
+        terminated = False
+        if self.x >= self.TRACK_END:
+            terminated = True
+        if train_aspect == -1: # Collision / Zone overlap
+            terminated = True
+        if reward_out.terminate:
+            terminated = True
+            
         truncated = bool(self.step_count >= self.MAX_STEPS)
 
-        # Clear cache before returning observation to ensure next state gets fresh data
-        if hasattr(self, "_cached_aspect"): del self._cached_aspect
-        if hasattr(self, "_cached_dist_to_occupied"): del self._cached_dist_to_occupied
-        if hasattr(self, "_cached_nearest_pos"): del self._cached_nearest_pos
-
+        # 8. Info Dict
+        x_ai_zone_end, _ = self.vl.compute_zone_boundaries(self.x, seg)
         info = {
-            "current_position": self.x,
-            "current_speed": self.v,
-            "safety_overridden": safety_overridden,
-            "safe_a": safe_a,
-            "proposed_a": proposed_a,
-            "aspect": env_aspect,
-            "time": self.time,
-            "segment": seg.id,
-            "reward_breakdown": {
-                "progress": reward_out.r_progress,
-                "headway": reward_out.r_headway,
-                "speed": reward_out.r_speed,
-                "heartbeat": reward_out.r_heartbeat,
-                "signal_compliance": reward_out.r_signal_compliance,
-                "station": reward_out.r_station,
-                "punctuality": reward_out.r_time,
-                "override": reward_out.r_override,
-                "jerk": reward_out.r_jerk,
-                "energy": reward_out.r_energy,
-                "patience": reward_out.r_patience,
-                "creep": reward_out.r_creep,
-                "violation": reward_out.r_violation,
-                "collision": reward_out.r_collision,
-                "lateness": reward_out.r_lateness,
-            },
+            "train_aspect": train_aspect,
+            "station_aspect": station_aspect,
+            "station_cleared": self.station_cleared,
+            "x_ai_zone_end": x_ai_zone_end,
+            "x_lead_zone_start": x_lead_zone_start,
+            "x_station_zone_start": x_station_zone_start,
+            "optimal_braking_distance": optimal_braking_distance,
+            "violations": violations,
+            "reward_breakdown": reward_out.to_dict() if hasattr(reward_out, "to_dict") else {},
             "punctuality_status": self.get_punctuality_status(),
         }
 
-        return self._get_obs(), reward_out.r_total, terminated, truncated, info
+        return self._get_obs(train_aspect, station_aspect, x_lead_zone_start, optimal_braking_distance), reward_out.r_total, terminated, truncated, info
 
-    def _get_obs(self) -> np.ndarray:
+    def _get_obs(self, train_aspect: int, station_aspect: int, x_lead_zone_start: float, optimal_braking_distance: float) -> np.ndarray:
         return np.array(
             [
                 self.x,
                 self.v,
                 self.dtz,
-                float(
-                    self._cached_aspect
-                    if hasattr(self, "_cached_aspect")
-                    else self._get_signal_aspect()
-                ),
-                self._cached_dist_to_occupied
-                if hasattr(self, "_cached_dist_to_occupied")
-                else self._dist_to_nearest_occupied(),
-                self.lead_train.v,
+                float(train_aspect),
+                float(station_aspect),
+                x_lead_zone_start,
+                optimal_braking_distance,
                 self.time,
             ],
             dtype=np.float32,
@@ -324,7 +331,7 @@ class ModernizedLine104(gym.Env):
         if self.render_mode == "human":
             seg = self.vl.get_segment(self.x)
             print(
-                f"t={self.time:7.1f}s | x={self.x:8.1f}m | v={self.v:5.2f}m/s | seg={seg.id} | dtz={self.dtz:8.1f}m | lead={self.lead_train.x:8.1f}m | sig={self._get_signal_aspect()}"
+                f"t={self.time:7.1f}s | x={self.x:8.1f}m | v={self.v:5.2f}m/s | seg={seg.id} | dtz={self.dtz:8.1f}m | lead={self.lead_train.x:8.1f}m"
             )
 
     @property
@@ -356,73 +363,8 @@ class ModernizedLine104(gym.Env):
 
     # --- API HELPER METHODS ---
     def _update_dtz(self):
-        self.dtz = self.vl.compute_dtz(self.x)
-
-    def _nearest_obstruction(self, from_x: float) -> float:
-        # We removed the 'end of segment is barrier' logic as it causes deadlocks.
-        # Barriers are now only actual trains and hazards.
-        nearest = self.TRACK_END
-
-        # Also check for lead train
-        nearest = min(nearest, self.lead_train.x)
-
-        # Also check for active hazards
-        for h_start, _ in self.active_hazards:
-            if h_start > from_x:
-                nearest = min(nearest, h_start)
-        return nearest
-
-    def _dist_to_nearest_occupied(self) -> float:
-        nearest = self._nearest_obstruction(self.x)
-        
-        # Treat next station as obstruction for safety and speed control, 
-        # but only if we haven't reached it or are still in dwell.
-        if self.last_station_idx + 1 < len(self.STATIONS):
-            # If dwell is done, station is no longer an obstruction
-            in_dwell = hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time
-            if in_dwell:
-                nearest = min(nearest, self.STATIONS[self.last_station_idx + 1] + 2.0)
-            
-        return max(0.0, nearest - self.x)
-
-    def _get_signal_aspect(self) -> int:
-        # Force RED during dwell
-        if hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time:
-            return 0
-
-        # Otherwise, follow lead train/hazards (TRUE obstructions)
-        d = self._nearest_obstruction(self.x) - self.x
-        sh = self.vl.get_segment(self.x).spatial_headway
-        if d > 3 * sh:
-            return 3
-        if d > 2 * sh:
-            return 2
-        if d > sh:
-            return 1
-        return 0
-
-    def _get_signal_aspect_from_cache(self) -> int:
-        # Force RED during dwell
-        if hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time:
-            return 0
-
-        d = self._cached_nearest_pos - self.x
-        sh = self.vl.get_segment(self.x).spatial_headway
-        if d > 3 * sh:
-            return 3
-        if d > 2 * sh:
-            return 2
-        if d > sh:
-            return 1
-        return 0
-
-    def _dist_to_nearest_occupied_from_cache(self) -> float:
-        nearest = self._cached_nearest_pos
-        if self.last_station_idx + 1 < len(self.STATIONS):
-            in_dwell = hasattr(self, "ai_departure_time") and self.time < self.ai_departure_time
-            if in_dwell:
-                nearest = min(nearest, self.STATIONS[self.last_station_idx + 1] + 2.0)
-        return max(0.0, nearest - self.x)
+        seg = self.vl.get_segment(self.x)
+        self.dtz = self.vl.compute_dtz(self.x, seg)
 
     def _compute_headway(self) -> float:
         return (self.lead_train.x - self.x) / self.v if self.v > 0.01 else 9999.0
