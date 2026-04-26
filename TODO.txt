@@ -97,8 +97,14 @@ Not sure is tolerance buffer is still needed. Probs not.
 
 I might increase the SH for segments 0 and 1 to 390 m, SH for segment 2 to 170 m, and SH for segment 3, 4, and 5 to 40 m. 
 I did this by taking stopping distance and multiplying it by 1.25. These values will change as I will ask Mechanical team for the actual stopping distance.
+Some rewards and pentalties may be redundant, hoenstly, i think (in order to train the AI) we should remove the VL override penalties and just use the 
+reward function to encourage safe behaviour. But VL is still needed for absolute safety. I change my position on the overriding, for the prototype,
+the VL won't override, it will just log the violation whenver it happens. The failure, penalties, rewards, and behaviour for safe, high throttle, energy efficient,
+and comfortable driving will be handled by the reward function. 
 
-
+TODO later by me, ask mech group for stopping distance in meters, max deceleration in m/s/s (emergency breaking), max acceleration in m/s/s, 
+confortable deceleration in m/s/s, comfortable acceleration in m/s/s, max jerk in m/s/s/s, and comfortable jerk in m/s/s/s. stopping distance safety factor 
+(if they have one, otherwise assume 1.25).
 
 
 
