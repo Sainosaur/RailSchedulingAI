@@ -20,7 +20,6 @@ from typing import Optional
 
 
 @dataclass
-@dataclass
 class TimetableEntry:
     """One row of the timetable — a single station stop."""
 
