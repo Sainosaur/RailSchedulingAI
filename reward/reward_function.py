@@ -73,6 +73,8 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
 
     # Step penalty — drives directed exploration toward the terminus
     out.r_step = -0.5
+    if train_aspect == 0 and u < 0.1:
+        out.r_step = 0.0
 
     # 1. Progress Reward
     # Scaled so that driving at the speed limit always roughly offsets the step penalty,
@@ -169,8 +171,6 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     }
     if state.reached_new_station:
         out.r_station = STATION_REWARDS.get(state.station_index, 0.0)
-        if state.station_index == 6:
-            out.r_station += 50.0  # Terminus completion bonus
 
     # 8. Punctuality Reward
     if state.reached_new_station:
