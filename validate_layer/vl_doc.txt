@@ -74,5 +74,6 @@ S5        67394      76651    30            034.7
 6. Deployment Principles
 - Edge Autonomy: Each train hosts its own VL instance. No cloud connectivity required for safety inference.
 - ETCS L2 Compatibility: Leverages trackside balises and RBC (Radio Block Centre) for movement authority.
+- Scalability
 
 AI Declaration: AI was used iteratively during research and planning. All final safety design choices (logic, formulae, discrete-to-continuous mapping, architectural tracking) were uniquely synthesised for Polish Rail Line 104 specificities.
