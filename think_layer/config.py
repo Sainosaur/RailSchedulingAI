@@ -39,7 +39,7 @@ class TrainConfig:
     # Must be > 1 SH (~40m) + terminus gap so the AI sees Green/Yellow
     # all the way to 76651m and avoids the Red-aspect stagnation trap.
     # 94.7m = original 34.7m + 60m extra clearance.
-    lead_stop_offset: float = 194.7
+    lead_stop_offset: float = 94.7
     max_episode_steps: int = 10_000
     n_envs: int = 12
     slack_factor: float = 1.1  # 10% operational buffer for RL stability
