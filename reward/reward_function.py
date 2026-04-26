@@ -152,7 +152,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         # Only award when the agent is moving (not coasting at a stop) so this
         # doesn't fire as a free cruise bonus when the gap is passively maintained.
         if 3*sh <= x_diff <= 4*sh and u > 0.5:
-            out.r_signal_compliance = 2.0  # Reduced from 5.0 — should not dominate cruise
+            out.r_signal_compliance = 0.5  # Reduced from 5.0 — should not dominate cruise
 
     # Station Signal
     if station_aspect == 0:
