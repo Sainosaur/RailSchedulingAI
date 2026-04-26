@@ -131,15 +131,10 @@ class ModernizedLine104(gym.Env):
         }
 
     def step(self, action: np.ndarray):
-        # 1. Action space termination check
+        # 1. Action space check
         raw_action = float(action[0])
         if raw_action > 0.5 or raw_action < -1.0:
-            seg = self.vl.get_segment(self.x)
-            lead_seg = self.vl.get_segment(self.lead_train.x)
-            lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
-            x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
-            fallback_obs = self._get_obs(0, 0, x_lead_zone_start, 0.0)
-            return fallback_obs, -100.0, True, False, {"error": "Physically impossible action"}
+            raw_action = max(-1.0, min(0.5, raw_action))  # clamp silently, VL logs violation
 
         # No Remapping: The raw action value IS the proposed acceleration directly.
         if raw_action >= 0:
@@ -190,14 +185,6 @@ class ModernizedLine104(gym.Env):
         new_v = max(0.0, new_v)
         new_x = min(prev_x + max(0.0, dx), self.TRACK_END)
         
-        # Negative speed guard
-        if prev_v + proposed_a * dt < -0.01:
-             lead_seg = self.vl.get_segment(self.lead_train.x)
-             lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
-             x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
-             fallback_obs = self._get_obs(0, 0, x_lead_zone_start, 0.0)
-             return fallback_obs, -100.0, True, False, {"error": "Negative speed violation"}
-
         self.x = new_x
         self.v = new_v
         self.time += dt
@@ -299,11 +286,7 @@ class ModernizedLine104(gym.Env):
 
         # 7. Termination
         terminated = False
-        if self.x >= self.TRACK_END:
-            terminated = True
         if train_aspect == -1: # Collision / Zone overlap
-            terminated = True
-        if reward_out.terminate:
             terminated = True
             
         truncated = bool(self.step_count >= self.MAX_STEPS)
