@@ -204,7 +204,6 @@ class SimulationRunner:
                     else 9999.0
                 ),
                 "segment_id": segment.id,
-                "segment_id": segment.id,
                 "approaching_station": STATION_NAMES[next_st_idx],
                 "dwell_timer": int(raw_env.ai_dwell_timer),
                 "authority_ranges": {
@@ -290,7 +289,7 @@ class SimulationRunner:
                 )
                 next_st_pos = raw_env.STATIONS[next_st_idx]
 
-                signal_aspect = info.get("aspect", raw_env._get_signal_aspect())
+                signal_aspect = info.get("train_aspect", raw_env._get_signal_aspect())
                 if signal_aspect == 3:
                     signal = "green"
                 elif signal_aspect == 2:
