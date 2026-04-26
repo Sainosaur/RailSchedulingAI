@@ -78,7 +78,7 @@ def run_and_collect():
                 elif current_signal == 2: target_v = v_lim * 0.7
                 else: target_v = v_lim
             
-            if current_v < target_v - 0.2: action_val = 1.0
+            if current_v < target_v - 0.2: action_val = 0.5
             elif current_v > target_v + 0.2: action_val = -1.0
             else: action_val = 0.0
             
@@ -130,23 +130,29 @@ def plot(data, breakdown):
     # 2. Component Breakdown (Stacked-ish or just key ones)
     ax = axes[1]
     # Filter for interesting ones
-    keys = ["progress", "speed", "signal_compliance", "override", "heartbeat", "lateness"]
+    keys = ["r_step", "r_progress", "r_speed", "r_signal_compliance",
+            "r_station", "r_time", "r_jerk", "r_patience"]
     for k in keys:
         if k in breakdown:
             ax.plot(x, breakdown[k], label=k, alpha=0.7)
     ax.set_ylabel("Component Reward")
     ax.set_title("REWARD COMPONENTS (Detailed Audit)", fontweight="bold")
     ax.legend(loc="upper left", ncol=3, fontsize='small')
-    ax.set_ylim(-10, 20) # Focus on steady state rewards
+    ax.set_ylim(-12, 12) # Focus on steady state rewards
 
     # 3. MileStone Rewards (Log scale or high limit to see station jumps)
     ax = axes[2]
-    if "station" in breakdown:
-        ax.plot(x, breakdown["station"], label="Station Milestone", color="gold", linewidth=2)
-    if "violation" in breakdown:
-        ax.plot(x, breakdown["violation"], label="Violation", color="red", linestyle=":")
+    if "r_station" in breakdown:
+        ax.plot(x, breakdown["r_station"], label="Station Milestone",
+                color="gold", linewidth=2)
+    if "r_time" in breakdown:
+        ax.plot(x, breakdown["r_time"], label="Punctuality",
+                color="green", linestyle=":")
+    if "r_patience" in breakdown:
+        ax.plot(x, breakdown["r_patience"], label="Patience",
+                color="purple", linestyle="--")
     ax.set_ylabel("Milestone Reward")
-    ax.set_title("MILESTONES & FATALITIES", fontweight="bold")
+    ax.set_title("MILESTONES & PUNCTUALITY", fontweight="bold")
     ax.legend(loc="upper left")
 
     # 4. Cumulative Reward
