@@ -115,7 +115,7 @@ def evaluate(
                 elif info["punctuality_status"]["ai"].get("status") == "arrived":
                     ep_stations = 7
 
-            if info.get("safety_overridden", False):
+            if info.get("violations", {}).get("any_violation", False):
                 ep_overrides += 1
 
             # Per-step row
@@ -126,10 +126,10 @@ def evaluate(
                 "position": info.get("current_position", obs[0][0] if hasattr(obs[0], "__len__") else 0.0),
                 "speed": info.get("current_speed", obs[0][1] if hasattr(obs[0], "__len__") else 0.0),
                 "segment": info.get("segment", ""),
-                "aspect": info.get("aspect", -1),
+                "train_aspect": info.get("train_aspect", -1),
+                "station_aspect": info.get("station_aspect", -1),
                 "proposed_a": info.get("proposed_a", 0.0),
-                "safe_a": info.get("safe_a", 0.0),
-                "overridden": info.get("overridden", False),
+                "any_violation": info.get("violations", {}).get("any_violation", False),
                 "reward": raw_reward,
             }
 
@@ -159,7 +159,7 @@ def evaluate(
         print(
             f"  Episode {ep}: reward={ep_reward:+.2f}  "
             f"steps={ep_steps}  "
-            f"overrides={ep_overrides} ({override_rate:.1f}%)  "
+            f"violations={ep_overrides} ({override_rate:.1f}%)  "
             f"stations={stations_visited}/7"
         )
 

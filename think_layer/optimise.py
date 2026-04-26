@@ -28,7 +28,7 @@ from think_layer.config import TrainConfig
 # trial throughput.  train.py / trainer.py use "PPO_Line104" as its log prefix;
 # HPO trials use "PPO_{trial_number}" so the two namespaces never collide.
 
-_HPO_TOTAL_TIMESTEPS = 100_000  # short trial budget
+_HPO_TOTAL_TIMESTEPS = 250_000  # short trial budget
 _HPO_N_ENVS = 12  # fewer workers → less SubprocVecEnv IPC overhead
 # for short trials the spawn cost dominates at 16
 _HPO_MAX_EP_STEPS = 10_000  # cap episode length so trials don't stall on one ep
@@ -86,11 +86,25 @@ def objective(trial: optuna.Trial) -> float:
         "batch_size": trial.suggest_categorical("batch_size", [128, 256, 512]),
         "n_steps": trial.suggest_categorical("n_steps", [1024, 2048, 4096]),
         "gamma": trial.suggest_categorical("gamma", [0.99, 0.999, 0.9999]),
+        "gae_lambda": trial.suggest_categorical("gae_lambda", [0.90, 0.95, 0.99]),
         "ent_coef": trial.suggest_float("ent_coef", 0.001, 0.5, log=True),
+        "n_epochs": trial.suggest_categorical("n_epochs", [5, 10, 20]),
     }
 
-    net_arch_type = trial.suggest_categorical("net_arch", ["small", "medium", "large"])
-    net_arch = [64, 64] if net_arch_type == "small" else [128, 128] if net_arch_type == "medium" else [256, 256]
+    net_arch_type = trial.suggest_categorical(
+        "net_arch",
+        ["small", "medium", "large", "xlarge", "deep_small", "deep_large", "hybrid"]
+    )
+    net_arch_map = {
+        "small":       [64, 64],
+        "medium":      [128, 128],
+        "large":       [256, 256],
+        "xlarge":      [512, 512],
+        "deep_small":  [128, 128, 128],
+        "deep_large":  [256, 256, 256],
+        "hybrid":      [256, 512],
+    }
+    net_arch = net_arch_map[net_arch_type]
 
     # ── 2. Configure Run ───────────────────────────────────────────────────────
     config = TrainConfig()
@@ -98,6 +112,8 @@ def objective(trial: optuna.Trial) -> float:
     config.batch_size = kwargs["batch_size"]
     config.n_steps = kwargs["n_steps"]
     config.gamma = kwargs["gamma"]
+    config.gae_lambda = kwargs["gae_lambda"]
+    config.n_epochs = kwargs["n_epochs"]
     config.ent_coef = kwargs["ent_coef"]
     config.policy_net = net_arch
     config.value_net = net_arch
@@ -173,7 +189,7 @@ def objective(trial: optuna.Trial) -> float:
     return eval_cb.last_mean_reward
 
 
-def optimize(n_trials: int = 50):
+def optimize(n_trials: int = 150):
     """Orchestrates the Optuna study."""
     db_path = os.path.join(TrainConfig().log_dir, "optuna_study.db")
     storage = f"sqlite:///{db_path}"
@@ -219,7 +235,7 @@ def optimize(n_trials: int = 50):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--trials", type=int, default=50, help="Number of trials to run"
+        "--trials", type=int, default=150, help="Number of trials to run"
     )
     args = parser.parse_args()
 

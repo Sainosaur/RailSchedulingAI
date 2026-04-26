@@ -12,6 +12,7 @@ from stable_baselines3.common.callbacks import (
     CallbackList,
     CheckpointCallback,
     EvalCallback,
+    BaseCallback,
 )
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
@@ -20,6 +21,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from think_layer.agent import build_agent, make_env  # noqa: E402
 from think_layer.config import TrainConfig  # noqa: E402
+
+
+class SyncNormCallback(BaseCallback):
+    """Re-syncs eval VecNormalize obs_rms from training env every N steps."""
+    def __init__(self, train_env: VecNormalize, eval_env: VecNormalize, sync_freq: int = 10_000):
+        super().__init__()
+        self.train_env = train_env
+        self.eval_env = eval_env
+        self.sync_freq = sync_freq
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.sync_freq == 0:
+            self.eval_env.obs_rms = self.train_env.obs_rms
+        return True
 
 
 def train(config: TrainConfig) -> None:
@@ -90,7 +105,9 @@ def train(config: TrainConfig) -> None:
         verbose=1,
     )
 
-    callbacks = CallbackList([checkpoint_cb, eval_cb])
+    sync_cb = SyncNormCallback(vec_env, eval_venv, sync_freq=10_000)
+
+    callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb])
 
     # 3. Train
     print("\nStarting training...\n")
