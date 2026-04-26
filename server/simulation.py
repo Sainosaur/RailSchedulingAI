@@ -45,26 +45,35 @@ class SimulationRunner:
         self.venv = DummyVecEnv([make_env])
 
         # 3. Load Normalisation Stats
-        vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "final_vecnormalize.pkl"
-        if vecnorm_path.exists():
+        final_vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "final_vecnormalize.pkl"
+        best_vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "best_vecnormalize.pkl"
+
+        if final_vecnorm_path.exists():
+            vecnorm_path = final_vecnorm_path
+        elif best_vecnorm_path.exists():
+            print(f"INFO: final_vecnormalize.pkl not found, falling back to {best_vecnorm_path}")
+            vecnorm_path = best_vecnorm_path
+        else:
+            vecnorm_path = None
+            print(f"WARNING: No VecNormalize stats found at {final_vecnorm_path} or {best_vecnorm_path}. Running without norm.")
+
+        if vecnorm_path:
             # Workaround for numpy 2.x pickle loaded in numpy 1.x (and vice versa)
             import sys
             import importlib
             import numpy
 
-            # 1. Defensive imports of internal modules to satisfy Pyright/static analysis
+            # 1. Defensive imports of internal modules
             try:
                 import numpy.core.multiarray as ncm  # type: ignore
                 import numpy.core.numeric as ncn  # type: ignore
-                # Use importlib to avoid direct static reference to internal module
                 nr_pickle = importlib.import_module("numpy.random._pickle")
             except ImportError:
-                # Fallback if names differ or modules are moved
                 ncm = getattr(getattr(numpy, "core", None), "multiarray", None)
                 ncn = getattr(getattr(numpy, "core", None), "numeric", None)
                 nr_pickle = getattr(numpy.random, "_pickle", None)
 
-            # 2. Core aliases (numpy 2.x renamed core to _core)
+            # 2. Core aliases
             if hasattr(numpy, "core"):
                 sys.modules.setdefault("numpy._core", numpy.core)
                 if ncn:
@@ -72,27 +81,21 @@ class SimulationRunner:
                 if ncm:
                     sys.modules.setdefault("numpy._core.multiarray", ncm)
 
-            # 3. Monkeypatch __bit_generator_ctor to handle BitGenerator classes
+            # 3. Monkeypatch __bit_generator_ctor
             if nr_pickle and not hasattr(nr_pickle, "_patched"):
                 orig_ctor = getattr(nr_pickle, "__bit_generator_ctor", None)
                 if orig_ctor:
-
                     def patched_ctor(bit_generator_name):
                         if not isinstance(bit_generator_name, str):
                             if hasattr(bit_generator_name, "__name__"):
                                 bit_generator_name = bit_generator_name.__name__
                         return orig_ctor(bit_generator_name)
-
                     setattr(nr_pickle, "__bit_generator_ctor", patched_ctor)
                     setattr(nr_pickle, "_patched", True)
 
             self.venv = VecNormalize.load(str(vecnorm_path), self.venv)
             self.venv.training = False
             self.venv.norm_reward = False
-        else:
-            print(
-                f"WARNING: VecNormalize not found at {vecnorm_path}. Running without norm."
-            )
 
         # 4. Load PPO Checkpoint
         final_model_path = PROJECT_ROOT / "think_layer" / "models" / "final_model.zip"

@@ -110,7 +110,8 @@ class ModernizedLine104(gym.Env):
         self.step_count = 0
         self.ai_arrival_times = {}
         self.ai_departure_time = 0.0
-        self.station_cleared = False
+        # Start cleared at Chabówka (origin)
+        self.station_cleared = True
 
         # Reset the lead train ~2km ahead
         start_lead_x = self.TRACK_START + 2000.0

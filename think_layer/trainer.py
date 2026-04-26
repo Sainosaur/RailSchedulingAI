@@ -140,17 +140,16 @@ def train(config: TrainConfig) -> None:
     # 4. Save final model + normalisation stats
     final_model_path = os.path.join(config.model_dir, "final_model")
     final_vecnorm_path = os.path.join(config.model_dir, "final_vecnormalize.pkl")
+    best_vecnorm_path = os.path.join(config.model_dir, "best_vecnormalize.pkl")
 
     model.save(final_model_path)
     vec_env.save(final_vecnorm_path)
-
-    # Also save the best model's VecNormalize stats
-    best_vecnorm_path = os.path.join(config.model_dir, "best_vecnormalize.pkl")
+    # Also save as best_vecnormalize.pkl to ensure dashboard fallback works
     vec_env.save(best_vecnorm_path)
 
     print("\n" + "=" * 60)
     print("  Training complete!")
     print(f"  Final model  : {final_model_path}.zip")
     print(f"  Best model   : {os.path.join(config.model_dir, 'best_model.zip')}")
-    print(f"  VecNormalize : {final_vecnorm_path}")
+    print(f"  VecNormalize : {final_vecnorm_path} and {best_vecnorm_path}")
     print("=" * 60)
