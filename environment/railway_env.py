@@ -149,44 +149,25 @@ class ModernizedLine104(gym.Env):
         # 2. Physics & State Update (AI Train)
         prev_x, prev_v = self.x, self.v
         seg = self.vl.get_segment(self.x)
-        
-        # Apply traction (simple SUVAT for now, using proposed_a as if it was safe_a for physics)
-        # But wait, we should apply safe_a after VL check? 
-        # Instructions say: "On every step, after computing x and u: ... Call vl.check_and_log(...)"
-        # This implies we compute the resulting x and u first? 
-        # But check_and_log takes proposed_a.
-        
-        # I'll follow the physics logic from before but using proposed_a
         limit_v = seg.limit_ms
         dt = self.DT
         
-        if proposed_a == 0.0:
-            new_v = min(prev_v, limit_v)
-            dx = new_v * dt
-        elif proposed_a > 0.0:
-            if prev_v >= limit_v:
-                new_v, dx = limit_v, limit_v * dt
-            else:
-                t_to_limit = (limit_v - prev_v) / proposed_a
-                if dt <= t_to_limit:
-                    new_v = prev_v + proposed_a * dt
-                    dx = prev_v * dt + 0.5 * proposed_a * dt**2
-                else:
-                    dx = (prev_v * t_to_limit + 0.5 * proposed_a * t_to_limit**2 + limit_v * (dt - t_to_limit))
-                    new_v = limit_v
-        else:
-            if prev_v <= 0.0:
-                new_v, dx = 0.0, 0.0
-            else:
-                t_to_zero = prev_v / abs(proposed_a)
-                if dt <= t_to_zero:
-                    new_v = prev_v + proposed_a * dt
-                    dx = prev_v * dt + 0.5 * proposed_a * dt**2
-                else:
-                    dx = prev_v * t_to_zero + 0.5 * proposed_a * t_to_zero**2
-                    new_v = 0.0
+        # Track last acceleration for dashboard/reward
+        self.last_a = proposed_a
+
+        # Simple SUVAT with clamping to local speed limit
+        new_v = prev_v + proposed_a * dt
+        new_v = max(0.0, min(new_v, limit_v))
         
-        new_v = max(0.0, new_v)
+        # To avoid sticking at 0 due to tiny actions, if proposed_a > 0 and v=0, 
+        # ensure a minimum displacement if possible. 
+        # But SUVAT already gives dx = 0.5 * a * dt^2 which is > 0 if a > 0.
+        dx = (prev_v + new_v) / 2.0 * dt
+        
+        # Ensure that if proposed_a > 0, we actually move some distance
+        if proposed_a > 1e-4 and dx < 1e-4:
+            dx = 1e-4
+            
         new_x = min(prev_x + max(0.0, dx), self.TRACK_END)
         
         self.x = new_x
