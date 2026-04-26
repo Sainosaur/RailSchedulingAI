@@ -75,22 +75,37 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     out.r_step = -0.5
 
     # 1. Progress Reward
+    # Scaled so that driving at the speed limit always roughly offsets the step penalty,
+    # regardless of which segment the train is on. At 90 km/h (25 m/s): 25 * 0.02 = 0.5.
+    # At 30 km/h (8.33 m/s): 8.33 * 0.02 = 0.17 — used to bleed -0.33/step on slow segments.
+    # Fix: scale the multiplier by (max_limit / current_limit) so the reward is always ~0.5
+    # when driving at the local speed limit.
+    MAX_LINE_SPEED_MS = 25.0  # 90 km/h in m/s — fastest segment on line 104
+    speed_limit_scale = MAX_LINE_SPEED_MS / max(state.speed_limit, 1.0)
     distance_travelled = state.current_position - state.previous_position
     if distance_travelled > 0:
-        out.r_progress = min(2.0, distance_travelled * 0.02)
+        out.r_progress = min(2.0, distance_travelled * 0.02 * speed_limit_scale)
     else:
         out.r_progress = 0.0
     
     # Suspend if lead train issues
     if lead_train_stalled or lead_train_held:
-        out.r_progress = max(0.0, out.r_progress) # Don't penalise slow progress
+        out.r_progress = max(0.0, out.r_progress)
 
     # 2. Speed Compliance Reward
     effective_aspect = min(train_aspect, station_aspect)
 
     if effective_aspect == 3:
-        # Green: reward being at the speed limit, penalise deviation
-        out.r_speed = max(-10.0, -abs(u - state.speed_limit))
+        # Green: penalise overspeed only. Being below the limit while accelerating
+        # is correct behaviour after a station stop — do not penalise it.
+        # -abs(u - limit) was penalising acceleration phases by up to -1736 per journey.
+        at_terminus = (state.current_position >= state.next_station_position - 10.0 and u < 0.1)
+        if at_terminus:
+            out.r_speed = 0.0
+        elif u > state.speed_limit + 0.1:
+            out.r_speed = max(-10.0, -(u - state.speed_limit))  # overspeed penalty
+        else:
+            out.r_speed = 0.0  # at or below limit — fine
 
     elif effective_aspect in (1, 2):
         # Yellow / Double-Yellow: train does NOT need to brake right now — it just
