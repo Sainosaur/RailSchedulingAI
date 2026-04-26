@@ -76,15 +76,15 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
 
     # 1. Progress Reward
     # Scaled so that driving at the speed limit always roughly offsets the step penalty,
-    # regardless of which segment the train is on. At 90 km/h (25 m/s): 25 * 0.02 = 0.5.
-    # At 30 km/h (8.33 m/s): 8.33 * 0.02 = 0.17 — used to bleed -0.33/step on slow segments.
-    # Fix: scale the multiplier by (max_limit / current_limit) so the reward is always ~0.5
+    # regardless of which segment the train is on. At 90 km/h (25 m/s): 25 * 0.028 = 0.7.
+    # At 30 km/h (8.33 m/s): 8.33 * 0.028 = 0.23 — used to bleed -0.27/step on slow segments.
+    # Fix: scale the multiplier by (max_limit / current_limit) so the reward is always ~0.7
     # when driving at the local speed limit.
     MAX_LINE_SPEED_MS = 25.0  # 90 km/h in m/s — fastest segment on line 104
     speed_limit_scale = MAX_LINE_SPEED_MS / max(state.speed_limit, 1.0)
     distance_travelled = state.current_position - state.previous_position
     if distance_travelled > 0:
-        out.r_progress = min(2.0, distance_travelled * 0.02 * speed_limit_scale)
+        out.r_progress = min(2.0, distance_travelled * 0.028 * speed_limit_scale)
     else:
         out.r_progress = 0.0
     
@@ -139,7 +139,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     # A constant +2.0 bonus every cruise step was inflating cumulative reward by ~30,000+
     jerk = abs(state.applied_acceleration - info.get("previous_a", 0.0)) / dt
     if jerk > 1.0:
-        out.r_jerk = -4.0
+        out.r_jerk = -1.0
     # else: 0.0 — smooth control is expected, not rewarded
 
     # 5. Signal Compliance
@@ -151,7 +151,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         # Only award when the agent is moving (not coasting at a stop) so this
         # doesn't fire as a free cruise bonus when the gap is passively maintained.
         if 3*sh <= x_diff <= 4*sh and u > 0.5:
-            out.r_signal_compliance = 0.5  # Reduced from 5.0 — should not dominate cruise
+            out.r_signal_compliance = 2  # Reduced from 5.0 — should not dominate cruise
 
     # Station Signal
     if station_aspect == 0:
@@ -165,7 +165,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         3: +4.0,   # Tymbark
         4: +5.0,   # Limanowa
         5: +7.0,   # Marcinkowice
-        6: +10.0,  # Nowy Sącz (terminus — maximum reward)
+        6: +50000.0,  # Nowy Sącz (terminus — maximum reward)
     }
     if state.reached_new_station:
         out.r_station = STATION_REWARDS.get(state.station_index, 0.0)
@@ -175,13 +175,13 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         if state.scheduled_arrival_time is not None and state.actual_arrival_time is not None:
             deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
             if deviation <= 60.0:
-                out.r_time = 5.0
+                out.r_time = 1000.0
             else:
                 out.r_time = -4.0
     
     # 9. Patience Reward
     if state.is_dwelling and u < 0.1:
-        out.r_patience = 5.0
+        out.r_patience = 1.0
     elif station_cleared and train_aspect == 3 and u < 0.1:
         # Only penalise if station was already cleared last step too (avoid race condition
         # on the exact frame clearance flips — agent has no chance to react that step)
