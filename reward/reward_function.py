@@ -92,7 +92,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         if a <= -1.0:
             out.r_speed = -8.0   # Emergency braking not justified at yellow/double-yellow
         elif -0.55 <= a <= -0.45:
-            out.r_speed = 5.0    # Correct service braking
+            out.r_speed = 5.0    # Correct service braking (-0.5 is assumed regen)
         elif -1.0 < a < -0.55:
             out.r_speed = -2.0   # Harder than service braking but not emergency
         else:
