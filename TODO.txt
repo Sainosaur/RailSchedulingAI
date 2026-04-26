@@ -1,3 +1,5 @@
+Double check if docs match code.
+
 Env:
 i think the red single interlock, speed limit governer, boundary awareness are bad. 
 the ai should be able to mess up and its the VL that should enforce safety override and 
@@ -15,3 +17,63 @@ So it then lokos at train signal aspect to see how far occupied zone is for lead
 Remove obsolete code.
 
 Rewards:
+Why is the total reward a sum? what happens if we make it a product or difference or quotient?
+why does headway penalty scale to -k_h? why not just k_h?
+Relies on environment and VL being correct, which i will check and change i needed.
+So if changes are made, then reward_function may get tweaked.
+Evaluate jerk, how is it defined in code, it should reward jerk less thank 0.5 m/s/s/s and 
+penalise jerk > 1.0 m/s/s/s. May need to add jerk as a parameter in environment, in observation space.
+Similar for energy efficieny, we should maximise energy efficiency by rewarding regenerative braking.
+Regenerative breaking will be the about some percentage of the max deceleration. For now, say that 
+percentage is 50% of 1.0 m/s/s, so reward 0.5 m/s/s for every second of regenerative braking. Exact values
+will be taken form mech team when they respond (alon with other values-don't worry about that for now).
+Saying that, AI decision to max decel will not be penalised as it can be necessary for safety.
+Look at other rewards and see if they are redundant or can be combined?
+For 11, the collision and headway penalty, isn't AI getting punished twice for the headway violation, 
+once in headway penalty and in collision and headway penalty? Wouldn't this be redundant? One would have to go.
+Evaulte where 5 shoulde be remove for the headay from 11 be removed.
+The lateness penalty, doesnt account for if the lead train stalls or hazard forces AI tarin to halt.
+Lateness penalty maybe redundant because on time arrival is heavily rewarded.
+
+Validator:
+As said before the VL may need to be extended to handle station signal aspect seperately.
+Explain how VL works in O(1) time?
+In layer one may need to extend ingestion to maybe include jerk, station signal aspect.
+If VL would override the AI action if jerk is greater than 2.0 m/s/s/s. May add punishment for this.
+In layer 1, explain the special case (green departure runway), why is it needed, if its needed? because
+if speed is near zero is redundant info, movement authority is decided by signal aspect.
+Is d_occ mean distance to obstacle or distance to occupied zone? Is Movement Authority distance same as d_occ? or
+is MA distance to occupied zone? Lets assume d_occ (now called d_obs) is distance to obstacle and MA is distance to occupied zone,
+then distance_available = MA only, so distance_available not needed, use variable called movement_authority. Lets unpack this carefully, d_obs is not possible becasue we are not using gnss.
+We are using level 2 ETCS, so we have balises and RBC. The RBC tells the train the movement authority. The signals are 
+determined from the end of the zone in which the AI train is currently in and the start of the 
+zone in which the obstacle is in. Side note, number of zones are calculated using 
+segment distance / SH, if there is a float number of zones, the we would add 1 + some deciaml of the SH for the last zone
+(e.g., if there are 15.6 zones, then there 14 full zones, but the last zones is 1.6 times SH) to ensure safety -dont in graph, not VL.
+
+Here are steps to calculate signal aspect:
+1/ the environment checks what zone the ai train is and the one the obstacle is in. 2/ take the x position of the end of the zone the ai train is in 
+and the x position of the start of the zone the obstacle is in. 3/ find difference between two x positions using x_diff = x_obs_zone_start - x_ai_zone_end.
+4/ assign signal aspect. green if 3*SH < x_diff, double yellow if 2*SH < x_diff <= 3*SH, yellow if 1*SH < x_diff <= 2*SH, red if 0 < x_diff <= 1*SH.
+Collision not possible to simulate because in real life position of obstacle inside would be unknown, so treat violation as highest failure.
+Violation occurs if x_diff = 0. 
+
+Dynamic speed ceiling using reversed SUVAT equation, v^2 = u^2 + 2ad, so v = sqrt(u^2 + 2ad), where u is current speed,
+is redundant- we have all the info we need. We have the initial (speed limit) and final velocity (0), and the displacement
+(stopping distance aka spatial headway), and the emergency deceleration (-1 m/s/s). Also, let the VL override the AI action
+that results in speed of ai train greater than speed limit. This links to reward function: if now we encourage max regenerative
+breaking at 0.5 m/s/s, let there be a variable called optimal_braking_distance, which is the distance at which the train
+should be braking at 0.5 m/s/s to reach stop. This is calculated using v*v = u*u + 2ad, so d = (v*v - u*u) / 2a, where u is current speed,
+v is final speed (0), a is acceleration (0.5 m/s/s). Override reward 2 in the reward_docs to determine best distance to start breaking.
+And again, we can add optimal_braking_distance to the observation space or as an internal variable in the env, so AI can learn (not VL, 
+as VL only deals with safety). 
+
+Layer 2 is excessive. The 3 lookahead times is redundant, we dont need time at all. To check for violation 
+
+
+
+
+
+
+    
+
