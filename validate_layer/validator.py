@@ -150,6 +150,12 @@ class ValidationLayer:
                         return (boundary - x) + next_seg.spatial_headway
 
                 return boundary - x
+        # x is at or past the last boundary — jump to next segment's first block
+        seg_idx = self.segments.index(seg)
+        if seg_idx + 1 < len(self.segments):
+            return self.segments[seg_idx + 1].spatial_headway
+        # Beyond all segments — return a large safe value
+        return seg.spatial_headway
 
     # ------------------------------------------------------------------
     # Layer 1 — Ingestion & Dynamic Limits
