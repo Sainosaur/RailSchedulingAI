@@ -92,7 +92,7 @@ negative speed violation, acceleration not 0 at stationary and speed limit viola
 and x_obs_zone_start position of the obstacle when override happens, also add the speed of the ai train too.
 Not sure is tolerance buffer is still needed. Probs not.
 
-I think the timetable is fine logically, what do you think?
+I think the timetable and lead train is fine logically, what do you think?
 
 I might increase the SH for segments 0 and 1 to 390 m, SH for segment 2 to 170 m, and SH for segment 3, 4, and 5 to 40 m. 
 I did this by taking stopping distance and multiplying it by 1.25. These values will change as I will ask Mechanical team for the actual stopping distance.
