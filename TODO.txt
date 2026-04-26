@@ -74,7 +74,16 @@ Rearrange for d so, dist_vio_check = (u*u - v*v) / 2a. Use this SUVAT version. 2
  if x_ai_zone_end + dist_vio_check >= x_obs_zone_start, then violation (which is fail), else pass.
  By the way ensure VL runs timestep (idk how, just connect it to env properly).
 
+ Currently, The trains and the train stations are points (don't have any dimensions). The stations seperate each segment. 
+ We will treat the last zone of each segment as the train station, so the train must stop at the end of the last zone. This is where the 
+ station signal aspect comes in play. This means the last zone of each segment will contain an obstacle (the station itself- also just for
+ your information, obstacle means the lead train, the station, and hazards (not in prototype)). After the dwell time for the ai train at that 
+ station is complete, i want it so that the train can now succesfully ignore this station obstacle and be able to pass obstacle without any VL overrides
+ (so override is ai train doesnt stop at station, but after swell time, ai train can ignore station obstacle and pass it withouy VL logging it).
+ Note: the AI train cannot pass the lead train (but this is impossible by design as violation check happens and violations are failures (end episodes)).
  
+
+
 
 
 
