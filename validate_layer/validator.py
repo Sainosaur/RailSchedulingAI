@@ -103,31 +103,53 @@ class ValidationLayer:
             f"[{self.segments[0].start}, {self.segments[-1].end}]"
         )
 
+
     def compute_dtz(self, x: float) -> float:
         """
         Compute Distance-to-Zone (DTZ).
 
         DTZ = distance from position *x* to the start of the next
         fixed-block boundary ahead.  Blocks within each segment are
-        spaced SH apart, so DTZ is always ≤ SH.
-        #TODO: towards the segment boundary if last zone just before next segment is less than SH, add last two segment together (hard coded?).
+        spaced SH apart, so DTZ is always <= SH.
+
+        Edge case — partial last block merge:
+        The final block before each segment boundary is almost always a
+        partial block (< SH) because segment lengths are not perfect
+        multiples of SH.  When the train enters this partial block, the
+        naive DTZ (distance to segment end) can be dangerously small —
+        as little as 2.2 m for S3 — causing the VL to apply emergency
+        braking even when the train is safely cruising at the speed limit.
+
+        Fix: when the next boundary is the segment end AND the last block
+        is smaller than SH, merge it with the first full block of the
+        next segment.  DTZ becomes (distance_to_seg_end + next_seg_SH),
+        giving the VL a realistic clearance window across the boundary.
 
         Returns
         -------
-        float   Distance in metres (always > 0 unless exactly on a
-                boundary, in which case the *following* boundary is used).
+        float   Distance in metres (always > 0).
         """
         seg = self.get_segment(x)
-        for boundary in seg.block_boundaries:
+        boundaries = seg.block_boundaries
+
+        for i, boundary in enumerate(boundaries):
             if boundary > x:
+                # Check if this is the last boundary (= segment end)
+                is_last_boundary = (i == len(boundaries) - 1)
+
+                if is_last_boundary:
+                    last_block_size = boundary - (boundaries[i - 1] if i > 0 else seg.start)
+                    seg_idx = self.segments.index(seg)
+
+                    if (last_block_size < seg.spatial_headway
+                            and seg_idx + 1 < len(self.segments)):
+                        # Merge: extend DTZ through to the first full block
+                        # of the next segment so the VL is not overly
+                        # conservative in this transitional zone.
+                        next_seg = self.segments[seg_idx + 1]
+                        return (boundary - x) + next_seg.spatial_headway
+
                 return boundary - x
-        # x is at or past the last boundary in this segment →
-        # next boundary is the start of the following segment.
-        seg_idx = self.segments.index(seg)
-        if seg_idx + 1 < len(self.segments):
-            return self.segments[seg_idx + 1].start - x
-        # Beyond all segments — return a large safe value
-        return seg.spatial_headway
 
     # ------------------------------------------------------------------
     # Layer 1 — Ingestion & Dynamic Limits

@@ -92,6 +92,12 @@ def evaluate(
         ep_steps = 0
         ep_overrides = 0
         ep_rows = []
+        
+        # Unwrap once before the loop — the env reference doesn't change between steps.
+        # Reads raw_env.x and raw_env.v for real metres/m/s instead of normalised obs.
+        raw_env = venv.envs[0]
+        while hasattr(raw_env, "env"):
+            raw_env = raw_env.env
 
         while not done:
             action, _ = model.predict(obs, deterministic=True)
