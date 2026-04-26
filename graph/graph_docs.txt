@@ -1,0 +1,42 @@
+RAIL SCHEDULING AI: TRACK GRAPH & INFRASTRUCTURE DOCUMENTATION
+Current Revision: Final Prototype v1.0 (Line 104)
+
+File: graph/graph.py
+
+1. CORE CONCEPT
+The Graph module acts as the "Standard Reference" for Line 104's physical infrastructure. it provides a structured, graph-based representation of the 76km track, including station coordinates, elevations, gradients, and fixed-block boundaries. It serves as the primary data source for both the Simulation Environment and the Validation Layer (VL).
+
+2. DATA MODELS
+
+A. Station
+Represents a physical terminal or stop.
+- distance (km): Kilometrage along the line.
+- elevation (m): Height above sea level.
+- passing_loop: Boolean stating if the station allows for overtaking.
+
+B. Segment & VLSegment
+Represents the track between two stations.
+- speed_limit (km/h): The maximum permitted line speed.
+- gradient: Calculated as ΔElevation / ΔDistance.
+- VLSegment: A specialized version used by the Validation Layer, featuring speed in m/s and absolute track meterage.
+
+C. Block
+Represents a sub-division of a Segment. Used for the fixed-block signaling simulation.
+
+3. THE HEADWAY TABLE (SH/TH)
+The track is divided into segments with varying spatial (SH) and temporal (TH) headways based on line speed:
+- S0 & S1 (90 km/h): SH = 312.5m, TH = 12.5s.
+- S2 (60 km/h): SH = 138.9m, TH = 8.3s.
+- S3, S4, S5 (30 km/h): SH = 34.7m, TH = 4.2s.
+
+4. FIXED BLOCK ALLOCATION LOGIC
+A critical component of `graph.py` is the `build_vl_segments` logic which divides each segment into zones for the signaling system:
+- Zone Splitting: The segment is divided into chunks of exactly length `SH`.
+- The Safety Merge: If the final zone in a segment is shorter than the required `SH`, it is absorbed by its predecessor. This ensures that every signal block is at least as long as the minimum safe headway, preventing "micro-zones" that would cause the DTZ (Distance-To-Zone) logic to malfunction.
+
+5. GEOGRAPHIC CONSTANTS
+- Elevations: Hardcoded from SRTM30m data for Line 104 (Chabówka 553.0m to Nowy Sącz 292.0m).
+- Distances: Precise kilometer markers (e.g., Nowy Sącz at 76.651 km).
+
+6. CACHING & PERFORMANCE
+The graph is computed lazily on the first call to `graph()` or `build_vl_segments()` and cached in module-level variables (`_cached_graph`, `_cached_vl_segments`). Subsequent calls return the cached data to minimize computational overhead during the simulation reset cycle.
