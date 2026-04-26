@@ -35,6 +35,7 @@ class TrainConfig:
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0
+    lead_stop_offset: float = 94.7
     max_episode_steps: int = 10_000
     n_envs: int = 12
     slack_factor: float = 1.1  # 10% operational buffer for RL stability

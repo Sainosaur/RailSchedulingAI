@@ -25,6 +25,7 @@ from think_layer.config import TrainConfig  # noqa: E402
 def make_env(
     seed: int = 42,
     lead_train_speed: float = 20.0,
+    lead_stop_offset: float = 94.7,
     slack_factor: float = 1.1,
     max_episode_steps: int = 15_000,
 ) -> Callable[[], gym.Env]:
@@ -38,6 +39,7 @@ def make_env(
     def _init() -> gym.Env:
         env = ModernizedLine104(
             lead_train_speed=lead_train_speed,
+            lead_stop_offset=lead_stop_offset,
             slack_factor=slack_factor,
             training_mode=True,
         )
