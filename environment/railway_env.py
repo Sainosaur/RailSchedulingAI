@@ -199,22 +199,24 @@ class ModernizedLine104(gym.Env):
         # Station aspect
         x_station_zone_start = seg.end - sh
         
-        # Check for station arrival
+        # --- Check for station arrival ---
         next_st_idx = self.last_station_idx + 1
         reached_new_station = False
         
-        # Ensure we only check for the station physically ahead of us
+        # 1. Determine the absolute position of the station we are looking for
         target_station_pos = self.STATIONS[next_st_idx] if next_st_idx < len(self.STATIONS) else 999999.0
-
-        # Arrival trigger: within spatial headway (SH) of the absolute station coordinate
+        
+        # 2. Only trigger arrival if the train is physically at that specific station
+        # We check if x is past (target_station_pos - spatial_headway)
         if next_st_idx < len(self.STATIONS) and self.x >= (target_station_pos - sh):
-            # Arrived at station zone
             if next_st_idx not in self.visited_stations:
                 reached_new_station = True
                 self.last_station_idx = next_st_idx
                 self.visited_stations.add(next_st_idx)
                 self.station_cleared = False
-                dwell_time = self.np_random.integers(20, 41) # 20-40 inclusive
+                
+                # Assign dwell time and arrival log
+                dwell_time = self.np_random.integers(20, 41) 
                 self.ai_departure_time = self.time + dwell_time
                 self.ai_arrival_times[next_st_idx] = self.time
 
