@@ -28,10 +28,9 @@ from think_layer.config import TrainConfig
 # trial throughput.  train.py / trainer.py use "PPO_Line104" as its log prefix;
 # HPO trials use "PPO_{trial_number}" so the two namespaces never collide.
 
-_HPO_TOTAL_TIMESTEPS = 250_000  # short trial budget
+_HPO_TOTAL_TIMESTEPS = 150_000  # reduced: 50 trials × 150k is plenty to rank configs
 _HPO_N_ENVS = 12  # fewer workers → less SubprocVecEnv IPC overhead
-# for short trials the spawn cost dominates at 16
-_HPO_MAX_EP_STEPS = 10_000  # cap episode length so trials don't stall on one ep
+_HPO_MAX_EP_STEPS = 5_000   # halved: cuts stalled-episode tail, still covers full line
 _HPO_N_EVAL_EPS = 1  # sequential eval is the bottleneck; 1 ep is enough
 _HPO_TB_PREFIX = "PPO"  # saved as PPO_1, PPO_2 … never PPO_Line104_x
 
@@ -82,27 +81,26 @@ def objective(trial: optuna.Trial) -> float:
     """
     # ── 1. Sample Hyperparameters ──────────────────────────────────────────────
     kwargs = {
-        "learning_rate": trial.suggest_float("lr", 1e-5, 1e-3, log=True),
-        "batch_size": trial.suggest_categorical("batch_size", [128, 256, 512]),
-        "n_steps": trial.suggest_categorical("n_steps", [1024, 2048, 4096]),
-        "gamma": trial.suggest_categorical("gamma", [0.99, 0.999, 0.9999]),
+        # Tightened around known-good PPO range for continuous control
+        "learning_rate": trial.suggest_float("lr", 5e-5, 5e-4, log=True),
+        "batch_size": trial.suggest_categorical("batch_size", [256, 512]),
+        "n_steps": trial.suggest_categorical("n_steps", [1024, 2048]),
+        # Long-horizon journey — high gamma is essential, no point exploring lower
+        "gamma": trial.suggest_categorical("gamma", [0.99, 0.999]),
         "gae_lambda": trial.suggest_categorical("gae_lambda", [0.90, 0.95, 0.99]),
-        "ent_coef": trial.suggest_float("ent_coef", 0.001, 0.5, log=True),
-        "n_epochs": trial.suggest_categorical("n_epochs", [5, 10, 20]),
+        # Keep entropy low — this env has clear signal, not sparse reward
+        "ent_coef": trial.suggest_float("ent_coef", 0.001, 0.05, log=True),
+        "n_epochs": trial.suggest_categorical("n_epochs", [5, 10]),
     }
 
+    # Drop xlarge/deep variants — overkill for a 9-dim obs space, wastes trial time
     net_arch_type = trial.suggest_categorical(
-        "net_arch",
-        ["small", "medium", "large", "xlarge", "deep_small", "deep_large", "hybrid"]
+        "net_arch", ["small", "medium", "large"]
     )
     net_arch_map = {
-        "small":       [64, 64],
-        "medium":      [128, 128],
-        "large":       [256, 256],
-        "xlarge":      [512, 512],
-        "deep_small":  [128, 128, 128],
-        "deep_large":  [256, 256, 256],
-        "hybrid":      [256, 512],
+        "small":  [64, 64],
+        "medium": [128, 128],
+        "large":  [256, 256],
     }
     net_arch = net_arch_map[net_arch_type]
 
@@ -138,6 +136,7 @@ def objective(trial: optuna.Trial) -> float:
             make_env(
                 seed=config.seed + trial.number,
                 lead_train_speed=config.lead_train_speed,
+                lead_stop_offset=config.lead_stop_offset,
                 max_episode_steps=config.max_episode_steps,
             )
         ]
@@ -208,7 +207,7 @@ def optimize(n_trials: int = 150):
     print("=" * 60)
 
     # MedianPruner kills runs that fall below the 50th percentile of previous runs
-    pruner = optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=1)
+    pruner = optuna.pruners.MedianPruner(n_startup_trials=8, n_warmup_steps=2)
 
     study = optuna.create_study(
         study_name="ppo_line104",
