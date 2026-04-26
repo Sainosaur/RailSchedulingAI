@@ -95,14 +95,13 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     # 2. Speed Compliance Reward
     effective_aspect = min(train_aspect, station_aspect)
 
-    if effective_aspect == 3:
-        # Green: penalise overspeed only. Being below the limit while accelerating
-        # is correct behaviour after a station stop — do not penalise it.
-        # -abs(u - limit) was penalising acceleration phases by up to -1736 per journey.
-        at_terminus = (state.current_position >= state.next_station_position - 10.0 and u < 0.1)
-        if at_terminus:
-            out.r_speed = 0.0
-        elif u > state.speed_limit + 0.1:
+    # At terminus, stopped — no speed penalty applies
+    at_terminus = (state.current_position >= state.next_station_position - 10.0 and u < 0.1)
+    if at_terminus:
+        out.r_speed = 0.0
+    elif effective_aspect == 3:
+        # Green: penalise overspeed only.
+        if u > state.speed_limit + 0.1:
             out.r_speed = max(-10.0, -(u - state.speed_limit))  # overspeed penalty
         else:
             out.r_speed = 0.0  # at or below limit — fine
@@ -170,6 +169,8 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     }
     if state.reached_new_station:
         out.r_station = STATION_REWARDS.get(state.station_index, 0.0)
+        if state.station_index == 6:
+            out.r_station += 50.0  # Terminus completion bonus
 
     # 8. Punctuality Reward
     if state.reached_new_station:
