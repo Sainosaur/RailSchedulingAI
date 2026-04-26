@@ -84,6 +84,13 @@ def evaluate(
     else:
         print("WARNING: VecNormalize stats not found, running without normalisation")
 
+    # Helper to access raw unwrapped env for true position/speed
+    def _get_raw_env():
+        env = venv.envs[0]
+        while hasattr(env, "env"):
+            env = env.env
+        return env
+
     # Collect data
     all_rows = []
     episode_summaries = []
@@ -117,14 +124,7 @@ def evaluate(
                 elif info["punctuality_status"]["ai"].get("status") == "arrived":
                     ep_stations = 7
 
-            # Count genuine safety violations (signal violations, overspeed)
-            # not just any VL flag — VL fires on minor clamps too
-            breakdown = info.get("reward_breakdown", {})
-            is_violation = (
-                breakdown.get("r_signal_compliance", 0.0) <= -10.0  # ran a red
-                or breakdown.get("r_speed", 0.0) <= -5.0             # serious overspeed
-            )
-            if is_violation:
+            if info.get("violations", {}).get("any_violation", False):
                 ep_overrides += 1
 
             # Per-step row
@@ -132,8 +132,8 @@ def evaluate(
                 "episode": ep,
                 "step": ep_steps,
                 "time": info.get("time", 0.0),
-                "position": info.get("current_position", obs[0][0] if hasattr(obs[0], "__len__") else 0.0),
-                "speed": info.get("current_speed", obs[0][1] if hasattr(obs[0], "__len__") else 0.0),
+                "position": _get_raw_env().x,
+                "speed": _get_raw_env().v,
                 "segment": info.get("segment", ""),
                 "train_aspect": info.get("train_aspect", -1),
                 "station_aspect": info.get("station_aspect", -1),
@@ -150,12 +150,8 @@ def evaluate(
             ep_rows.append(row)
             done = dones[0]
 
-        # Check if agent actually drove or sat still
-        positions = [r["position"] for r in ep_rows]
-        max_position_km = max(positions) / 1000.0 if positions else 0.0
-        completed = max_position_km >= 76.0
-
         override_rate = (ep_overrides / ep_steps * 100) if ep_steps > 0 else 0.0
+
         stations_visited = ep_stations
 
         summary = {
@@ -165,8 +161,6 @@ def evaluate(
             "override_rate": override_rate,
             "overrides": ep_overrides,
             "stations_visited": stations_visited,
-            "max_position_km": max_position_km,
-            "completed": completed,
         }
         episode_summaries.append(summary)
         all_rows.extend(ep_rows)
@@ -175,9 +169,7 @@ def evaluate(
             f"  Episode {ep}: reward={ep_reward:+.2f}  "
             f"steps={ep_steps}  "
             f"violations={ep_overrides} ({override_rate:.1f}%)  "
-            f"stations={stations_visited}/7  "
-            f"max_pos={max_position_km:.1f}km  "
-            f"{'COMPLETED' if completed else 'INCOMPLETE'}"
+            f"stations={stations_visited}/7"
         )
 
     # Save CSV
@@ -198,18 +190,14 @@ def evaluate(
     avg_reward = np.mean([s["total_reward"] for s in episode_summaries])
     avg_override = np.mean([s["override_rate"] for s in episode_summaries])
     avg_stations = np.mean([s["stations_visited"] for s in episode_summaries])
-    avg_position = np.mean([s["max_position_km"] for s in episode_summaries])
-    completion_rate = np.mean([s["completed"] for s in episode_summaries]) * 100
 
     print("\n" + "=" * 60)
     print("  Evaluation Summary")
     print("=" * 60)
     print(f"  Episodes        : {n_episodes}")
     print(f"  Avg reward      : {avg_reward:+.2f}")
-    print(f"  Avg violation % : {avg_override:.1f}%")
+    print(f"  Avg override %  : {avg_override:.1f}%")
     print(f"  Avg stations    : {avg_stations:.1f}/7")
-    print(f"  Avg max pos     : {avg_position:.1f}km / 76.6km")
-    print(f"  Completion rate : {completion_rate:.0f}%")
     if csv_path:
         print(f"  Results CSV     : {csv_path}")
     print("=" * 60)
@@ -219,8 +207,6 @@ def evaluate(
         "avg_reward": avg_reward,
         "avg_override_rate": avg_override,
         "avg_stations": avg_stations,
-        "avg_position_km": avg_position,
-        "completion_rate": completion_rate,
         "csv_path": csv_path,
     }
 
