@@ -13,8 +13,9 @@ class LeadTrain:
     ACCEL: float = 0.5
     DECEL: float = -1.0
 
-    def __init__(self, stations: list[float]):
+    def __init__(self, stations: list[float], stop_offset: float = 34.7):
         self.stations = stations
+        self.stop_offset = stop_offset
         self.x: float = 0.0
         self.v: float = 0.0
         self.dwell_timer: int = 0
@@ -59,7 +60,7 @@ class LeadTrain:
                 if self.station_idx < len(self.stations) - 1:
                     self.station_idx += 1
                 else:
-                    self.x = self.stations[-1] + 34.7
+                    self.x = self.stations[-1] + self.stop_offset
                     self.v = 0.0
                     self.station_idx = len(self.stations)
             return
