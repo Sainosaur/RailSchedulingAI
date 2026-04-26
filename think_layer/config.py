@@ -18,20 +18,20 @@ class TrainConfig:
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 10_000_000
-    learning_rate: float = 3e-4
+    learning_rate: float = 0.00018
     n_steps: int = 2048
     batch_size: int = 512
-    n_epochs: int = 10
+    n_epochs: int = 5
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    ent_coef: float = 0.01
+    ent_coef: float = 0.006
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
 
     # ── Network Architecture ─────────────────────────────────────────
-    policy_net: list[int] = field(default_factory=lambda: [256, 256])
-    value_net: list[int] = field(default_factory=lambda: [256, 256])
+    policy_net: list[int] = field(default_factory=lambda: [128, 128])
+    value_net: list[int] = field(default_factory=lambda: [128, 128])
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0
