@@ -87,7 +87,16 @@ Note that AI options are [-1, 1] because of symmetry and mean. But in env or som
 greater than 0.5, then fail it as it wont be physically possible. same with decel, if it is less than -1, then fail it. 
 Also, not that during breaking, the AI should show 0 m/s/s at stationary (0 m/s) and speed limit (max allowed speed) for safety. 
 Remove the interlock, do not force a = 0, let VL override it, also reward 0 m/s/s for stationary and speed limit (assume no losses for simplicity).
+Ensure the speed cannot be negative, if it is, fail it.
 
+In the Override log, ensure constraint id is useful. So there is now spatial violation, speed limit violation, station signal violation, lead train signal violation,
+negative speed violation, acceleration not 0 at stationary and speed limit violation. Also in the logs, add the x_ai_zone_end position of the ai train 
+and x_obs_zone_start position of the obstacle when override happens, also add the speed of the ai train too.
+
+Not sure is tolerance buffer is still needed. Probs not.
+
+I might increase the SH for segments 0 and 1 to 390 m, SH for segment 2 to 170 m, and SH for segment 3, 4, and 5 to 40 m. 
+I did this by taking stopping distance and multiplying it by 1.25. These values will change as I will ask Mechanical team for the actual stopping distance.
 
 
 
