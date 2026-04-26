@@ -1,0 +1,144 @@
+================================================================================
+RAIL SCHEDULING AI — PLOT REWARD LEAD TRAIN FIX INSTRUCTIONS
+================================================================================
+
+Read all uploaded source files before making any changes.
+Make changes file by file in the order listed below.
+Do not change anything not listed here.
+
+================================================================================
+FILE 1: plot_reward.py
+================================================================================
+
+FIX 1 — Import DEFAULT_CONFIG and use it for lead train speed.
+
+At the top of the file, after the existing imports, add:
+    from think_layer.config import DEFAULT_CONFIG
+
+Locate:
+    env = ModernizedLine104(lead_train_speed=25.0, training_mode=False)
+
+Replace with:
+    env = ModernizedLine104(
+        lead_train_speed=DEFAULT_CONFIG.lead_train_speed,
+        training_mode=False
+    )
+
+---
+
+FIX 2 — Add lead train position and speed to data collection.
+
+Locate the data dict initialisation:
+    data = {
+        "position": [], "speed": [], "reward": [],
+        "total_reward": [], "limit": [],
+        "signal": [],
+    }
+
+Replace with:
+    data = {
+        "position": [], "speed": [], "reward": [],
+        "total_reward": [], "limit": [],
+        "signal": [],
+        "lead_position": [], "lead_speed": [],
+    }
+
+---
+
+FIX 3 — Collect lead train state on every step.
+
+Locate the data append block:
+    data["position"].append(env.x)
+    data["speed"].append(env.v)
+    data["reward"].append(step_reward)
+    data["total_reward"].append(total_rew)
+    data["limit"].append(env.vl.get_segment(env.x).limit_ms * 3.6)
+    data["signal"].append(env._get_signal_aspect())
+
+Replace with:
+    data["position"].append(env.x)
+    data["speed"].append(env.v)
+    data["reward"].append(step_reward)
+    data["total_reward"].append(total_rew)
+    data["limit"].append(env.vl.get_segment(env.x).limit_ms * 3.6)
+    data["signal"].append(env._get_signal_aspect())
+    data["lead_position"].append(env.lead_train.x)
+    data["lead_speed"].append(env.lead_train.v)
+
+Note: In model mode, env is wrapped inside venv. To access lead train state
+in model mode, unwrap the env first. After the venv.step() call in the
+model mode block, add:
+
+    raw_env = venv.envs[0]
+    while hasattr(raw_env, "env"):
+        raw_env = raw_env.env
+
+Then replace:
+    data["lead_position"].append(env.lead_train.x)
+    data["lead_speed"].append(env.lead_train.v)
+
+With a conditional append at the bottom of the step block:
+
+    if use_model:
+        data["lead_position"].append(raw_env.lead_train.x)
+        data["lead_speed"].append(raw_env.lead_train.v)
+    else:
+        data["lead_position"].append(env.lead_train.x)
+        data["lead_speed"].append(env.lead_train.v)
+
+---
+
+FIX 4 — Add lead train to panel 1 speed plot.
+
+Locate in the plot() function:
+    ax.plot(x, data["speed"] * 3.6, label="Agent Speed",
+            linewidth=2.0, color="#1f77b4")
+    ax.plot(x, data["limit"], label="Speed Limit",
+            color="#d62728", linestyle="--", alpha=0.8)
+
+Replace with:
+    ax.plot(x, data["speed"] * 3.6, label="Agent Speed",
+            linewidth=2.0, color="#1f77b4")
+    ax.plot(x, data["limit"], label="Speed Limit",
+            color="#d62728", linestyle="--", alpha=0.8)
+    lead_x = data["lead_position"] / 1000.0
+    ax.plot(lead_x, data["lead_speed"] * 3.6, label="Lead Train Speed",
+            linewidth=1.5, color="#2ca02c", linestyle="-.", alpha=0.8)
+
+---
+
+FIX 5 — Remove r_step from panel 2 keys.
+
+Locate:
+    keys = ["r_step", "r_progress", "r_speed", "r_signal_compliance",
+            "r_station", "r_time", "r_jerk", "r_patience"]
+
+Replace with:
+    keys = ["r_progress", "r_speed", "r_signal_compliance",
+            "r_station", "r_time", "r_jerk", "r_patience"]
+
+Reason: r_step is a flat -0.5 on every step and adds no visual information.
+
+================================================================================
+VERIFICATION CHECKLIST
+================================================================================
+
+After all changes, confirm the following by reading the modified file:
+
+1. lead_train_speed is read from DEFAULT_CONFIG.lead_train_speed not hardcoded.
+
+2. data dict contains lead_position and lead_speed keys.
+
+3. Lead train state is collected on every step using conditional for
+   model mode vs heuristic mode.
+
+4. Panel 1 plots lead train speed as a green dash-dot line alongside
+   agent speed and speed limit.
+
+5. r_step is not in the panel 2 keys list.
+
+6. No hardcoded 25.0 lead train speed remains anywhere in the file.
+
+================================================================================
+END OF INSTRUCTIONS
+================================================================================
