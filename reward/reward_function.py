@@ -72,7 +72,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     out = RewardOutput()
 
     # Step penalty — drives directed exploration toward the terminus
-    out.r_step = -1.0
+    out.r_step = -1
 
     # 1. Progress Reward
     # Scaled so that driving at the speed limit always roughly offsets the step penalty,
@@ -160,11 +160,11 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
 
     # 7. Station Milestone Reward
     STATION_REWARDS = {
-        1: +20.0,   # Rabka-Zdrój
-        2: +30.0,   # Mszana Dolna
-        3: +40.0,   # Tymbark
-        4: +50.0,   # Limanowa
-        5: +70.0,   # Marcinkowice
+        1: +1000.0,   # Rabka-Zdrój
+        2: +2000.0,   # Mszana Dolna
+        3: +3000.0,   # Tymbark
+        4: +4000.0,   # Limanowa
+        5: +5000.0,   # Marcinkowice
         6: +20000.0,  # Nowy Sącz (terminus — maximum reward)
     }
     if state.reached_new_station:
@@ -175,7 +175,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         if state.scheduled_arrival_time is not None and state.actual_arrival_time is not None:
             deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
             if deviation <= 60.0:
-                out.r_time = 100.0
+                out.r_time = 200.0
             else:
                 out.r_time = -100.0
     
