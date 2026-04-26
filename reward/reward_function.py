@@ -145,18 +145,18 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     # 5. Signal Compliance
     # Train Signal
     if train_aspect == 0 and state.proposed_acceleration > 0.01:
-        out.r_signal_compliance = -10.0
+        out.r_signal_compliance += -10.0
     if train_aspect == 3:
         # Sweet spot bonus: reward maintaining the ideal following gap (3–4 SH).
         # Only award when the agent is moving (not coasting at a stop) so this
         # doesn't fire as a free cruise bonus when the gap is passively maintained.
         if 3*sh <= x_diff <= 4*sh and u > 0.5:
-            out.r_signal_compliance = 2  # Reduced from 5.0 — should not dominate cruise
+            out.r_signal_compliance += 2  # Reduced from 5.0 — should not dominate cruise
 
     # Station Signal
     if station_aspect == 0:
         if state.current_position >= x_station_zone_start and u > 0.1:
-            out.r_signal_compliance = -10.0
+            out.r_signal_compliance += -10.0
 
     # 7. Station Milestone Reward
     STATION_REWARDS = {
