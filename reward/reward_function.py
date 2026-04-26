@@ -72,7 +72,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     out = RewardOutput()
 
     # Step penalty — drives directed exploration toward the terminus
-    out.r_step = -1
+    out.r_step = -0.9
 
     # 1. Progress Reward
     # Scaled so that driving at the speed limit always roughly offsets the step penalty,
@@ -102,9 +102,9 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     elif effective_aspect == 3:
         # Green: penalise overspeed only.
         if a <= -1.0:
-            out.r_speed = -15.0 # High penalty for emergency braking on green
+            out.r_speed = -500.0 # High penalty for emergency braking on green
         elif u > state.speed_limit + 0.1:
-            out.r_speed = max(-10.0, -(u - state.speed_limit))  # overspeed penalty
+            out.r_speed = -500 # overspeed penalty
         else:
             out.r_speed = 0.0  # at or below limit — fine
 
@@ -113,59 +113,59 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         # cannot be accelerating at/above the limit, and must not use emergency braking.
         # Coasting at or below the speed limit is perfectly valid.
         if a <= -1.0:
-            out.r_speed = -10.0 # Penalty for emergency braking on cautionary signals
+            out.r_speed = -250.0 /10 # Penalty for emergency braking on cautionary signals
         elif a > 0.01 and u >= state.speed_limit - 0.1:
-            out.r_speed = -5.0   # Accelerating at or above speed limit toward obstacle
+            out.r_speed = -1000.0 /10   # Accelerating at or above speed limit toward obstacle
         elif -0.55 <= a <= -0.45:
-            out.r_speed = 5.0    # Correct service braking
+            out.r_speed = 500.0 /10    # Correct service braking
         elif -1.0 < a < -0.55:
-            out.r_speed = -2.0   # Harder than service braking but not emergency
+            out.r_speed = -50.0 /10   # Harder than service braking but not emergency
         else:
-            out.r_speed = 0.0    # Coasting or gentle accel below limit — acceptable
+            out.r_speed = 0.0 /10    # Coasting or gentle accel below limit — acceptable
 
     elif effective_aspect == 0:
         # Red: must stop. Reward braking, penalise anything else.
         if u < 0.1:
-            out.r_speed = 2.0 # Bonus for being perfectly stopped
+            out.r_speed = 100.0 /10 # Bonus for being perfectly stopped
         elif a <= -1.0:
-            out.r_speed = -20.0 # Heavy penalty for slamming brakes at red (use service braking!)
+            out.r_speed = 0.0 # Can slam brakes at red (use service braking!)
         elif -0.6 <= a <= -0.4:
-            out.r_speed = 5.0 # Bonus for smooth service braking
+            out.r_speed = 500.0 /10 # Bonus for smooth service braking
         else:
-            out.r_speed = -5.0   # Moving at Red without adequate braking
+            out.r_speed = -2500.0 /10   # Moving at Red without adequate braking
 
     # 4. Jerk Penalty (penalty-only — smooth control is the expected baseline, not a bonus)
     # A constant +2.0 bonus every cruise step was inflating cumulative reward by ~30,000+
     jerk = abs(state.applied_acceleration - info.get("previous_a", 0.0)) / dt
     if jerk > 1.0:
-        out.r_jerk = -1.0
+        out.r_jerk = -1000.0
     # else: 0.0 — smooth control is expected, not rewarded
 
     # 5. Signal Compliance
     # Train Signal
     if train_aspect == 0 and state.proposed_acceleration > 0.01:
-        out.r_signal_compliance += -10.0
+        out.r_signal_compliance += -1000.0
     if train_aspect == 3:
         # Sweet spot bonus: reward maintaining the ideal following gap (3–4 SH).
         # Only award when the agent is moving (not coasting at a stop).
         if 3*sh <= x_diff <= 4*sh and u > 0.5:
-            out.r_signal_compliance += 5.0  # Sweet spot bonus
+            out.r_signal_compliance += 50.0  # Sweet spot bonus
         elif x_diff > 4*sh and u > 0.5:
-            out.r_signal_compliance -= 5.0  # Penalty for lagging too far behind
+            out.r_signal_compliance -= 100.0  # Penalty for lagging too far behind
 
     # Station Signal
     if station_aspect == 0:
         if state.current_position >= x_station_zone_start and u > 0.1:
-            out.r_signal_compliance += -10.0
+            out.r_signal_compliance += -1000.0
 
     # 7. Station Milestone Reward
     STATION_REWARDS = {
-        1: +1000.0,   # Rabka-Zdrój
-        2: +2000.0,   # Mszana Dolna
-        3: +3000.0,   # Tymbark
-        4: +4000.0,   # Limanowa
-        5: +5000.0,   # Marcinkowice
-        6: +20000.0,  # Nowy Sącz (terminus — maximum reward)
+        1: +5000.0,   # Rabka-Zdrój
+        2: +10000.0,   # Mszana Dolna
+        3: +15000.0,   # Tymbark
+        4: +20000.0,   # Limanowa
+        5: +25000.0,   # Marcinkowice
+        6: +50000.0,  # Nowy Sącz (terminus — maximum reward)
     }
     if state.reached_new_station:
         out.r_station = STATION_REWARDS.get(state.station_index, 0.0)
@@ -175,18 +175,18 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         if state.scheduled_arrival_time is not None and state.actual_arrival_time is not None:
             deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
             if deviation <= 60.0:
-                out.r_time = 200.0
+                out.r_time = 500.0
             else:
-                out.r_time = -100.0
+                out.r_time = -5000.0
     
     # 9. Patience Reward
     if state.is_dwelling and u < 0.1:
-        out.r_patience = 1.0
+        out.r_patience = 20.0
     elif station_cleared and train_aspect == 3 and u < 0.1:
         # Only penalise if station was already cleared last step too (avoid race condition
         # on the exact frame clearance flips — agent has no chance to react that step)
         if info.get("station_cleared_prev", False) and x_diff > 3*sh:
-            out.r_patience = -10.0
+            out.r_patience = -250.0
 
     # Sum all
     out.r_total = (out.r_step + out.r_progress + out.r_speed + 
