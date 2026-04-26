@@ -47,8 +47,6 @@ class RewardOutput:
     r_jerk: float = 0.0
     r_regen: float = 0.0
     r_patience: float = 0.0
-    r_existence: float = 0.0
-    r_violation: float = 0.0
     r_total: float = 0.0
 
     def to_dict(self):
@@ -75,17 +73,18 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     # FIX 6: Step penalty — drives directed exploration toward the terminus
     out.r_step = -0.5
 
-    # 1. Progress Reward
-    span = state.next_station_position - state.last_station_position
-    if span > 0:
-        p_current = max(0.0, min(1.0, (state.current_position - state.last_station_position) / span))
-        p_previous = max(0.0, min(1.0, (state.previous_position - state.last_station_position) / span))
-        out.r_progress = 10.0 * (p_current - p_previous) # rescaled from 2000.0
-        # Suspend if lead train issues
-        if lead_train_stalled or lead_train_held:
-            out.r_progress = max(0.0, out.r_progress) # Don't penalise slow progress
+    # 1. Progress Reward (FIX 2)
+    distance_travelled = state.current_position - state.previous_position
+    if distance_travelled > 0:
+        out.r_progress = min(2.0, distance_travelled * 0.02)
+    else:
+        out.r_progress = 0.0
+    
+    # Suspend if lead train issues
+    if lead_train_stalled or lead_train_held:
+        out.r_progress = max(0.0, out.r_progress) # Don't penalise slow progress
 
-    # 2. Speed Compliance Reward (FIX 8)
+    # 2. Speed Compliance Reward
     effective_aspect = min(train_aspect, station_aspect)
 
     if effective_aspect == 3:
@@ -96,11 +95,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         elif -1.0 < a < -0.55:
             out.r_speed = -2.0 # rescaled from -2.0
         elif a <= -1.0:
-            # Justified only if Red aspect and train is near the speed limit
-            if effective_aspect == 0 and u >= state.speed_limit * 0.8:
-                out.r_speed = 0.0    # Justified emergency brake
-            else:
-                out.r_speed = -8.0 # rescaled from -10.0
+            out.r_speed = -8.0  # Emergency braking not justified at yellow/double-yellow (FIX 3)
     elif effective_aspect == 0:
         if u < 0.1:
             out.r_speed = 0.0    # Correctly stopped
@@ -115,20 +110,20 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         else:
             out.r_speed = -5.0 # rescaled from -5.0
 
-    # 3. Regenerative Braking Reward (FIX 8)
+    # 3. Regenerative Braking Reward
     if -0.55 <= a <= -0.45:
         out.r_regen = 3.0 # rescaled from 2.0
     elif -1.0 < a < -0.5:
         out.r_regen = -1.0 # rescaled from -1.0
 
-    # 4. Jerk Reward/Penalty (FIX 8)
+    # 4. Jerk Reward/Penalty
     jerk = abs(state.applied_acceleration - info.get("previous_a", 0.0)) / dt
     if jerk < 0.5:
         out.r_jerk = 2.0 # rescaled from 1.0
     elif jerk > 1.0:
         out.r_jerk = -4.0 # rescaled from -2.0 * (jerk - 1.0)
 
-    # 5. Signal Compliance (FIX 8 - Rescaling)
+    # 5. Signal Compliance
     # Train Signal
     if train_aspect == 0 and state.proposed_acceleration > 0.01:
         out.r_signal_compliance = -10.0 # rescaled from -500.0
@@ -146,7 +141,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
 
     # 6. Headway Penalty - REMOVED (FIX 5)
 
-    # 7. Station Milestone Reward (FIX 7)
+    # 7. Station Milestone Reward
     STATION_REWARDS = {
         1: +2.0,   # Rabka-Zdrój
         2: +3.0,   # Mszana Dolna
@@ -158,7 +153,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     if state.reached_new_station:
         out.r_station = STATION_REWARDS.get(state.station_index, 0.0)
 
-    # 8. Punctuality Reward (FIX 8)
+    # 8. Punctuality Reward
     if state.reached_new_station:
         if state.scheduled_arrival_time is not None and state.actual_arrival_time is not None:
             deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
@@ -167,7 +162,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
             else:
                 out.r_time = -4.0 # rescaled from 0.0
     
-    # 9. Patience Reward (FIX 8)
+    # 9. Patience Reward
     if state.is_dwelling and u < 0.1:
         out.r_patience = 5.0 # rescaled from 10.0
     elif station_cleared and train_aspect == 3 and u < 0.1:
@@ -177,17 +172,9 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         if x_diff > 3*sh:
             out.r_patience = -10.0 # rescaled from -20.0
 
-    # 10. Existence Penalty (FIX 8)
-    out.r_existence = -0.5 # rescaled from -0.1
-
-    # Terminal Penalties - REMOVED (FIX 4)
-    
-    if violations.get("any_violation"):
-        out.r_violation = -5.0 # rescaled from -10.0
-
     # Sum all
     out.r_total = (out.r_step + out.r_progress + out.r_speed + 
                    out.r_signal_compliance + out.r_station + out.r_time + out.r_jerk + 
-                   out.r_regen + out.r_patience + out.r_existence + out.r_violation)
+                   out.r_regen + out.r_patience)
     
     return out
