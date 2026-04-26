@@ -234,7 +234,7 @@ def optimize(n_trials: int = 150):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--trials", type=int, default=150, help="Number of trials to run"
+        "--trials", type=int, default=50, help="Number of trials to run"
     )
     args = parser.parse_args()
 
