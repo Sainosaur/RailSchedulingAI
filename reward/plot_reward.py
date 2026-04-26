@@ -25,7 +25,7 @@ def run_and_collect():
     env = ModernizedLine104(
         lead_train_speed=DEFAULT_CONFIG.lead_train_speed,
         lead_stop_offset=DEFAULT_CONFIG.lead_stop_offset,
-        training_mode=True
+        training_mode=False
     )
     
     use_model = os.path.exists(MODEL_PATH) and os.path.exists(STATS_PATH)
