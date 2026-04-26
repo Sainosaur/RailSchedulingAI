@@ -24,6 +24,7 @@ def run_and_collect():
     """Run full episode and collect reward breakdown."""
     env = ModernizedLine104(
         lead_train_speed=DEFAULT_CONFIG.lead_train_speed,
+        lead_stop_offset=DEFAULT_CONFIG.lead_stop_offset,
         training_mode=False
     )
     
