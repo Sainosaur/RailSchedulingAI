@@ -134,9 +134,14 @@ class ModernizedLine104(gym.Env):
         # 1. Action space termination check
         raw_action = float(action[0])
         if raw_action > 0.5 or raw_action < -1.0:
-            return self._get_obs(), -100.0, True, False, {"error": "Physically impossible action"}
+            seg = self.vl.get_segment(self.x)
+            lead_seg = self.vl.get_segment(self.lead_train.x)
+            lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+            x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+            fallback_obs = self._get_obs(0, 0, x_lead_zone_start, 0.0)
+            return fallback_obs, -100.0, True, False, {"error": "Physically impossible action"}
 
-        # Remap action: [0, 0.5] and [-1.0, 0]
+        # No Remapping: The raw action value IS the proposed acceleration directly.
         if raw_action >= 0:
             proposed_a = raw_action # Already in [0, 0.5] range if valid
         else:
@@ -187,7 +192,11 @@ class ModernizedLine104(gym.Env):
         
         # Negative speed guard
         if prev_v + proposed_a * dt < -0.01:
-             return self._get_obs(), -100.0, True, False, {"error": "Negative speed violation"}
+             lead_seg = self.vl.get_segment(self.lead_train.x)
+             lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+             x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+             fallback_obs = self._get_obs(0, 0, x_lead_zone_start, 0.0)
+             return fallback_obs, -100.0, True, False, {"error": "Negative speed violation"}
 
         self.x = new_x
         self.v = new_v

@@ -24,7 +24,9 @@ An 9-dimensional Box space (array of floats) providing real-time telemetry every
 
 B. Action Space (What the AI Does)
 A continuous Box space [-1.0, 1.0].
-- Remapping: The environment maps [0, 0.5] to Acceleration and [-1.0, 0.0] to Deceleration.
+- No Remapping: The raw action value IS the proposed acceleration directly.
+  Valid range: [0.0, 0.5] for acceleration, [-1.0, 0.0] for deceleration.
+  Any action outside these bounds terminates the episode immediately.
 - Direct Control: The Validation Layer (VL) no longer overrides actions. It only logs violations.
 - Physics Termination: If proposed_a > 0.5 or < -1.0, the episode terminates immediately.
 

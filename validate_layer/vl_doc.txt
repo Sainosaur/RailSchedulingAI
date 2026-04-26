@@ -28,7 +28,10 @@ Spatial Violation occurs if: x_ai_zone_end + d_stop >= x_obs_zone_start.
 Layer 3: Constraint Monitoring
 - NEGATIVE_SPEED_VIOLATION: Projected speed < 0.0.
 - SPEED_LIMIT_VIOLATION: Speed > segment limit.
-- ACCEL_NOT_ZERO_VIOLATION: Non-zero acceleration at speed limit or when stationary.
+- ACCEL_NOT_ZERO_VIOLATION: Negative acceleration when stationary (would reverse
+  the train), or positive acceleration when already at the segment speed limit.
+  Note: Positive acceleration when stationary is intentionally NOT flagged here —
+  if the train creeps into the next zone, the spatial violation fires instead.
 - STATION_SIGNAL_VIOLATION: Attempting to pass a station zone before dwell completion.
 - LEAD_TRAIN_SIGNAL_VIOLATION: Accelerating at a Red train aspect.
 

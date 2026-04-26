@@ -13,10 +13,19 @@ A. CONTINUOUS REWARDS (Calculated every physical timestep)
 - Logic: Change in percentage progress between stations.
 - Lead Protection: Suspend accumulation if the lead train is stalled or held.
 
-2. Speed Compliance (Optimal Braking)
-- Goal: Smooth, safe velocity curves.
-- Normal: Penalty for deviation from the speed limit when the path is clear.
-- Approaching Obstacle: Reward for braking at exactly 0.5 m/s² when within optimal braking distance (u² / 2*0.5).
+2. Speed Compliance (Aspect-Based)
+- Goal: Smooth, safe velocity curves driven by signal aspect.
+- Regime uses effective_aspect = min(train_aspect, station_aspect).
+- Green (3): Penalty proportional to deviation from the segment speed limit.
+- Double Yellow / Yellow (2/1): Reward (+5.0) for service braking at 0.5 m/s².
+  Penalty (-2.0) for braking harder than 0.5 m/s² but not emergency.
+  Emergency braking: see rule below.
+- Red (0): Reward (+2.0) for braking toward stop. No reward if already stopped.
+  Penalty (-5.0) for moving at Red without adequate braking.
+  Emergency braking: see rule below.
+- Emergency Braking Rule: Emergency braking (a <= -1.0 m/s²) is only justified
+  when effective_aspect == 0 (Red) AND speed >= 80% of the segment speed limit.
+  In all other contexts, emergency braking incurs a penalty (-10.0).
 
 3. Regenerative Braking
 - Goal: Energy efficiency.

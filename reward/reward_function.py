@@ -100,10 +100,20 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         elif -1.0 < a < -0.55:
             out.r_speed = -2.0   # Harder than service braking but not emergency
         elif a <= -1.0:
-            out.r_speed = 0.0    # Emergency braking is never penalised
+            # Justified only if Red aspect and train is near the speed limit
+            if effective_aspect == 0 and u >= state.speed_limit * 0.8:
+                out.r_speed = 0.0    # Justified emergency brake
+            else:
+                out.r_speed = -10.0  # Unnecessary emergency brake
     elif effective_aspect == 0:
         if u < 0.1:
             out.r_speed = 0.0    # Correctly stopped
+        elif a <= -1.0:
+            # Justified only if Red aspect and train is near the speed limit
+            if effective_aspect == 0 and u >= state.speed_limit * 0.8:
+                out.r_speed = 0.0    # Justified emergency brake
+            else:
+                out.r_speed = -10.0  # Unnecessary emergency brake
         elif a <= -0.45:
             out.r_speed = 2.0    # Braking correctly toward stop
         else:
