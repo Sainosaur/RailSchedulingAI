@@ -69,6 +69,30 @@ export default function StatsPanel({ aiStats }) {
           </div>
         </div>
 
+        {/* Reward Info */}
+        {aiStats.reward && (
+          <div className="space-y-2">
+            <div className="flex justify-between items-end border-b border-[var(--dash-border)] pb-1">
+              <span className="text-[10px] text-[var(--dash-text)] uppercase font-mono">
+                Step Reward
+              </span>
+              <span className={`text-xs font-bold font-mono ${aiStats.reward.total >= 0 ? "text-[var(--dash-green)]" : "text-[var(--dash-red)]"}`}>
+                {aiStats.reward.total.toFixed(2)}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              {Object.entries(aiStats.reward.breakdown || {}).map(([k, v]) => (
+                <div key={k} className="flex justify-between text-[9px] font-mono">
+                  <span className="text-[var(--dash-text)]/60">{k.replace("r_", "")}</span>
+                  <span className={v >= 0 ? "text-[var(--dash-green)]/80" : "text-[var(--dash-red)]/80"}>
+                    {v.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Authority Ranges */}
         {authority_ranges && (
           <div className="flex flex-col gap-1.5 mt-auto">

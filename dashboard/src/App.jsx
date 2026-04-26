@@ -68,7 +68,7 @@ export default function App() {
             ).toLocaleTimeString(),
             level: "SAFETY",
             source: "VLS",
-            message: `Override: ${l.original_ppo_a} -> ${l.corrected_a} (${l.constraint_id})`,
+            message: `Violation: x_ai=${l.x_ai_zone_end} x_obs=${l.x_obs_zone_start} v=${parseFloat(l.ai_speed).toFixed(1)} m/s (${l.constraint_id})`,
           }));
           setLogs(fetchedLogs);
         })

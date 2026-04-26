@@ -267,100 +267,66 @@ async def sim_updates(websocket: WebSocket):
     await sim_manager.connect(websocket)
     try:
         if simulation_runner.venv is not None:
-            try:
-                raw_env = _get_raw_env()
+            # We want to send the actual initial state to the client immediately
+            # but simulation_runner._broadcast_step calls the global broadcast.
+            # Here we just want to send to this specific websocket once.
+            raw_env = _get_raw_env()
+            
+            async def get_state_snapshot():
                 segment = raw_env.vl.get_segment(raw_env.x)
                 progress = (raw_env.x - segment.start) / (segment.end - segment.start)
-                next_st_idx = min(
-                    raw_env.last_station_idx + 1, len(raw_env.STATIONS) - 1
-                )
+                next_st_idx = min(raw_env.last_station_idx + 1, len(raw_env.STATIONS) - 1)
                 next_st_pos = raw_env.STATIONS[next_st_idx]
-                headway = float(
-                    (raw_env.lead_train.x - raw_env.x) / raw_env.v
-                    if raw_env.v > 0.01
-                    else 9999.0
-                )
                 signal_aspect = raw_env._get_signal_aspect()
-                if signal_aspect == 3:
-                    signal = "green"
-                elif signal_aspect == 2:
-                    signal = "double-amber"
-                elif signal_aspect == 1:
-                    signal = "amber"
-                else:
-                    signal = "red"
+                signal_map = {3: "green", 2: "double-amber", 1: "amber", 0: "red"}
+                signal = signal_map.get(signal_aspect, "red")
 
-                lead_segment = raw_env.vl.get_segment(
-                    min(raw_env.lead_train.x, raw_env.TRACK_END)
-                )
-                lead_progress = (raw_env.lead_train.x - lead_segment.start) / (
-                    lead_segment.end - lead_segment.start
-                )
+                lead_segment = raw_env.vl.get_segment(min(raw_env.lead_train.x, raw_env.TRACK_END))
+                lead_progress = (raw_env.lead_train.x - lead_segment.start) / (lead_segment.end - lead_segment.start)
 
-                await websocket.send_json(
-                    {
-                        "type": "sim_update",
-                        "step": raw_env.step_count,
-                        "time": raw_env.time,
-                        "ai": {
-                            "position_m": float(raw_env.x),
-                            "progress": float(progress),
-                            "speed_ms": float(raw_env.v),
-                            "speed_kmh": float(raw_env.v) * 3.6,
-                            "acceleration": float(raw_env.last_a),
-                            "dtz": float(raw_env.dtz),
-                            "signal": signal,
-                            "dist_to_next_station": float(next_st_pos - raw_env.x),
-                            "dist_to_obstruction": float(
-                                raw_env._dist_to_nearest_occupied()
-                            ),
-                            "speed_limit_ms": float(segment.limit_ms),
-                            "headway": headway,
-                            "segment_id": segment.id,
-                            "approaching_station": STATION_NAMES[next_st_idx],
-                            "dwell_timer": int(raw_env.ai_dwell_timer),
-                            "authority_ranges": {
-                                "red": [0.0, float(segment.spatial_headway)],
-                                "yellow": [
-                                    float(segment.spatial_headway),
-                                    float(2 * segment.spatial_headway),
-                                ],
-                                "double_yellow": [
-                                    float(2 * segment.spatial_headway),
-                                    float(3 * segment.spatial_headway),
-                                ],
-                                "green": [float(3 * segment.spatial_headway), 9999.9],
-                            },
-                        },
-                        "lead": {
-                            "position_m": float(raw_env.lead_train.x),
-                            "progress": float(lead_progress),
-                            "speed_ms": float(raw_env.lead_train.v),
-                            "speed_kmh": float(raw_env.lead_train.v) * 3.6,
-                            "signal": "green",
-                            "segment": lead_segment.id,
-                            "dwell_timer": int(raw_env.lead_train.dwell_timer),
-                            "stalled": raw_env.lead_train.stalled,
-                            "held": raw_env.lead_train.held,
-                        },
-                        "override": {
-                            "active": False,
-                            "proposed_a": 0.0,
-                            "safe_a": 0.0,
-                        },
-                        "stations_visited": list(raw_env.visited_stations),
-                        "hazards": [
-                            {"start": s, "end": e} for s, e in raw_env.active_hazards
-                        ],
-                        "done": False,
-                        "timetable": raw_env.timetable.to_dict(),
-                        "punctuality": raw_env.get_punctuality_status(),
-                        "reward": {
-                            "total": 0.0,
-                            "breakdown": {},
-                        },
-                    }
-                )
+                return {
+                    "type": "sim_update",
+                    "step": raw_env.step_count,
+                    "time": raw_env.time,
+                    "ai": {
+                        "position_m": float(raw_env.x),
+                        "progress": float(progress),
+                        "speed_ms": float(raw_env.v),
+                        "speed_kmh": float(raw_env.v) * 3.6,
+                        "acceleration": float(raw_env.last_a),
+                        "dtz": float(raw_env.dtz),
+                        "signal": signal,
+                        "dist_to_next_station": float(next_st_pos - raw_env.x),
+                        "dist_to_obstruction": float(raw_env._dist_to_nearest_occupied()),
+                        "speed_limit_ms": float(segment.limit_ms),
+                        "headway": float((raw_env.lead_train.x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0),
+                        "segment_id": segment.id,
+                        "approaching_station": STATION_NAMES[next_st_idx],
+                        "dwell_timer": int(raw_env.ai_dwell_timer),
+                    },
+                    "lead": {
+                        "position_m": float(raw_env.lead_train.x),
+                        "progress": float(lead_progress),
+                        "speed_ms": float(raw_env.lead_train.v),
+                        "speed_kmh": float(raw_env.lead_train.v) * 3.6,
+                        "signal": "green",
+                        "segment": lead_segment.id,
+                        "dwell_timer": int(raw_env.lead_train.dwell_timer),
+                        "stalled": raw_env.lead_train.stalled,
+                        "held": raw_env.lead_train.held,
+                    },
+                    "override": {"active": False, "proposed_a": 0.0, "safe_a": 0.0},
+                    "reward": {"total": 0.0, "breakdown": {}},
+                    "stations_visited": list(raw_env.visited_stations),
+                    "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
+                    "done": False,
+                    "timetable": raw_env.timetable.to_dict(),
+                    "punctuality": raw_env.get_punctuality_status(),
+                }
+            
+            try:
+                snapshot = await get_state_snapshot()
+                await websocket.send_json(snapshot)
             except Exception as e:
                 print(f"Error sending initial sim state: {e}")
 
