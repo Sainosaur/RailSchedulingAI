@@ -128,7 +128,9 @@ class ModernizedLine104(gym.Env):
         lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
         x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
         train_aspect = self.vl.compute_signal_aspect(self.x, seg, x_lead_zone_start)
-        station_aspect = 0 # Not cleared yet
+        
+        # Origin is cleared at Chabówka (index 0)
+        station_aspect = 3 
         optimal_braking_distance = (self.v ** 2) / (2 * 0.5)
 
         return self._get_obs(train_aspect, station_aspect, x_lead_zone_start, optimal_braking_distance), {

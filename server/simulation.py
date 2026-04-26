@@ -50,12 +50,13 @@ class SimulationRunner:
 
         if final_vecnorm_path.exists():
             vecnorm_path = final_vecnorm_path
+            print(f"SUCCESS: Loaded final normalisation stats from {vecnorm_path}")
         elif best_vecnorm_path.exists():
-            print(f"INFO: final_vecnormalize.pkl not found, falling back to {best_vecnorm_path}")
             vecnorm_path = best_vecnorm_path
+            print(f"SUCCESS: final_vecnormalize.pkl not found. Falling back to {vecnorm_path}")
         else:
             vecnorm_path = None
-            print(f"WARNING: No VecNormalize stats found at {final_vecnorm_path} or {best_vecnorm_path}. Running without norm.")
+            print(f"WARNING: No VecNormalize stats found. Running without normalisation.")
 
         if vecnorm_path:
             # Workaround for numpy 2.x pickle loaded in numpy 1.x (and vice versa)
@@ -103,9 +104,10 @@ class SimulationRunner:
 
         if final_model_path.exists():
             model_path = final_model_path
+            print(f"SUCCESS: Loaded final model checkpoint from {model_path}")
         elif best_model_path.exists():
-            print(f"INFO: final_model.zip not found, falling back to {best_model_path}")
             model_path = best_model_path
+            print(f"SUCCESS: final_model.zip not found. Falling back to {model_path}")
         else:
             raise FileNotFoundError(
                 f"ERROR: No model found at {final_model_path} or {best_model_path}. You need to train it first!"
