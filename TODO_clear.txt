@@ -21,18 +21,17 @@ FILE 1: graph/graph.py
    Note: TH = SH / (speed_limit_ms). Recalculate TH from new SH and segment speed limits
    if you prefer exact values, otherwise use the values above.
 
-2. Remove the safety merge logic in graph() that absorbs the last Block into the
-   second-to-last Block. The last zone of each segment is the station stopping zone
-   and must not be resized. Delete the entire "Merge the last zone..." block inside
-   the graph() function.
+2. Keep the safety merge logic in graph() exactly as-is. Do not remove it.
+   The merge correctly absorbs a short fractional final Block into the second-to-last,
+   producing a final zone that is LARGER than SH (e.g. 1.6*SH for a 15.6-zone segment).
+   This is the intended behaviour: n-1 full SH zones + 1 oversized final zone.
 
-3. Remove the safety merge logic in build_vl_segments() that deletes the
-   second-to-last boundary when the last zone is shorter than SH.
-   Delete the entire "Merge the last zone..." block inside build_vl_segments().
+3. Keep the safety merge logic in build_vl_segments() exactly as-is. Do not remove it.
+   Same reason as above.
 
 4. In build_vl_segments(), remove the block_boundaries list computation entirely.
    Replace it with an empty list: block_boundaries=[].
-   Block boundaries are now computed on demand using arithmetic (see validator.py).
+   Zone boundaries are now computed arithmetically in validator.py (see FILE 4).
 
 5. Remove the block_boundaries field from the VLSegment dataclass.
 
@@ -100,11 +99,21 @@ CLASS: ValidationLayer
     Note: O(n) scan here is acceptable. VL itself is O(1) once segment is passed in.
 
   compute_zone_boundaries(self, x: float, seg: VLSegment) -> tuple[float, float]:
-    """Return (x_ai_zone_end, zone_idx) for position x within seg."""
-    zone_idx = int((x - seg.start) / seg.spatial_headway)
-    x_ai_zone_end = seg.start + (zone_idx + 1) * seg.spatial_headway
-    x_ai_zone_end = min(x_ai_zone_end, seg.end)
-    return x_ai_zone_end, zone_idx
+    """Return (x_ai_zone_end, zone_idx) for position x within seg.
+
+    The last zone of each segment is oversized (>= SH) because the safety merge
+    absorbs any short fractional remainder into it. Must detect and handle this.
+    n_full = number of full SH-length zones before the oversized last zone.
+    Any x past start + n_full*SH belongs to the last zone, which ends at seg.end.
+    """
+    sh = seg.spatial_headway
+    n_full = int((seg.end - seg.start) / sh)
+    zone_idx = int((x - seg.start) / sh)
+    zone_idx = min(zone_idx, n_full)
+    x_zone_end = seg.start + (zone_idx + 1) * sh
+    if x_zone_end > seg.end:
+        x_zone_end = seg.end
+    return x_zone_end, zone_idx
 
   compute_dtz(self, x: float, seg: VLSegment) -> float:
     """Distance from x to the end of the current zone."""
@@ -439,7 +448,9 @@ DOCUMENTATION UPDATES (update all relevant .txt doc files)
    - Remove Green Departure Runway special case.
    - Update Layer 1 to describe new signal aspect calculation using x_diff.
    - Update Layer 4 log columns: add x_ai_zone_end, x_obs_zone_start, ai_speed. Remove original_ppo_a, corrected_a.
-   - Update O(1) claim: "O(1) given pre-computed segment passed in from env. Segment lookup in env is O(n) over 6 segments."
+   - Remove all O(1) complexity claims. Replace with: "Segment lookup is a linear scan over
+     segments (O(n)). All zone arithmetic within a segment is O(1). Architecture is modular:
+     adding trains, segments, or obstacle types requires no changes to VL core logic."
    - Update SH/TH table with new values.
 
 3. reward_docs.txt:
