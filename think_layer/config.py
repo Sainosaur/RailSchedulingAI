@@ -35,6 +35,10 @@ class TrainConfig:
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0
+    # Offset past TRACK_END (76651m) where the lead train parks.
+    # Must be > 1 SH (~40m) + terminus gap so the AI sees Green/Yellow
+    # all the way to 76651m and avoids the Red-aspect stagnation trap.
+    # 94.7m = original 34.7m + 60m extra clearance.
     lead_stop_offset: float = 94.7
     max_episode_steps: int = 10_000
     n_envs: int = 12

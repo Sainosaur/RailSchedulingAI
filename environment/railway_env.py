@@ -42,6 +42,7 @@ class ModernizedLine104(gym.Env):
     def __init__(
         self,
         lead_train_speed: float = 20.0,
+        lead_stop_offset: float = 94.7,
         slack_factor: float = 1.1,
         render_mode: str | None = None,
         training_mode: bool = False,
@@ -49,12 +50,16 @@ class ModernizedLine104(gym.Env):
         super().__init__()
         self.render_mode = render_mode
         self.lead_train_speed = lead_train_speed
+        self.lead_stop_offset = lead_stop_offset
         self.training_mode = training_mode
         self.slack_factor = slack_factor
         self.active_hazards: set[tuple[float, float]] = set()
 
         self.vl = ValidationLayer()
-        self.lead_train = LeadTrain(stations=self.STATIONS)  # <-- INITIALIZE LEAD TRAIN
+        self.lead_train = LeadTrain(
+            stations=self.STATIONS,
+            stop_offset=self.lead_stop_offset,
+        )  # <-- INITIALIZE LEAD TRAIN
 
         # Spaces: We use a symmetric [-1, 1] space for the agent.
         # Inside step(), we map [-1, 0] -> [-1.0, 0.0] and [0, 1] -> [0.0, 0.5]
@@ -129,7 +134,6 @@ class ModernizedLine104(gym.Env):
             "overridden": False,
             "timetable": self.timetable.to_dict(),
         }
-
     def step(self, action: np.ndarray):
         # 1. Action space check
         raw_action = float(action[0])

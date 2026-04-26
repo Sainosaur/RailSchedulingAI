@@ -72,6 +72,7 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         make_env(
             seed=config.seed + i,
             lead_train_speed=config.lead_train_speed,
+            lead_stop_offset=config.lead_stop_offset,
             slack_factor=config.slack_factor,
             max_episode_steps=config.max_episode_steps,
         )
