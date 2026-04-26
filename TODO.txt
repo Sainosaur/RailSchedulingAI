@@ -88,7 +88,8 @@ Remove the interlock, do not force a = 0, let VL override it, also reward 0 m/s/
 Ensure the speed cannot be negative, if it is, fail it.
 
 In the Override log, ensure constraint id is useful. So there is now spatial violation, speed limit violation, station signal violation, lead train signal violation,
-negative speed violation, acceleration not 0 at stationary and speed limit violation. Also in the logs, add the x_ai_zone_end position of the ai train 
+negative speed violation, acceleration not 0 at stationary and speed limit violati
+n. Also in the logs, add the x_ai_zone_end position of the ai train 
 and x_obs_zone_start position of the obstacle when override happens, also add the speed of the ai train too.
 Not sure is tolerance buffer is still needed. Probs not.
 
