@@ -110,8 +110,9 @@ def evaluate(
                 "episode": ep,
                 "step": ep_steps,
                 "time": info.get("time", 0.0),
-                "position": obs[0][0] if hasattr(obs[0], "__len__") else 0.0,
-                "speed": obs[0][1] if hasattr(obs[0], "__len__") else 0.0,
+                # Replace obs[0][0]/obs[0][1] with rawenv.x/raw_env.v
+                "position": float(raw_env.x),
+                "speed": float(raw_env.v),
                 "segment": info.get("segment", ""),
                 "aspect": info.get("aspect", -1),
                 "proposed_a": info.get("proposed_a", 0.0),

@@ -39,7 +39,9 @@ def make_env(
         # Wrap in TimeLimit for episode truncation
         env = gym.wrappers.TimeLimit(env, max_episode_steps=max_episode_steps)
         env = Monitor(env)
-        env.reset(seed=seed)
+        # DummyVecEnv calls reset() again without a seed after _init() returns,
+        # which would silently wipe the seed set here.
+        # Seeding is handled correctly by SB3 via PPO(seed=config.seed).
         return env
 
     return _init

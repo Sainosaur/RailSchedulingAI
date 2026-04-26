@@ -6,6 +6,7 @@ Training orchestrator — sets up callbacks and runs PPO learning.
 
 import os
 import sys
+import copy
 from pathlib import Path
 
 from stable_baselines3.common.callbacks import (
@@ -72,7 +73,8 @@ def train(config: TrainConfig) -> None:
         clip_obs=config.norm_obs_clip,
     )
     # Sync normalisation stats from training env
-    eval_venv.obs_rms = vec_env.obs_rms
+    # don't drift as training continues to update vec_env.obs_rms in place.
+    eval_venv.obs_rms = copy.deepcopy(vec_env.obs_rms)
     eval_venv.training = False   # freeze stats during evaluation
     eval_venv.norm_reward = False
 
