@@ -89,25 +89,33 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     effective_aspect = min(train_aspect, station_aspect)
 
     if effective_aspect == 3:
+        # Green: reward being at the speed limit, penalise deviation
         out.r_speed = max(-10.0, -abs(u - state.speed_limit))
+
     elif effective_aspect in (1, 2):
+        # Yellow / Double-Yellow: train does NOT need to brake right now — it just
+        # cannot be accelerating at/above the limit, and must not use emergency braking.
+        # Coasting at or below the speed limit is perfectly valid.
         if a <= -1.0:
             out.r_speed = -8.0   # Emergency braking not justified at yellow/double-yellow
+        elif a > 0.01 and u >= state.speed_limit - 0.1:
+            out.r_speed = -5.0   # Accelerating at or above speed limit toward obstacle
         elif -0.55 <= a <= -0.45:
-            out.r_speed = 5.0    # Correct service braking (-0.5 is assumed regen)
+            out.r_speed = 5.0    # Correct service braking
         elif -1.0 < a < -0.55:
             out.r_speed = -2.0   # Harder than service braking but not emergency
         else:
-            out.r_speed = -5.0   # Coasting or accelerating toward obstacle
+            out.r_speed = 0.0    # Coasting or gentle accel below limit — acceptable
+
     elif effective_aspect == 0:
+        # Red: must stop. Reward braking, penalise anything else.
         if u < 0.1:
             out.r_speed = 0.0    # Correctly stopped
         elif a <= -1.0:
-            # Justified only if Red aspect and train is near the speed limit
             if u >= state.speed_limit * 0.8:
-                out.r_speed = 0.0    # Justified emergency brake
+                out.r_speed = 0.0    # Justified emergency brake from high speed
             else:
-                out.r_speed = -8.0   # Unnecessary emergency brake
+                out.r_speed = -8.0   # Unnecessary emergency brake at low speed
         elif a <= -0.45:
             out.r_speed = 5.0    # Braking correctly toward stop
         else:
@@ -125,9 +133,11 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     if train_aspect == 0 and state.proposed_acceleration > 0.01:
         out.r_signal_compliance = -10.0
     if train_aspect == 3:
-        # Sweet spot bonus
-        if 3*sh <= x_diff <= 4*sh:
-            out.r_signal_compliance = 5.0
+        # Sweet spot bonus: reward maintaining the ideal following gap (3–4 SH).
+        # Only award when the agent is moving (not coasting at a stop) so this
+        # doesn't fire as a free cruise bonus when the gap is passively maintained.
+        if 3*sh <= x_diff <= 4*sh and u > 0.5:
+            out.r_signal_compliance = 2.0  # Reduced from 5.0 — should not dominate cruise
 
     # Station Signal
     if station_aspect == 0:
