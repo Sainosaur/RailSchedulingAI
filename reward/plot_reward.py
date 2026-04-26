@@ -13,6 +13,7 @@ import os
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from environment.railway_env import ModernizedLine104
+from think_layer.config import DEFAULT_CONFIG
 
 # Paths to trained model
 MODEL_DIR = "/home/dharms/RailSchedulingAI/think_layer/models"
@@ -21,7 +22,10 @@ STATS_PATH = os.path.join(MODEL_DIR, "final_vecnormalize.pkl")
 
 def run_and_collect():
     """Run full episode and collect reward breakdown."""
-    env = ModernizedLine104(lead_train_speed=25.0, training_mode=False)
+    env = ModernizedLine104(
+        lead_train_speed=DEFAULT_CONFIG.lead_train_speed,
+        training_mode=False
+    )
     
     use_model = os.path.exists(MODEL_PATH) and os.path.exists(STATS_PATH)
     
@@ -42,6 +46,7 @@ def run_and_collect():
         "position": [], "speed": [], "reward": [], 
         "total_reward": [], "limit": [],
         "signal": [],
+        "lead_position": [], "lead_speed": [],
     }
     breakdown_data = {}
 
@@ -60,6 +65,10 @@ def run_and_collect():
             step_reward = rewards[0]
             is_done = is_done_vec[0]
             info = info_vec[0]
+            
+            raw_env = venv.envs[0]
+            while hasattr(raw_env, "env"):
+                raw_env = raw_env.env
         else:
             if hasattr(env, "ai_departure_time") and env.time < env.ai_departure_time:
                 target_v = 0.0
@@ -95,6 +104,13 @@ def run_and_collect():
         data["total_reward"].append(total_rew)
         data["limit"].append(env.vl.get_segment(env.x).limit_ms * 3.6)
         data["signal"].append(env._get_signal_aspect())
+        
+        if use_model:
+            data["lead_position"].append(raw_env.lead_train.x)
+            data["lead_speed"].append(raw_env.lead_train.v)
+        else:
+            data["lead_position"].append(env.lead_train.x)
+            data["lead_speed"].append(env.lead_train.v)
 
         # Collect breakdown
         if "reward_breakdown" in info:
@@ -120,6 +136,9 @@ def plot(data, breakdown):
     ax = axes[0]
     ax.plot(x, data["speed"] * 3.6, label="Agent Speed", linewidth=2.0, color="#1f77b4")
     ax.plot(x, data["limit"], label="Speed Limit", color="#d62728", linestyle="--", alpha=0.8)
+    lead_x = data["lead_position"] / 1000.0
+    ax.plot(lead_x, data["lead_speed"] * 3.6, label="Lead Train Speed",
+            linewidth=1.5, color="#2ca02c", linestyle="-.", alpha=0.8)
     ax2 = ax.twinx()
     ax2.plot(x, data["signal"], color="#ff7f0e", alpha=0.3, label="Signal")
     ax.set_ylabel("Speed (km/h)")
@@ -130,7 +149,7 @@ def plot(data, breakdown):
     # 2. Component Breakdown (Stacked-ish or just key ones)
     ax = axes[1]
     # Filter for interesting ones
-    keys = ["r_step", "r_progress", "r_speed", "r_signal_compliance",
+    keys = ["r_progress", "r_speed", "r_signal_compliance",
             "r_station", "r_time", "r_jerk", "r_patience"]
     for k in keys:
         if k in breakdown:
