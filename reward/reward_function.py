@@ -84,37 +84,35 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     if lead_train_stalled or lead_train_held:
         out.r_progress = max(0.0, out.r_progress) # Don't penalise slow progress
 
-    # 2. Speed Compliance Reward
+    # 2. Speed Compliance Reward and 3. Regenerative Braking Reward
     effective_aspect = min(train_aspect, station_aspect)
 
     if effective_aspect == 3:
         out.r_speed = max(-10.0, -abs(u - state.speed_limit)) # rescaled
     elif effective_aspect in (1, 2):
-        if -0.55 <= a <= -0.45:
-            out.r_speed = 5.0 # rescaled from 5.0
-        elif -1.0 < a < -0.55:
-            out.r_speed = -2.0 # rescaled from -2.0
-        elif a <= -1.0:
-            out.r_speed = -8.0  # Emergency braking not justified at yellow/double-yellow (FIX 3)
+        if a <= -1.0:
+            out.r_speed = -8.0  # Emergency braking not justified at yellow/double-yellow 
     elif effective_aspect == 0:
         if u < 0.1:
-            out.r_speed = 0.0    # Correctly stopped
-        elif a <= -1.0:
+            out.r_speed = 0.1    # Correctly stopped
+        elif a == -1.0:
             # Justified only if Red aspect and train is near the speed limit
-            if effective_aspect == 0 and u >= state.speed_limit * 0.8:
+            if u >= state.speed_limit * 0.8:
                 out.r_speed = 0.0    # Justified emergency brake
             else:
-                out.r_speed = -8.0 # rescaled from -10.0
+                out.r_speed = -4.0 
         elif a <= -0.45:
-            out.r_speed = 5.0 # rescaled from 2.0
+            out.r_speed = 5.0 
         else:
-            out.r_speed = -5.0 # rescaled from -5.0
+            out.r_speed = -5.0
+    elif a < -1.0 or a > 0.5:
+        out.r_speed = -10.0
 
     # 3. Regenerative Braking Reward
     if -0.55 <= a <= -0.45:
-        out.r_regen = 3.0 # rescaled from 2.0
+        out.r_regen = 3.0 
     elif -1.0 < a < -0.5:
-        out.r_regen = -1.0 # rescaled from -1.0
+        out.r_regen = -1.0 
 
     # 4. Jerk Reward/Penalty
     jerk = abs(state.applied_acceleration - info.get("previous_a", 0.0)) / dt
