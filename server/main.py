@@ -311,7 +311,3 @@ async def stop_sim():
 @app.get("/api/sim/status")
 async def sim_status():
     return {"status": simulation_runner.is_running}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
