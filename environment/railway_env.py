@@ -61,10 +61,10 @@ class ModernizedLine104(gym.Env):
             stop_offset=self.lead_stop_offset,
         )  # <-- INITIALIZE LEAD TRAIN
 
-        # Spaces: We use a symmetric [-1, 1] space for the agent.
-        # Inside step(), we map [-1, 0] -> [-1.0, 0.0] and [0, 1] -> [0.0, 0.5]
+        # Action space: [-1.0, 0.5] directly maps to [full emergency brake, full traction].
+        # Upper bound is 0.5 m/s² (max traction); lower bound is -1.0 m/s² (emergency brake).
         self.action_space = gym.spaces.Box(
-            low=-1.0, high=1.0, shape=(1,), dtype=np.float32
+            low=-1.0, high=0.5, shape=(1,), dtype=np.float32
         )
         # New observation space: 9 dimensions
         self.observation_space = gym.spaces.Box(
@@ -87,6 +87,7 @@ class ModernizedLine104(gym.Env):
         self.previous_a: float = 0.0
         self.step_count: int = 0
         self.station_cleared: bool = False
+        self.station_cleared_prev: bool = False
 
         self.timetable: Timetable = generate_timetable(
             self.vl.segments,
@@ -112,6 +113,7 @@ class ModernizedLine104(gym.Env):
         self.ai_departure_time = 0.0
         # Start cleared at Chabówka (origin)
         self.station_cleared = True
+        self.station_cleared_prev = True
 
         # Reset the lead train ~2km ahead
         start_lead_x = self.TRACK_START + 2000.0
@@ -143,11 +145,8 @@ class ModernizedLine104(gym.Env):
         if raw_action > 0.5 or raw_action < -1.0:
             raw_action = max(-1.0, min(0.5, raw_action))  # clamp silently, VL logs violation
 
-        # No Remapping: The raw action value IS the proposed acceleration directly.
-        if raw_action >= 0:
-            proposed_a = raw_action # Already in [0, 0.5] range if valid
-        else:
-            proposed_a = raw_action # Already in [-1.0, 0] range if valid
+        # proposed_a is the raw action value directly (no remapping needed).
+        proposed_a = raw_action
         
         # 2. Physics & State Update (AI Train)
         prev_x, prev_v = self.x, self.v
@@ -184,6 +183,11 @@ class ModernizedLine104(gym.Env):
         # 4. Aspect & Signal Calculations
         seg = self.vl.get_segment(self.x)
         sh = seg.spatial_headway
+        
+        # Capture cleared status from the PREVIOUS step before any mutation this step.
+        # reward_function.py needs this to detect "agent stalling after clearance".
+        station_cleared_prev = self.station_cleared_prev
+        self.station_cleared_prev = self.station_cleared
         
         # Lead train zone start
         lead_seg = self.vl.get_segment(self.lead_train.x)
@@ -266,7 +270,8 @@ class ModernizedLine104(gym.Env):
             "violations": violations,
             "lead_train_stalled": self.lead_train.stalled,
             "lead_train_held": self.lead_train.held,
-            "previous_a": self.previous_a
+            "previous_a": self.previous_a,
+            "station_cleared_prev": station_cleared_prev,
         }
         
         reward_out = compute_reward(state, reward_info)
