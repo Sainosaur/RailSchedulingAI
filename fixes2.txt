@@ -52,10 +52,34 @@ Replace with:
      Any action outside these bounds terminates the episode immediately."
 
 ================================================================================
-FILE 3: environment/reward_docs.txt  (DOC FIX)
+FILE 3: reward/reward_function.py  (CODE FIX)
 ================================================================================
 
-FIX 3 — Speed Compliance description still describes old optimal_braking_distance logic.
+FIX 3 — Emergency braking is never penalised regardless of context.
+Emergency braking (a <= -1.0) is only justified when aspect is Red AND the train
+is near the speed limit. In all other cases it is unnecessary and should be penalised.
+
+In the speed compliance block (component 2), locate every occurrence of:
+    elif a <= -1.0:
+        out.r_speed = 0.0    # Emergency braking is never penalised
+
+There are two occurrences — one inside the `elif effective_aspect in (1, 2):` block
+and one inside the `elif effective_aspect == 0:` block.
+
+Replace BOTH occurrences with:
+    elif a <= -1.0:
+        # Justified only if Red aspect and train is near the speed limit
+        if effective_aspect == 0 and u >= state.speed_limit * 0.8:
+            out.r_speed = 0.0    # Justified emergency brake
+        else:
+            out.r_speed = -10.0  # Unnecessary emergency brake
+
+================================================================================
+FILE 4: reward/reward_docs.txt  (DOC FIX)
+================================================================================
+
+FIX 4 — Speed Compliance description still describes old optimal_braking_distance logic
+and does not reflect the emergency braking penalty.
 
 Current text for component 2:
     "2. Speed Compliance (Optimal Braking)
@@ -67,19 +91,23 @@ Current text for component 2:
 Replace with:
     "2. Speed Compliance (Aspect-Based)
     - Goal: Smooth, safe velocity curves driven by signal aspect.
+    - Regime uses effective_aspect = min(train_aspect, station_aspect).
     - Green (3): Penalty proportional to deviation from the segment speed limit.
     - Double Yellow / Yellow (2/1): Reward (+5.0) for service braking at 0.5 m/s².
-      Penalty (-2.0) for braking harder than 0.5 m/s² (non-emergency).
-      Emergency braking (-1.0 m/s²) is never penalised.
+      Penalty (-2.0) for braking harder than 0.5 m/s² but not emergency.
+      Emergency braking: see rule below.
     - Red (0): Reward (+2.0) for braking toward stop. No reward if already stopped.
       Penalty (-5.0) for moving at Red without adequate braking.
-    - Regime uses effective_aspect = min(train_aspect, station_aspect)."
+      Emergency braking: see rule below.
+    - Emergency Braking Rule: Emergency braking (a <= -1.0 m/s²) is only justified
+      when effective_aspect == 0 (Red) AND speed >= 80% of the segment speed limit.
+      In all other contexts, emergency braking incurs a penalty (-10.0)."
 
 ================================================================================
-FILE 4: validate_layer/vl_doc.txt  (DOC FIX)
+FILE 5: validate_layer/vl_doc.txt  (DOC FIX)
 ================================================================================
 
-FIX 4 — ACCEL_NOT_ZERO_VIOLATION description does not match updated code logic.
+FIX 5 — ACCEL_NOT_ZERO_VIOLATION description does not match updated code logic.
 
 Current text in Layer 3:
     "- ACCEL_NOT_ZERO_VIOLATION: Non-zero acceleration at speed limit or when stationary."
