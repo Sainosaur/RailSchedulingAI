@@ -1,0 +1,461 @@
+================================================================================
+RAIL SCHEDULING AI — IMPLEMENTATION INSTRUCTIONS
+For: Gemini CLI
+================================================================================
+
+Read all uploaded source files before making any changes.
+Make changes file by file in the order listed below.
+Do not change anything not listed here.
+
+================================================================================
+FILE 1: graph/graph.py
+================================================================================
+
+1. Update _HEADWAY_TABLE to the following values:
+   0: SH = 390.0m, TH = 15.6s
+   1: SH = 390.0m, TH = 15.6s
+   2: SH = 170.0m, TH = 10.2s
+   3: SH = 40.0m,  TH = 4.8s
+   4: SH = 40.0m,  TH = 4.8s
+   5: SH = 40.0m,  TH = 4.8s
+   Note: TH = SH / (speed_limit_ms). Recalculate TH from new SH and segment speed limits
+   if you prefer exact values, otherwise use the values above.
+
+2. Remove the safety merge logic in graph() that absorbs the last Block into the
+   second-to-last Block. The last zone of each segment is the station stopping zone
+   and must not be resized. Delete the entire "Merge the last zone..." block inside
+   the graph() function.
+
+3. Remove the safety merge logic in build_vl_segments() that deletes the
+   second-to-last boundary when the last zone is shorter than SH.
+   Delete the entire "Merge the last zone..." block inside build_vl_segments().
+
+4. In build_vl_segments(), remove the block_boundaries list computation entirely.
+   Replace it with an empty list: block_boundaries=[].
+   Block boundaries are now computed on demand using arithmetic (see validator.py).
+
+5. Remove the block_boundaries field from the VLSegment dataclass.
+
+6. Remove the block_boundaries field from the Block dataclass.
+
+================================================================================
+FILE 2: environment/lead_train.py
+================================================================================
+
+1. Fix dwell timer assignment at station arrival. Change:
+      self.dwell_timer = self.np_random.integers(
+          self.LEAD_DWELL_RANGE[0], self.LEAD_DWELL_RANGE[1]
+      )
+   To:
+      self.dwell_timer = self.np_random.integers(
+          self.LEAD_DWELL_RANGE[0], self.LEAD_DWELL_RANGE[1] + 1
+      )
+   Reason: np.random.integers is exclusive of upper bound. This fixes the range
+   to 20-40s inclusive as documented.
+
+2. Fix random stall timer assignment. Change:
+      self.random_stall_timer = self.np_random.integers(15, 60)
+   To:
+      self.random_stall_timer = self.np_random.integers(15, 61)
+   Reason: Same upper-bound exclusion fix. Range should be 15-60s inclusive.
+
+================================================================================
+FILE 3: environment/timetable.py
+================================================================================
+
+No code changes required. Logic is correct.
+
+================================================================================
+FILE 4: validate_layer/validator.py
+================================================================================
+
+Rewrite this file from scratch using the specification below.
+Keep the existing imports for VLSegment, build_vl_segments, append_row, init_log.
+Keep the physical constants: ACCEL=0.5, SERVICE_DECEL=-0.5, EMERGENCY_DECEL=-1.0.
+
+--- NEW VALIDATOR SPECIFICATION ---
+
+The VL no longer overrides any AI action.
+It only logs violations when they occur.
+Overrides are removed. The reward function handles behaviour shaping.
+Exception: if AI action would result in negative speed, terminate the episode (see railway_env.py).
+
+CONSTRAINT IDs (use these exact strings in all logs):
+  "SPATIAL_VIOLATION"         — projected stopping distance breaches x_obs_zone_start
+  "SPEED_LIMIT_VIOLATION"     — AI train speed exceeds segment speed limit
+  "STATION_SIGNAL_VIOLATION"  — AI train attempts to pass station obstacle before dwell complete
+  "LEAD_TRAIN_SIGNAL_VIOLATION" — AI train signal aspect is Red (x_diff <= 1*SH) and train is accelerating
+  "NEGATIVE_SPEED_VIOLATION"  — resulting speed would be negative
+  "ACCEL_NOT_ZERO_VIOLATION"  — acceleration is non-zero when speed is 0 or at speed limit
+
+CLASS: ValidationLayer
+
+  __init__(self):
+    self.segments = build_vl_segments()
+    init_log()
+    self.dt = 1.0
+
+  get_segment(self, x: float) -> VLSegment:
+    Same logic as current implementation. Linear scan. Returns correct segment for position x.
+    Note: O(n) scan here is acceptable. VL itself is O(1) once segment is passed in.
+
+  compute_zone_boundaries(self, x: float, seg: VLSegment) -> tuple[float, float]:
+    """Return (x_ai_zone_end, zone_idx) for position x within seg."""
+    zone_idx = int((x - seg.start) / seg.spatial_headway)
+    x_ai_zone_end = seg.start + (zone_idx + 1) * seg.spatial_headway
+    x_ai_zone_end = min(x_ai_zone_end, seg.end)
+    return x_ai_zone_end, zone_idx
+
+  compute_dtz(self, x: float, seg: VLSegment) -> float:
+    """Distance from x to the end of the current zone."""
+    x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
+    return max(0.0, x_ai_zone_end - x)
+
+  compute_signal_aspect(
+      self,
+      x: float,
+      seg: VLSegment,
+      x_obs_zone_start: float
+  ) -> int:
+    """
+    Compute train signal aspect from zone geometry.
+    x_obs_zone_start: start of the zone containing the obstacle (lead train or station).
+    Returns: 0=Red, 1=Yellow, 2=Double Yellow, 3=Green.
+    """
+    x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
+    sh = seg.spatial_headway
+    x_diff = x_obs_zone_start - x_ai_zone_end
+
+    if x_diff <= 0:
+        return -1  # Violation — episode termination (handled in env)
+    elif x_diff <= sh:
+        return 0   # Red
+    elif x_diff <= 2 * sh:
+        return 1   # Yellow
+    elif x_diff <= 3 * sh:
+        return 2   # Double Yellow
+    else:
+        return 3   # Green
+
+  check_and_log(
+      self,
+      x: float,
+      u: float,
+      proposed_a: float,
+      seg: VLSegment,
+      x_obs_zone_start: float,
+      train_aspect: int,
+      station_cleared: bool
+  ) -> dict:
+    """
+    Check all constraints. Log any violations. Return dict of violation flags.
+    Does NOT override the action. Returns results for env/reward to use.
+
+    Returns dict with keys:
+      spatial_violation: bool
+      speed_limit_violation: bool
+      station_signal_violation: bool
+      lead_train_signal_violation: bool
+      negative_speed_violation: bool
+      accel_not_zero_violation: bool
+      any_violation: bool
+    """
+    sh = seg.spatial_headway
+    x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
+    violations = {
+        "spatial_violation": False,
+        "speed_limit_violation": False,
+        "station_signal_violation": False,
+        "lead_train_signal_violation": False,
+        "negative_speed_violation": False,
+        "accel_not_zero_violation": False,
+        "any_violation": False,
+    }
+
+    # 1. Negative speed check
+    projected_v = u + proposed_a * self.dt
+    if projected_v < 0.0:
+        violations["negative_speed_violation"] = True
+        self._log(x_ai_zone_end, x_obs_zone_start, u, "NEGATIVE_SPEED_VIOLATION")
+
+    # 2. Speed limit check
+    if u > seg.limit_ms + 0.01:
+        violations["speed_limit_violation"] = True
+        self._log(x_ai_zone_end, x_obs_zone_start, u, "SPEED_LIMIT_VIOLATION")
+
+    # 3. Accel not zero at stationary or at speed limit
+    if (u < 0.1 and abs(proposed_a) > 0.01) or \
+       (abs(u - seg.limit_ms) < 0.01 and proposed_a > 0.01):
+        violations["accel_not_zero_violation"] = True
+        self._log(x_ai_zone_end, x_obs_zone_start, u, "ACCEL_NOT_ZERO_VIOLATION")
+
+    # 4. Spatial violation (SUVAT stopping distance check)
+    # dist_vio_check = u^2 / (2 * |EMERGENCY_DECEL|)
+    dist_vio_check = (u * u) / (2.0 * abs(EMERGENCY_DECEL))
+    if x_ai_zone_end + dist_vio_check >= x_obs_zone_start:
+        violations["spatial_violation"] = True
+        self._log(x_ai_zone_end, x_obs_zone_start, u, "SPATIAL_VIOLATION")
+
+    # 5. Station signal violation
+    # If the obstacle IS the station and dwell not complete, and train tries to pass
+    if not station_cleared and x >= x_obs_zone_start:
+        violations["station_signal_violation"] = True
+        self._log(x_ai_zone_end, x_obs_zone_start, u, "STATION_SIGNAL_VIOLATION")
+
+    # 6. Lead train signal violation
+    # If aspect is Red and train is accelerating
+    if train_aspect == 0 and proposed_a > 0.01:
+        violations["lead_train_signal_violation"] = True
+        self._log(x_ai_zone_end, x_obs_zone_start, u, "LEAD_TRAIN_SIGNAL_VIOLATION")
+
+    violations["any_violation"] = any([
+        violations["spatial_violation"],
+        violations["speed_limit_violation"],
+        violations["station_signal_violation"],
+        violations["lead_train_signal_violation"],
+        violations["negative_speed_violation"],
+        violations["accel_not_zero_violation"],
+    ])
+
+    return violations
+
+  @staticmethod
+  def _log(x_ai_zone_end: float, x_obs_zone_start: float, speed: float, constraint_id: str):
+    append_row(time.time(), x_ai_zone_end, x_obs_zone_start, speed, constraint_id)
+
+--- END NEW VALIDATOR SPECIFICATION ---
+
+================================================================================
+FILE 5: validate_layer/log_manager.py
+================================================================================
+
+Update append_row signature and CSV columns to:
+  timestamp, x_ai_zone_end, x_obs_zone_start, ai_speed, constraint_id
+
+Remove columns: original_ppo_a, corrected_a.
+Add columns: x_ai_zone_end, x_obs_zone_start, ai_speed.
+Update init_log() to write the new header row.
+
+================================================================================
+FILE 6: environment/railway_env.py
+================================================================================
+
+--- OBSERVATION SPACE ---
+
+Change observation space from 7 to 8 dimensions.
+New layout:
+  [0] position (m)
+  [1] speed (m/s)
+  [2] dtz — distance to end of current zone (m)
+  [3] train_aspect — signal aspect relative to lead train (0=Red,1=Yellow,2=DY,3=Green)
+  [4] station_aspect — signal aspect relative to next station (0=Red, 3=Green only)
+  [5] distance_to_lead_zone_start — x_obs_zone_start of lead train (m)
+  [6] optimal_braking_distance — d = u^2 / (2 * 0.5), braking at 0.5 m/s/s to stop (m)
+  [7] sim_time (s)
+
+Remove from observation space:
+  - lead train speed (obs[5] in old space) — not available under ETCS L2
+  - signal_aspect (single channel) — replaced by train_aspect and station_aspect
+
+--- STATION ASPECT LOGIC ---
+
+station_aspect is computed as follows:
+  - The last zone of the current segment is the station zone.
+  - x_station_zone_start = seg.end - seg.spatial_headway
+  - If AI train has NOT completed dwell at this station:
+      station_aspect = 0 (Red)
+  - After dwell_timer expires (station_cleared = True):
+      station_aspect = 3 (Green) for the next 3*SH of the following segment.
+      After 3*SH into the next segment, station_aspect is no longer relevant
+      (set to 3 permanently until next station).
+
+Add a boolean flag: station_cleared = False. Set True when dwell_timer reaches 0.
+Reset to False on arrival at each new station.
+
+--- TRAIN ASPECT LOGIC ---
+
+train_aspect is computed using VL.compute_signal_aspect(x, seg, x_lead_zone_start).
+x_lead_zone_start = start of the zone containing the lead train position.
+Compute x_lead_zone_start as:
+  lead_seg = vl.get_segment(lead_train.x)
+  lead_zone_idx = int((lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+  x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+
+--- ACTION SPACE ---
+
+Clamp AI action in env step before passing to VL:
+  If proposed_a > 0.5: terminate episode immediately (physically impossible).
+  If proposed_a < -1.0: terminate episode immediately (physically impossible).
+  Remap action to acceleration: [0, 1] -> [0.0, 0.5], [-1, 0] -> [-1.0, 0.0].
+
+--- REMOVE FROM ENV STEP (Phase 1 Validation & Interlock) ---
+
+Remove: Red Signal Interlock (forcing a=0.0 at red signal).
+Remove: Speed Limit Governor (capping acceleration at speed limit).
+Remove: Boundary Awareness mid-step cap.
+These are no longer enforced by env. VL logs violations. Reward function penalises.
+
+--- NEGATIVE SPEED GUARD ---
+
+After applying SUVAT physics in env step:
+  If resulting speed < 0.0: terminate episode immediately.
+  Set speed to 0.0 before terminating to avoid propagation.
+
+--- STATION DETECTION CHANGE ---
+
+Station arrival is triggered when:
+  x >= x_station_zone_start (start of last zone of current segment)
+  where x_station_zone_start = seg.end - seg.spatial_headway
+
+This replaces the current (Station_Pos - 2.0m) trigger.
+
+The station obstacle is the station zone itself. The AI must stop before
+x_station_zone_start + seg.spatial_headway (i.e., seg.end) during dwell.
+After dwell completes, station_cleared = True and AI may pass freely.
+
+--- VL INTEGRATION ---
+
+On every step, after computing x and u:
+  seg = vl.get_segment(x)
+  Pass seg directly to all VL methods (do not let VL call get_segment internally).
+  Call vl.check_and_log(...) and store returned violations dict.
+  Pass violations dict to reward function.
+
+--- TERMINATION CONDITIONS ---
+
+Add to existing termination conditions:
+  - proposed_a > 0.5 or proposed_a < -1.0 (physically impossible action)
+  - resulting speed < 0.0 (negative speed)
+  - x_diff <= 0 in signal aspect computation (collision — zone overlap)
+
+Keep existing:
+  - Track end (76,651m)
+  - Critical headway violation (x_diff = 0)
+  - 10,000 step truncation
+
+Remove:
+  - 20-minute lateness threshold termination (see reward changes below)
+
+--- INFO DICT ---
+
+Add to info dict every step:
+  train_aspect, station_aspect, station_cleared,
+  x_ai_zone_end, x_lead_zone_start, x_station_zone_start,
+  optimal_braking_distance, violations (the dict from vl.check_and_log)
+
+================================================================================
+FILE 7: environment/reward_function.py
+================================================================================
+
+--- STRUCTURE ---
+
+Keep total reward as a weighted sum: r_total = sum of all components.
+Do not change to product or quotient.
+
+--- COMPONENTS TO KEEP (with modifications noted) ---
+
+1. Progress reward — keep as is.
+
+2. Speed compliance reward — MODIFY:
+   Replace generic speed target with optimal_braking_distance logic.
+   Define optimal_braking_distance = u^2 / (2 * 0.5) internally.
+   If current distance to obstacle > optimal_braking_distance: reward being at or near speed limit.
+   If current distance to obstacle <= optimal_braking_distance: reward braking at 0.5 m/s/s
+   (regenerative braking). Penalise braking harder than 0.5 m/s/s unless emergency.
+   Emergency braking (-1.0 m/s/s) is never penalised regardless of context.
+
+3. Regenerative braking reward — ADD NEW:
+   If deceleration is between -0.5 and -0.01 m/s/s: reward +2.0 per step.
+   If deceleration is exactly -1.0 m/s/s (emergency): no penalty, no reward.
+   If deceleration is between -1.0 and -0.5 m/s/s (non-regenerative, non-emergency):
+   apply small penalty.
+
+4. Jerk reward/penalty — MODIFY:
+   Jerk = |current_a - previous_a| / dt  (units: m/s/s/s).
+   If jerk < 0.5: reward +1.0 per step.
+   If 0.5 <= jerk <= 1.0: no reward, no penalty.
+   If jerk > 1.0: penalty proportional to (jerk - 1.0).
+   Store previous_a in env as internal variable. Do not add jerk to observation space.
+
+5. Signal compliance — MODIFY:
+   Use train_aspect (not the old single aspect) for lead train signal logic.
+   Use station_aspect for station stopping logic.
+   Keep sweet spot bonus for train_aspect == 3 (Green) with correct headway.
+   Remove Yellow Tax — redundant with new headway penalty structure.
+   Keep Red punishment for accelerating at Red train_aspect.
+
+6. Headway penalty — MODIFY:
+   Use x_diff (x_lead_zone_start - x_ai_zone_end) for headway calculation.
+   Penalty activates when x_diff < 3 * SH.
+   Penalty scales linearly from 0 at 3*SH to -k_h at x_diff = 1*SH (Red boundary).
+   k_h should be a positive constant (penalty is negative). Keep as -k_h in code.
+
+7. Station milestone reward — keep as is. Escalating rewards per station. +50,000 for terminus.
+
+8. Punctuality reward — keep as is. +10,000 within 60s window.
+
+9. Patience reward — MODIFY:
+   Reward +10.0 per step when stationary during mandatory dwell (dwell_timer > 0).
+   Remove separate stall penalty. Replace with:
+   Penalty for being stationary at Green train_aspect when station_cleared = True
+   and no obstacle within 3*SH. This replaces the old stall logic.
+
+10. Existence penalty — keep as is (-0.1 per step).
+
+--- COMPONENTS TO REMOVE ---
+
+Remove: Lateness threshold terminal penalty (-10,000). Redundant with punctuality reward.
+Remove: VL override penalty. VL no longer overrides.
+Remove: Cruise & standing bonus. Redundant with modified speed compliance reward.
+Remove: Energy penalty (replaced by regenerative braking reward above).
+
+--- DOUBLE PENALTY FIX ---
+
+The continuous headway penalty (component 6) covers x_diff between 3*SH and 1*SH.
+The terminal collision penalty (-100,000) fires only when x_diff = 0 (zone overlap).
+These no longer overlap. No change needed to terminal penalty value.
+
+--- EXTERNAL STALL / HAZARD PROTECTION ---
+
+When lead train is stalled (lead_train.stalled = True) or held (lead_train.held = True):
+  Suspend lateness penalty accumulation.
+  Do not penalise AI for reduced progress during this period.
+  Pass lead_train.stalled and lead_train.held into reward function via info dict.
+
+================================================================================
+DOCUMENTATION UPDATES (update all relevant .txt doc files)
+================================================================================
+
+1. env_doc.txt:
+   - Update observation space to 8 dimensions with new layout.
+   - Remove Red Signal Interlock and Speed Limit Governor from Phase 1 description.
+   - Remove Boundary Awareness from Phase 2.
+   - Update station detection trigger to last-zone-of-segment logic.
+   - Update termination conditions.
+
+2. vl_doc.txt:
+   - Remove Layer 2 (kinematic simulation lookahead). Replace with SUVAT stopping distance check.
+   - Remove Layer 3 graduated interceptor / override logic. VL is now log-only.
+   - Remove Green Departure Runway special case.
+   - Update Layer 1 to describe new signal aspect calculation using x_diff.
+   - Update Layer 4 log columns: add x_ai_zone_end, x_obs_zone_start, ai_speed. Remove original_ppo_a, corrected_a.
+   - Update O(1) claim: "O(1) given pre-computed segment passed in from env. Segment lookup in env is O(n) over 6 segments."
+   - Update SH/TH table with new values.
+
+3. reward_docs.txt:
+   - Remove override penalty entry.
+   - Remove lateness threshold terminal penalty.
+   - Remove cruise & standing bonus.
+   - Add regenerative braking reward entry.
+   - Update jerk entry with band thresholds.
+   - Update headway penalty to describe x_diff logic.
+   - Update speed reward to describe optimal_braking_distance logic.
+
+4. graph_docs.txt:
+   - Update headway table with new SH/TH values.
+   - Remove safety merge description from section 4.
+   - Note that last zone of each segment is the station stopping zone.
+
+================================================================================
+END OF INSTRUCTIONS
+================================================================================
