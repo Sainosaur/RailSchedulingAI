@@ -33,8 +33,13 @@ class SimulationRunner:
         print(f"Loading simulation model (Lead Speed = {lead_train_speed} m/s)")
 
         # 1. Thunk to create the bare environment
+        from think_layer.config import DEFAULT_CONFIG
+        
         def make_env():
-            return ModernizedLine104(lead_train_speed=lead_train_speed)
+            return ModernizedLine104(
+                lead_train_speed=lead_train_speed,
+                lead_stop_offset=DEFAULT_CONFIG.lead_stop_offset,
+            )
 
         # 2. Vectorise
         self.venv = DummyVecEnv([make_env])
