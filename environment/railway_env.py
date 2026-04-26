@@ -202,7 +202,12 @@ class ModernizedLine104(gym.Env):
         # Check for station arrival
         next_st_idx = self.last_station_idx + 1
         reached_new_station = False
-        if next_st_idx < len(self.STATIONS) and self.x >= x_station_zone_start:
+        
+        # Ensure we only check for the station physically ahead of us
+        target_station_pos = self.STATIONS[next_st_idx] if next_st_idx < len(self.STATIONS) else 999999.0
+
+        # Arrival trigger: within spatial headway (SH) of the absolute station coordinate
+        if next_st_idx < len(self.STATIONS) and self.x >= (target_station_pos - sh):
             # Arrived at station zone
             if next_st_idx not in self.visited_stations:
                 reached_new_station = True
