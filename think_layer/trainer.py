@@ -37,6 +37,25 @@ class SyncNormCallback(BaseCallback):
         return True
 
 
+class SaveBestVecNormalizeCallback(BaseCallback):
+    """Saves the VecNormalize statistics whenever a new best model is found by EvalCallback."""
+    def __init__(self, vec_env: VecNormalize, eval_cb: EvalCallback, model_dir: str, verbose: int = 1):
+        super().__init__(verbose)
+        self.vec_env = vec_env
+        self.eval_cb = eval_cb
+        self.save_path = os.path.join(model_dir, "best_vecnormalize.pkl")
+        self.last_best_reward = -float("inf")
+
+    def _on_step(self) -> bool:
+        # Check if EvalCallback has updated its best_mean_reward
+        if self.eval_cb.best_mean_reward > self.last_best_reward:
+            self.last_best_reward = self.eval_cb.best_mean_reward
+            if self.verbose > 0:
+                print(f"DEBUG: New best model found (reward: {self.last_best_reward:.2f}). Saving VecNormalize stats to {self.save_path}")
+            self.vec_env.save(self.save_path)
+        return True
+
+
 def train(config: TrainConfig) -> None:
     """
     Run the full PPO training loop.
@@ -106,8 +125,9 @@ def train(config: TrainConfig) -> None:
     )
 
     sync_cb = SyncNormCallback(vec_env, eval_venv, sync_freq=10_000)
+    save_best_vecnorm_cb = SaveBestVecNormalizeCallback(vec_env, eval_cb, config.model_dir)
 
-    callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb])
+    callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb, save_best_vecnorm_cb])
 
     # 3. Train
     print("\nStarting training...\n")

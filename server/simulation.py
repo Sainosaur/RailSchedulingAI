@@ -95,14 +95,20 @@ class SimulationRunner:
             )
 
         # 4. Load PPO Checkpoint
-        model_path = PROJECT_ROOT / "think_layer" / "models" / "final_model.zip"
-        if model_path.exists():
-            self.model = PPO.load(str(model_path), env=self.venv, device="cpu")
+        final_model_path = PROJECT_ROOT / "think_layer" / "models" / "final_model.zip"
+        best_model_path = PROJECT_ROOT / "think_layer" / "models" / "best_model.zip"
+
+        if final_model_path.exists():
+            model_path = final_model_path
+        elif best_model_path.exists():
+            print(f"INFO: final_model.zip not found, falling back to {best_model_path}")
+            model_path = best_model_path
         else:
-            print(
-                f"ERROR: Model not found at {model_path}. You need to train it first!"
+            raise FileNotFoundError(
+                f"ERROR: No model found at {final_model_path} or {best_model_path}. You need to train it first!"
             )
 
+        self.model = PPO.load(str(model_path), env=self.venv, device="cpu")
         self._current_obs = self.venv.reset()
 
     async def start(self):
@@ -257,6 +263,7 @@ class SimulationRunner:
                     action, _ = self.model.predict(
                         self._current_obs, deterministic=True
                     )
+                    print(f"DEBUG: Action taken: {action}")
                 else:
                     # Fallback: Just coast (0 acceleration) if no model exists
                     action = [np.array([0.0], dtype=np.float32)]
