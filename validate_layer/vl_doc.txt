@@ -14,7 +14,6 @@ The L2 / Continuous Paradigm:
 Environment Constraints (ETCS L2): The track is divided into fixed blocks marked by balises.
 The environment tells the train the current signal aspect (0=Red, 1=Yellow, 2=Double Yellow, 3=Green).
 AI Action Space: The AI outputs a continuous floating-point throttle command: proposed_a ranging from -1.0 m/s² (Emergency) to +0.5 m/s² (Max Acceleration).
-O(1) Direct Interception: The VL computes if the proposed_a will breach safety boundaries and applies a proportional correction in constant time.
 
 3. The 4-Layer Safety Pipeline
 
@@ -75,6 +74,5 @@ S5        67394      76651    30            034.7
 6. Deployment Principles
 - Edge Autonomy: Each train hosts its own VL instance. No cloud connectivity required for safety inference.
 - ETCS L2 Compatibility: Leverages trackside balises and RBC (Radio Block Centre) for movement authority.
-- Scalability: O(1) computation per step ensures system remains computationally light regardless of convoy size.
 
 AI Declaration: AI was used iteratively during research and planning. All final safety design choices (logic, formulae, discrete-to-continuous mapping, architectural tracking) were uniquely synthesised for Polish Rail Line 104 specificities.
