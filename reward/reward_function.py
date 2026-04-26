@@ -64,7 +64,6 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     station_cleared = info.get("station_cleared", False)
     x_lead_zone_start = info.get("x_lead_zone_start", 99999.0)
     x_station_zone_start = info.get("x_station_zone_start", 99999.0)
-    optimal_braking_distance = info.get("optimal_braking_distance", 0.0)
     violations = info.get("violations", {})
     lead_train_stalled = info.get("lead_train_stalled", False)
     lead_train_held = info.get("lead_train_held", False)
@@ -87,19 +86,28 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
             out.r_progress = max(0.0, out.r_progress) # Don't penalise slow progress
 
     # 2. Speed Compliance Reward
-    # distance to obstacle
-    d_to_obs = x_lead_zone_start - state.current_position
-    if d_to_obs > optimal_braking_distance:
-        # Reward being near speed limit
+    # Regime is determined by the more restrictive of train_aspect and station_aspect.
+    # Green  (3): clear road ahead — reward staying near the speed limit.
+    # DY/Yellow (2/1): approaching obstacle — reward service braking at 0.5 m/s/s.
+    # Red    (0): must stop — reward braking or being stopped.
+    effective_aspect = min(train_aspect, station_aspect)
+
+    if effective_aspect == 3:
         out.r_speed = -abs(u - state.speed_limit)
-    else:
-        # Reward braking at 0.5 m/s/s
-        if a <= -0.45 and a >= -0.55:
+    elif effective_aspect in (1, 2):
+        if -0.55 <= a <= -0.45:
             out.r_speed = 5.0
-        elif a < -0.55 and a > -1.0:
-            out.r_speed = -2.0 # Penalise braking harder than 0.5 unless emergency
+        elif -1.0 < a < -0.55:
+            out.r_speed = -2.0   # Harder than service braking but not emergency
         elif a <= -1.0:
-            out.r_speed = 0.0 # Emergency braking not penalised
+            out.r_speed = 0.0    # Emergency braking is never penalised
+    elif effective_aspect == 0:
+        if u < 0.1:
+            out.r_speed = 0.0    # Correctly stopped
+        elif a <= -0.45:
+            out.r_speed = 2.0    # Braking correctly toward stop
+        else:
+            out.r_speed = -5.0   # Moving at Red without adequate braking
 
     # 3. Regenerative Braking Reward
     if -0.5 <= a <= -0.01:

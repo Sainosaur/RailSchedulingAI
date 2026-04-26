@@ -61,11 +61,11 @@ class ModernizedLine104(gym.Env):
         self.action_space = gym.spaces.Box(
             low=-1.0, high=1.0, shape=(1,), dtype=np.float32
         )
-        # New observation space: 8 dimensions
+        # New observation space: 9 dimensions
         self.observation_space = gym.spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            low=np.array([0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
             high=np.array(
-                [80000.0, 30.0, 1000.0, 3.0, 3.0, 80000.0, 2000.0, 10000.0], dtype=np.float32
+                [80000.0, 30.0, 1000.0, 3.0, 3.0, 80000.0, 2000.0, 10000.0, 6.0], dtype=np.float32
             ),
             dtype=np.float32,
         )
@@ -76,6 +76,7 @@ class ModernizedLine104(gym.Env):
         self.dtz: float = 0.0
         self.time: float = 0.0
         self.last_station_idx: int = 0
+        self.next_station_num: int = 1
         self.visited_stations: set[int] = set()
         self.last_a: float = 0.0
         self.previous_a: float = 0.0
@@ -97,6 +98,7 @@ class ModernizedLine104(gym.Env):
         self.v = 0.0
         self.time = 0.0
         self.last_station_idx = 0
+        self.next_station_num = 1
         self.visited_stations = {0}
         self.last_a = 0.0
         self.previous_a = 0.0
@@ -226,6 +228,7 @@ class ModernizedLine104(gym.Env):
         if not self.station_cleared:
             if hasattr(self, "ai_departure_time") and self.time >= self.ai_departure_time:
                 self.station_cleared = True
+                self.next_station_num = min(self.next_station_num + 1, len(self.STATIONS) - 1)
         
         if not self.station_cleared:
             station_aspect = 0
@@ -274,6 +277,7 @@ class ModernizedLine104(gym.Env):
             "station_cleared": self.station_cleared,
             "x_lead_zone_start": x_lead_zone_start,
             "x_station_zone_start": x_station_zone_start,
+            "x_ai_zone_end": self.vl.compute_zone_boundaries(self.x, seg)[0],
             "optimal_braking_distance": optimal_braking_distance,
             "violations": violations,
             "lead_train_stalled": self.lead_train.stalled,
@@ -323,6 +327,7 @@ class ModernizedLine104(gym.Env):
                 x_lead_zone_start,
                 optimal_braking_distance,
                 self.time,
+                float(self.next_station_num),
             ],
             dtype=np.float32,
         )

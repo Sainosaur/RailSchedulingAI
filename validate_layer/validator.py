@@ -70,17 +70,20 @@ class ValidationLayer:
         x_obs_zone_start: start of the zone containing the obstacle (lead train or station).
         Returns: 0=Red, 1=Yellow, 2=Double Yellow, 3=Green.
         """
+        # x_diff thresholds use the AI train's segment SH. If the obstacle is in a
+        # different segment with a different SH, the zone count is approximate but
+        # intentionally consistent — the AI always reasons in terms of its own segment.
         x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
         sh = seg.spatial_headway
         x_diff = x_obs_zone_start - x_ai_zone_end
 
         if x_diff <= 0:
-            return -1  # Violation — episode termination (handled in env)
-        elif x_diff <= sh:
+            return -1  # Violation — zone overlap (collision)
+        elif 0 < x_diff <= sh:
             return 0   # Red
-        elif x_diff <= 2 * sh:
+        elif sh < x_diff <= 2 * sh:
             return 1   # Yellow
-        elif x_diff <= 3 * sh:
+        elif 2 * sh < x_diff <= 3 * sh:
             return 2   # Double Yellow
         else:
             return 3   # Green
@@ -132,7 +135,7 @@ class ValidationLayer:
             self._log(x_ai_zone_end, x_obs_zone_start, u, "SPEED_LIMIT_VIOLATION")
 
         # 3. Accel not zero at stationary or at speed limit
-        if (u < 0.1 and abs(proposed_a) > 0.01) or \
+        if (u < 0.1 and proposed_a < -0.01) or \
            (abs(u - seg.limit_ms) < 0.01 and proposed_a > 0.01):
             violations["accel_not_zero_violation"] = True
             self._log(x_ai_zone_end, x_obs_zone_start, u, "ACCEL_NOT_ZERO_VIOLATION")

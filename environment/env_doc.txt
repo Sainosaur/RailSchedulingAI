@@ -11,15 +11,16 @@ The environment simulates a single AI-controlled train traversing the 76km Polis
 2. AGENT COMMUNICATION (SPACES)
 
 A. Observation Space (What the AI Sees)
-An 8-dimensional Box space (array of floats) providing real-time telemetry every second:
-- [0] position (m): Current meters traveled along the 76,651m track.
+An 9-dimensional Box space (array of floats) providing real-time telemetry every second:
+- [0] position (m): Current meters traveled.
 - [1] speed (m/s): Current velocity.
-- [2] dtz (m): Distance to the end of the current fixed-block zone.
+- [2] dtz (m): Distance to end of current zone.
 - [3] train_aspect: Signal aspect relative to lead train (0=Red, 1=Yellow, 2=DY, 3=Green).
-- [4] station_aspect: Signal aspect relative to next station (0=Red, 3=Green).
-- [5] distance_to_lead_zone_start (m): Start position of the zone containing the lead train.
-- [6] optimal_braking_distance (m): Braking at 0.5 m/s² to a full stop (u² / 2*0.5).
+- [4] station_aspect: Signal aspect relative to next station (always 0=Red until cleared).
+- [5] distance_to_lead_zone_start (m): x_lead_zone_start.
+- [6] optimal_braking_distance (m): u² / (2 * 0.5).
 - [7] sim_time (s): Elapsed time in seconds.
+- [8] next_station_num: Index of the next target station (1=Rabka-Zdrój ... 6=Nowy Sącz).
 
 B. Action Space (What the AI Does)
 A continuous Box space [-1.0, 1.0].
