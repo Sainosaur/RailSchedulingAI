@@ -83,8 +83,9 @@ station is complete, i want it so that the train can now succesfully ignore this
 Note: the AI train cannot pass the lead train (but this is impossible by design as violation check happens and violations are failures (end episodes)).
 Also, override if the train speed goes over speed limit. 
 
-
- 
+Note that AI options are [-1, 1] because of symmetry and mean. But in env or somewhere clamp the AI action to be between [-1, 0.5], if somehow accel is 
+greater than 0.5, then fail it as it wont be physically possible. same with decel, if it is less than -1, then fail it. 
+Also, not that during breaking, the AI should show 0 m/s/s at stationary (0 m/s) and speed limit (max allowed speed) for safety. 
 
 
 
