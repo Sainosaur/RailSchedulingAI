@@ -106,7 +106,12 @@ def potential(state: TrainState) -> float:
     return phi_progress + phi_speed + phi_schedule + phi_headway
 
 
-def compute_reward(state: TrainState, info: Dict[str, Any], weights: Optional[Dict[str, float]] = None) -> RewardOutput:
+def compute_reward(
+    state: TrainState,
+    info: Dict[str, Any],
+    weights: Optional[Dict[str, float]] = None,
+    detailed_logs: bool = False,
+) -> RewardOutput:
     # Extract info
     train_aspect = info.get("train_aspect", 3)
     station_aspect = info.get("station_aspect", 3)
@@ -276,5 +281,13 @@ def compute_reward(state: TrainState, info: Dict[str, Any], weights: Optional[Di
         w_jerk              * out.r_jerk +
         w_patience          * out.r_patience
     )
+
+    # ── Speed Mode ────────────────────────────────────────────────────────────
+    # When detailed_logs=False (default during training), skip populating
+    # info["reward_breakdown"] to avoid ~256 × 10,000 dict allocations per
+    # second across parallel envs. Pass detailed_logs=True in eval callbacks
+    # or when you need TensorBoard breakdowns.
+    if detailed_logs:
+        info["reward_breakdown"] = out.to_dict()
 
     return out
