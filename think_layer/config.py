@@ -22,7 +22,7 @@ class TrainConfig:
     n_steps: int = 2048
     batch_size: int = 512
     n_epochs: int = 5
-    gamma: float = 0.999
+    gamma: float = 0.999 # must match phi in reward_function.py, PBRS code.
     gae_lambda: float = 0.9
     clip_range: float = 0.2
     ent_coef: float = 0.0182
