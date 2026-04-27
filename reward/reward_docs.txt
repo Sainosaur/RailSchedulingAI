@@ -74,4 +74,5 @@ C. TERMINAL PENALTIES (Triggers "Terminate = True")
 - Episode may terminate based on violation type (handled in env).
 
 12. Removal of Lateness Threshold
-- Lateness is no longer a terminal condition; it is handled by the existence penalty and punctuality bonus.
+
+WARNING: gamme from config.py must equat the number used in PBRS formula in reward_function.py
