@@ -98,7 +98,7 @@ class RewardLoggerCallback(BaseCallback):
         return True
 
 
-def train(config: TrainConfig) -> None:
+def train(config: TrainConfig) -> None:  # noqa: C901
     """
     Run the full PPO training loop.
 
@@ -117,6 +117,16 @@ def train(config: TrainConfig) -> None:
     print(f"  Lead train speed: {config.lead_train_speed} m/s")
     print(f"  Log dir         : {config.log_dir}")
     print(f"  Model dir       : {config.model_dir}")
+
+    # ── Verbosity / logging flags (set via CLI or config) ────────────────────
+    # verbose=0      → SB3 + callbacks print nothing (fastest)
+    # detailed_logs  → reward_breakdown written into info dict each step;
+    #                  required for RewardLoggerCallback TensorBoard charts.
+    sb3_verbose    = getattr(config, "verbose",       0)
+    detailed_logs  = getattr(config, "detailed_logs", False)
+
+    print(f"  SB3 verbose     : {sb3_verbose}")
+    print(f"  Detailed logs   : {detailed_logs}")
     print("=" * 60)
 
     # 1. Build model
@@ -131,7 +141,7 @@ def train(config: TrainConfig) -> None:
         save_freq=max(1, config.checkpoint_freq // config.n_envs),
         save_path=checkpoint_dir,
         name_prefix="rl_model",
-        verbose=1,
+        verbose=sb3_verbose,
     )
 
     # Separate eval environment (also normalised, but stats frozen)
@@ -163,14 +173,20 @@ def train(config: TrainConfig) -> None:
         eval_freq=max(1, config.eval_freq // config.n_envs),
         n_eval_episodes=config.eval_episodes,
         deterministic=True,
-        verbose=1,
+        verbose=sb3_verbose,
     )
 
     sync_cb = SyncNormCallback(vec_env, eval_venv, sync_freq=10_000)
-    save_best_vecnorm_cb = SaveBestVecNormalizeCallback(vec_env, eval_cb, config.model_dir)
-    reward_logger_cb = RewardLoggerCallback()
+    save_best_vecnorm_cb = SaveBestVecNormalizeCallback(vec_env, eval_cb, config.model_dir, verbose=sb3_verbose)
 
-    callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb, save_best_vecnorm_cb, reward_logger_cb])
+    # RewardLoggerCallback requires info["reward_breakdown"] which is only
+    # populated when detailed_logs=True. Skip it entirely in speed-mode runs
+    # to avoid silent KeyErrors and the overhead of iterating infos each step.
+    if detailed_logs:
+        reward_logger_cb = RewardLoggerCallback()
+        callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb, save_best_vecnorm_cb, reward_logger_cb])
+    else:
+        callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb, save_best_vecnorm_cb])
 
     # 3. Train
     print("\nStarting training...\n")
@@ -178,6 +194,8 @@ def train(config: TrainConfig) -> None:
         total_timesteps=config.total_timesteps,
         callback=callbacks,
         tb_log_name="PPO_Line104",
+        reset_num_timesteps=True,
+        progress_bar=sb3_verbose > 0,
     )
 
     # 4. Save final model + normalisation stats
