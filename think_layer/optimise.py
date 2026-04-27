@@ -98,9 +98,9 @@ def objective(trial: optuna.Trial) -> float:
         "net_arch", ["small", "medium", "large"]
     )
     net_arch_map = {
-        "small":  [64, 64],
-        "medium": [128, 128],
-        "large":  [256, 256],
+        "small":  [128, 128],
+        "medium": [256, 256],
+        "large":  [512, 512],
     }
     net_arch = net_arch_map[net_arch_type]
 
