@@ -6,7 +6,6 @@ Gymnasium environment for a single train traversing Polish Rail Line 104.
 
 from __future__ import annotations
 
-import math
 import sys
 from pathlib import Path
 
@@ -270,6 +269,7 @@ class ModernizedLine104(gym.Env):
         
         # PBRS shaping: γφ(s') - φ(s)
         pbrs_shaping = PBRS_GAMMA * potential(post_step_state) - potential(pre_step_state)
+        reward_output.r_shaping = pbrs_shaping
         reward_output.r_total += pbrs_shaping
 
         self.previous_a = proposed_a
@@ -297,9 +297,6 @@ class ModernizedLine104(gym.Env):
             "reward_breakdown": reward_output.to_dict(),
             "punctuality_status": self.get_punctuality_status(),
         }
-        # Log shaping term separately
-        info["reward_breakdown"]["r_shaping"] = pbrs_shaping
-
         return self._get_obs(train_aspect, station_aspect, x_lead_zone_start, optimal_braking_distance), reward_output.r_total, terminated, truncated, info
 
     def _get_obs(self, train_aspect: int, station_aspect: int, x_lead_zone_start: float, optimal_braking_distance: float) -> np.ndarray:
