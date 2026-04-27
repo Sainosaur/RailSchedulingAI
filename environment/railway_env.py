@@ -23,7 +23,8 @@ from environment.timetable import (
     compute_eta_to_station,
     generate_timetable,
 )
-from reward.reward_function import TrainState, compute_reward
+from think_layer.config import TrainConfig, DEFAULT_CONFIG # noqa: E402
+from reward.reward_function import TrainState, compute_reward, RewardOutput, potential, PBRS_GAMMA
 from validate_layer.validator import ValidationLayer
 
 
@@ -54,6 +55,7 @@ class ModernizedLine104(gym.Env):
         self.training_mode = training_mode
         self.slack_factor = slack_factor
         self.active_hazards: set[tuple[float, float]] = set()
+        self.reward_weights = DEFAULT_CONFIG.reward_weights
 
         self.vl = ValidationLayer()
         self.lead_train = LeadTrain(
@@ -148,6 +150,13 @@ class ModernizedLine104(gym.Env):
         # proposed_a is the raw action value directly (no remapping needed).
         proposed_a = raw_action
         
+        # Capture pre-step state for PBRS
+        # We need to use dummy values for some fields as they aren't known yet, 
+        # but potential() only uses current_position, last_station_position, 
+        # next_station_position, current_speed, speed_limit, next_scheduled_arrival_time, 
+        # current_time, distance_to_occupied, spatial_headway.
+        pre_step_state = self._build_train_state(self.x, False, proposed_a)
+
         # 2. Physics & State Update (AI Train)
         prev_x, prev_v = self.x, self.v
         seg = self.vl.get_segment(self.x)
@@ -239,32 +248,8 @@ class ModernizedLine104(gym.Env):
         self._update_dtz()
         optimal_braking_distance = (self.v ** 2) / (2 * 0.5)
         
-        state = TrainState(
-            current_position=self.x,
-            previous_position=prev_x,
-            last_station_position=self.STATIONS[self.last_station_idx],
-            next_station_position=self.STATIONS[min(self.last_station_idx + 1, len(self.STATIONS) - 1)],
-            current_speed=self.v,
-            speed_limit=seg.limit_ms,
-            headway=self._compute_headway(),
-            temporal_headway=seg.temporal_headway,
-            spatial_headway=sh,
-            reached_new_station=reached_new_station,
-            scheduled_arrival_time=self.timetable.get_entry(self.last_station_idx).scheduled_arrival if self.timetable.get_entry(self.last_station_idx) else 0.0,
-            actual_arrival_time=self.ai_arrival_times.get(self.last_station_idx),
-            collision=(train_aspect == -1),
-            safety_overridden=False, # Overrides removed
-            action_delta=abs(proposed_a - self.previous_a),
-            applied_traction=max(0.0, proposed_a),
-            distance_to_occupied=x_lead_zone_start - self.x,
-            is_dwelling=not self.station_cleared,
-            station_index=self.last_station_idx,
-            signal_aspect=train_aspect, # Use train_aspect for now
-            applied_acceleration=proposed_a,
-            proposed_acceleration=proposed_a,
-            current_time=self.time,
-            next_scheduled_arrival_time=self.timetable.get_entry(min(self.last_station_idx + 1, len(self.STATIONS) - 1)).scheduled_arrival if self.timetable.get_entry(min(self.last_station_idx + 1, len(self.STATIONS) - 1)) else 0.0,
-        )
+        post_step_state = self._build_train_state(prev_x, reached_new_station, proposed_a)
+
         # We need to pass more info to reward function as per instructions
         reward_info = {
             "train_aspect": train_aspect,
@@ -281,7 +266,12 @@ class ModernizedLine104(gym.Env):
             "station_cleared_prev": station_cleared_prev,
         }
         
-        reward_out = compute_reward(state, reward_info)
+        reward_output = compute_reward(post_step_state, reward_info, weights=self.reward_weights)
+        
+        # PBRS shaping: γφ(s') - φ(s)
+        pbrs_shaping = PBRS_GAMMA * potential(post_step_state) - potential(pre_step_state)
+        reward_output.r_total += pbrs_shaping
+
         self.previous_a = proposed_a
 
         # 7. Termination
@@ -304,11 +294,13 @@ class ModernizedLine104(gym.Env):
             "x_station_zone_start": x_station_zone_start,
             "optimal_braking_distance": optimal_braking_distance,
             "violations": violations,
-            "reward_breakdown": reward_out.to_dict() if hasattr(reward_out, "to_dict") else {},
+            "reward_breakdown": reward_output.to_dict(),
             "punctuality_status": self.get_punctuality_status(),
         }
+        # Log shaping term separately
+        info["reward_breakdown"]["r_shaping"] = pbrs_shaping
 
-        return self._get_obs(train_aspect, station_aspect, x_lead_zone_start, optimal_braking_distance), reward_out.r_total, terminated, truncated, info
+        return self._get_obs(train_aspect, station_aspect, x_lead_zone_start, optimal_braking_distance), reward_output.r_total, terminated, truncated, info
 
     def _get_obs(self, train_aspect: int, station_aspect: int, x_lead_zone_start: float, optimal_braking_distance: float) -> np.ndarray:
         return np.array(
@@ -438,6 +430,42 @@ class ModernizedLine104(gym.Env):
             "eta": round(eta, 1),
             "status": status,
         }
+
+    def _build_train_state(self, prev_x: float, reached_new_station: bool, proposed_a: float) -> TrainState:
+        seg = self.vl.get_segment(self.x)
+        sh = seg.spatial_headway
+        
+        # Lead train zone start for distance calculations
+        lead_seg = self.vl.get_segment(self.lead_train.x)
+        lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
+        x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
+
+        return TrainState(
+            current_position=self.x,
+            previous_position=prev_x,
+            last_station_position=self.STATIONS[self.last_station_idx],
+            next_station_position=self.STATIONS[min(self.last_station_idx + 1, len(self.STATIONS) - 1)],
+            current_speed=self.v,
+            speed_limit=seg.limit_ms,
+            headway=self._compute_headway(),
+            temporal_headway=seg.temporal_headway,
+            spatial_headway=sh,
+            reached_new_station=reached_new_station,
+            scheduled_arrival_time=self.timetable.get_entry(self.last_station_idx).scheduled_arrival if self.timetable.get_entry(self.last_station_idx) else 0.0,
+            actual_arrival_time=self.ai_arrival_times.get(self.last_station_idx),
+            collision=(self._get_signal_aspect() == -1),
+            safety_overridden=False,
+            action_delta=abs(proposed_a - self.previous_a),
+            applied_traction=max(0.0, proposed_a),
+            distance_to_occupied=x_lead_zone_start - self.x,
+            is_dwelling=not self.station_cleared,
+            station_index=self.last_station_idx,
+            signal_aspect=self._get_signal_aspect(),
+            applied_acceleration=proposed_a,
+            proposed_acceleration=proposed_a,
+            current_time=self.time,
+            next_scheduled_arrival_time=self.timetable.get_entry(min(self.last_station_idx + 1, len(self.STATIONS) - 1)).scheduled_arrival if self.timetable.get_entry(min(self.last_station_idx + 1, len(self.STATIONS) - 1)) else 0.0,
+        )
 
     def get_punctuality_status(self) -> dict:
         return {

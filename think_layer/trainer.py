@@ -56,6 +56,48 @@ class SaveBestVecNormalizeCallback(BaseCallback):
         return True
 
 
+class RewardLoggerCallback(BaseCallback):
+    """
+    Logs per-component reward breakdown to TensorBoard every step.
+    Reads from info['reward_breakdown'] which is populated by railway_env.step().
+    
+    Enables per-component TensorBoard charts so each reward term can be
+    monitored independently — essential for diagnosing weight imbalance
+    and verifying PBRS shaping is behaving as expected.
+    """
+
+    REWARD_KEYS = [
+        "r_step",
+        "r_progress",
+        "r_speed",
+        "r_signal_compliance",
+        "r_station",
+        "r_time",
+        "r_jerk",
+        "r_patience",
+        "r_shaping",   # PBRS shaping term — will be 0.0 until Task 6 is complete
+        "r_total",
+    ]
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        if not infos:
+            return True
+
+        for key in self.REWARD_KEYS:
+            values = [
+                info["reward_breakdown"][key]
+                for info in infos
+                if "reward_breakdown" in info and key in info["reward_breakdown"]
+            ]
+            if values:
+                self.logger.record(
+                    f"reward/{key}",
+                    sum(values) / len(values)
+                )
+        return True
+
+
 def train(config: TrainConfig) -> None:
     """
     Run the full PPO training loop.
@@ -126,8 +168,9 @@ def train(config: TrainConfig) -> None:
 
     sync_cb = SyncNormCallback(vec_env, eval_venv, sync_freq=10_000)
     save_best_vecnorm_cb = SaveBestVecNormalizeCallback(vec_env, eval_cb, config.model_dir)
+    reward_logger_cb = RewardLoggerCallback()
 
-    callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb, save_best_vecnorm_cb])
+    callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb, save_best_vecnorm_cb, reward_logger_cb])
 
     # 3. Train
     print("\nStarting training...\n")

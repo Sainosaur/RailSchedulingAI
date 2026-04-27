@@ -51,7 +51,62 @@ class RewardOutput:
     def to_dict(self):
         return asdict(self)
 
-def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
+# ── Potential-Based Reward Shaping ───────────────────────────────────────────
+# γ must match PPO's gamma in config.py exactly.
+PBRS_GAMMA = 0.999  # matches TrainConfig.gamma
+
+def potential(state: TrainState) -> float:
+    """
+    Potential function φ(s) for PBRS shaping.
+    The shaping bonus applied each step is: PBRS_GAMMA * φ(s') - φ(s)
+    
+    Design rules:
+      - Must be BOUNDED: no component should be able to grow to ±infinity.
+      - Must be SMOOTH: no hard step functions. Use clamp/min/max for transitions.
+      - Units are arbitrary — only differences φ(s') - φ(s) matter to the agent.
+    
+    Returns a scalar float.
+    """
+
+    # ── Component 1: Segment progress ────────────────────────────────────────
+    # How far through the current inter-station segment is the train?
+    # Bounded [0.0, 5.0]. Smooth — increases monotonically with position.
+    total_span = max(state.next_station_position - state.last_station_position, 1.0)
+    progress_ratio = (state.current_position - state.last_station_position) / total_span
+    progress_ratio = max(0.0, min(1.0, progress_ratio))  # clamp to [0, 1]
+    phi_progress = progress_ratio * 5.0
+
+    # ── Component 2: Speed profile adherence ─────────────────────────────────
+    # Reward being close to the speed limit without exceeding it.
+    # speed_ratio = 1.0 when at exactly the speed limit, 0.0 when stopped.
+    # Bounded [0.0, 3.0].
+    speed_ratio = min(state.current_speed / max(state.speed_limit, 1.0), 1.0)
+    phi_speed = speed_ratio * 3.0
+
+    # ── Component 3: Schedule adherence ──────────────────────────────────────
+    # Penalise growing time deficit smoothly. Uses time remaining to next station.
+    # Bounded [-2.0, 2.0].
+    if state.next_scheduled_arrival_time > 0.0 and state.current_time > 0.0:
+        time_remaining = state.next_scheduled_arrival_time - state.current_time
+        phi_schedule = max(-2.0, min(2.0, time_remaining * 0.001))
+    else:
+        phi_schedule = 0.0
+
+    # ── Component 4: Headway safety ───────────────────────────────────────────
+    # Smooth repulsive gradient as train closes in on lead train's danger zone.
+    # Only activates when closer than 3 spatial headway units.
+    # Bounded [-2.0, 0.0].
+    safe_distance = 3.0 * state.spatial_headway
+    if safe_distance > 0.0 and state.distance_to_occupied < safe_distance:
+        phi_headway = -2.0 * (1.0 - state.distance_to_occupied / safe_distance)
+        phi_headway = max(-2.0, phi_headway)  # hard floor
+    else:
+        phi_headway = 0.0
+
+    return phi_progress + phi_speed + phi_schedule + phi_headway
+
+
+def compute_reward(state: TrainState, info: Dict[str, Any], weights: Optional[Dict[str, float]] = None) -> RewardOutput:
     # Extract info
     train_aspect = info.get("train_aspect", 3)
     station_aspect = info.get("station_aspect", 3)
@@ -61,6 +116,17 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
     violations = info.get("violations", {})
     lead_train_stalled = info.get("lead_train_stalled", False)
     lead_train_held = info.get("lead_train_held", False)
+
+    # Resolve weights — default to 1.0 for all components if not provided
+    _w = weights or {}
+    w_step              = _w.get("step",              1.0)
+    w_progress          = _w.get("progress",          1.0)
+    w_speed             = _w.get("speed",             1.0)
+    w_signal_compliance = _w.get("signal_compliance", 1.0)
+    w_station           = _w.get("station",           1.0)
+    w_time              = _w.get("time",              1.0)
+    w_jerk              = _w.get("jerk",              1.0)
+    w_patience          = _w.get("patience",          1.0)
     
     sh = state.spatial_headway
     dt = 1.0
@@ -189,8 +255,15 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
             out.r_patience = -10.0
 
     # Sum all
-    out.r_total = (out.r_step + out.r_progress + out.r_speed + 
-                   out.r_signal_compliance + out.r_station + out.r_time + out.r_jerk + 
-                   out.r_patience)
-    
+    out.r_total = (
+        w_step              * out.r_step +
+        w_progress          * out.r_progress +
+        w_speed             * out.r_speed +
+        w_signal_compliance * out.r_signal_compliance +
+        w_station           * out.r_station +
+        w_time              * out.r_time +
+        w_jerk              * out.r_jerk +
+        w_patience          * out.r_patience
+    )
+
     return out
