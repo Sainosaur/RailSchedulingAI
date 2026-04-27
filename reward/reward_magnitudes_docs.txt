@@ -1,0 +1,324 @@
+const {
+  Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+  AlignmentType, HeadingLevel, BorderStyle, WidthType, ShadingType,
+  LevelFormat
+} = require('docx');
+const fs = require('fs');
+
+const BLUE       = "2E5FA3";
+const LIGHT_BLUE = "D6E4F7";
+const MID_BLUE   = "EAF1FB";
+const DARK       = "1A1A2E";
+const GRAY       = "F5F7FA";
+const border     = { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" };
+const borders    = { top: border, bottom: border, left: border, right: border };
+
+function h1(text) {
+  return new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    spacing: { before: 320, after: 160 },
+    children: [new TextRun({ text, font: "Arial", size: 32, bold: true, color: BLUE })]
+  });
+}
+function h2(text) {
+  return new Paragraph({
+    heading: HeadingLevel.HEADING_2,
+    spacing: { before: 240, after: 120 },
+    children: [new TextRun({ text, font: "Arial", size: 26, bold: true, color: DARK })]
+  });
+}
+function h3(text) {
+  return new Paragraph({
+    spacing: { before: 200, after: 80 },
+    children: [new TextRun({ text, font: "Arial", size: 24, bold: true, color: DARK })]
+  });
+}
+function p(runs) {
+  if (typeof runs === "string") {
+    runs = [new TextRun({ text: runs, font: "Arial", size: 22 })];
+  }
+  return new Paragraph({ spacing: { after: 120 }, children: runs });
+}
+function bullet(text, bold_prefix) {
+  const children = [];
+  if (bold_prefix) {
+    children.push(new TextRun({ text: bold_prefix, font: "Arial", size: 22, bold: true }));
+    children.push(new TextRun({ text, font: "Arial", size: 22 }));
+  } else {
+    children.push(new TextRun({ text, font: "Arial", size: 22 }));
+  }
+  return new Paragraph({
+    numbering: { reference: "bullets", level: 0 },
+    spacing: { after: 80 },
+    children
+  });
+}
+function formula(text) {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 160, after: 160 },
+    shading: { fill: GRAY, type: ShadingType.CLEAR },
+    children: [new TextRun({ text, font: "Courier New", size: 22, bold: true, color: BLUE })]
+  });
+}
+function note(text) {
+  return new Paragraph({
+    spacing: { before: 120, after: 120 },
+    indent: { left: 720 },
+    border: { left: { style: BorderStyle.SINGLE, size: 12, color: BLUE, space: 10 } },
+    children: [new TextRun({ text, font: "Arial", size: 20, italics: true, color: "555555" })]
+  });
+}
+function spacer() {
+  return new Paragraph({ spacing: { after: 80 }, children: [new TextRun("")] });
+}
+
+function makeTable(headers, rows, colWidths) {
+  const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+  return new Table({
+    width: { size: totalWidth, type: WidthType.DXA },
+    columnWidths: colWidths,
+    rows: [
+      new TableRow({
+        tableHeader: true,
+        children: headers.map((h, i) => new TableCell({
+          borders,
+          width: { size: colWidths[i], type: WidthType.DXA },
+          shading: { fill: BLUE, type: ShadingType.CLEAR },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({
+            children: [new TextRun({ text: h, font: "Arial", size: 20, bold: true, color: "FFFFFF" })]
+          })]
+        }))
+      }),
+      ...rows.map((row, ri) => new TableRow({
+        children: row.map((cell, i) => new TableCell({
+          borders,
+          width: { size: colWidths[i], type: WidthType.DXA },
+          shading: { fill: ri % 2 === 0 ? "FFFFFF" : MID_BLUE, type: ShadingType.CLEAR },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({
+            children: [new TextRun({ text: String(cell), font: "Arial", size: 20 })]
+          })]
+        }))
+      }))
+    ]
+  });
+}
+
+const doc = new Document({
+  numbering: {
+    config: [{
+      reference: "bullets",
+      levels: [{
+        level: 0, format: LevelFormat.BULLET, text: "\u2022",
+        alignment: AlignmentType.LEFT,
+        style: { paragraph: { indent: { left: 720, hanging: 360 } } }
+      }]
+    }]
+  },
+  styles: {
+    default: { document: { run: { font: "Arial", size: 22 } } },
+    paragraphStyles: [
+      { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 32, bold: true, font: "Arial", color: BLUE },
+        paragraph: { spacing: { before: 320, after: 160 }, outlineLevel: 0 } },
+      { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 26, bold: true, font: "Arial", color: DARK },
+        paragraph: { spacing: { before: 240, after: 120 }, outlineLevel: 1 } },
+    ]
+  },
+  sections: [{
+    properties: {
+      page: {
+        size: { width: 12240, height: 15840 },
+        margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+      }
+    },
+    children: [
+
+      // ── Title Block ──────────────────────────────────────────────────────
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 480, after: 120 },
+        children: [new TextRun({ text: "Reward Magnitude Design", font: "Arial", size: 52, bold: true, color: BLUE })]
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 80 },
+        children: [new TextRun({ text: "Line 104 Autonomous Train RL Agent", font: "Arial", size: 28, color: "555555" })]
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 480 },
+        children: [new TextRun({ text: "Method: Reward Magnitude Normalisation by Expected Frequency", font: "Arial", size: 22, italics: true, color: "777777" })]
+      }),
+
+      // ── 1. Overview ──────────────────────────────────────────────────────
+      h1("1.  Overview"),
+      p("The reward magnitudes in reward_function.py were determined using a principled method called Reward Magnitude Normalisation by Expected Frequency. This method eliminates the need to guess magnitudes through trial and error by grounding every value in two measurable properties: how often a component fires during an episode, and what fraction of the total learning signal it should contribute."),
+      spacer(),
+      p("The core idea is that the agent learns by comparing cumulative contributions from each reward term. If one term contributes orders of magnitude more than another over the course of an episode — regardless of its per-step value — it will dominate the agent's behaviour. Magnitude normalisation ensures no component accidentally becomes the dominant objective."),
+
+      // ── 2. The Method ────────────────────────────────────────────────────
+      h1("2.  The Method"),
+
+      h2("2.1  Core Formula"),
+      p("For each reward component, the per-event magnitude is derived as:"),
+      formula("magnitude = (intended_share × episode_budget) / expected_frequency"),
+      p([
+        new TextRun({ text: "Where:", font: "Arial", size: 22 }),
+      ]),
+      bullet(" the total cumulative reward a perfect episode should yield", "episode_budget — "),
+      bullet(" the fraction of that budget allocated to this component", "intended_share — "),
+      bullet(" how many times this component fires in a perfect episode", "expected_frequency — "),
+      spacer(),
+      p("This ensures that every component's total episode contribution equals its intended budget share, regardless of how frequently it fires."),
+
+      h2("2.2  Episode Budget"),
+      p("A target episode reward of +10,000 was chosen as the reference point for a perfect episode — one in which the agent reaches all six stations on time with smooth control. This value is arbitrary but provides a clean reference frame. All magnitudes are scaled relative to it."),
+      spacer(),
+      p("Episode parameters used for frequency estimation:"),
+      bullet("Maximum steps per episode: 10,000"),
+      bullet("Number of station arrivals in a complete run: 6"),
+      bullet("Estimated moving steps: ~9,500 (train is in motion for most of the episode)"),
+      bullet("Estimated cautionary signal steps: ~200 (Yellow/Red braking events)"),
+      bullet("Estimated sweet-spot steps on Green: ~3,000"),
+      bullet("Estimated total dwell steps across all stations: ~180 (6 stations × 30s average)"),
+      bullet("Estimated jerk events: ~500 (acceleration transitions)"),
+
+      // ── 3. Budget Allocation ─────────────────────────────────────────────
+      h1("3.  Budget Allocation"),
+      p("The episode budget is allocated across components in proportion to their role in the overall task. Penalties are expressed as negative budget. Station and punctuality rewards are allowed to sum beyond 100% of budget because they are sparse bonuses that define the upper performance ceiling — an agent that fails to reach stations never collects them, so they do not interfere with early-stage learning."),
+      spacer(),
+      makeTable(
+        ["Component", "Role", "Budget Share", "Budget (of 10,000)"],
+        [
+          ["r_step",              "Constant pressure toward terminus",       "-30% (cost)",   "-3,000"],
+          ["r_progress",          "Offsets step penalty when moving",        "+40%",           "+4,000"],
+          ["r_speed",             "Signal and speed compliance shaping",     "+15%",           "+1,500"],
+          ["r_signal_compliance", "Headway maintenance behaviour",           "+15%",           "+1,500"],
+          ["r_station",           "Milestone achievement (sparse)",          "+40%",           "+4,000"],
+          ["r_time",              "Punctuality at each station (sparse)",    "+20%",           "+2,000"],
+          ["r_jerk",              "Comfort shaping — penalty only",          "-5% (cost)",    "-500"],
+          ["r_patience",          "Correct dwell behaviour",                 "+3%",            "+300"],
+        ],
+        [2200, 2800, 1680, 1680]
+      ),
+
+      // ── 4. Derived Magnitudes ────────────────────────────────────────────
+      h1("4.  Derived Magnitudes"),
+      p("Applying the formula to each component:"),
+      spacer(),
+
+      h3("r_step  (step penalty)"),
+      formula("-3,000 / 10,000 steps  =  -0.3 per step"),
+      p("Fires every step regardless of behaviour. A value of -0.3 creates a total episode cost of -3,000 for a perfect run. The previous value of -5.0 produced -50,000 over an episode — approximately 5× the entire positive budget — which dominated all other signals and forced the agent to prioritise speed above all else."),
+      spacer(),
+
+      h3("r_progress  (distance-based progress)"),
+      formula("+4,000 / 9,500 moving steps  =  ~+0.42 per step at speed limit"),
+      p("Uses a distance-based formula scaled to the local speed limit. The multiplier was adjusted from 0.028 to 0.016, with the per-step cap reduced from 2.0 to 0.5, so that travelling at the speed limit consistently yields approximately +0.4 per step across all segments regardless of speed limit variation along the line."),
+      spacer(),
+
+      h3("r_speed  (speed and signal compliance)"),
+      formula("+1,500 / ~200 cautionary braking steps  =  ~+7.5 per service-brake step"),
+      p("The service braking bonus (Yellow/Red aspect) was increased from +5.0 to +7.0. Penalty magnitudes were retained: emergency braking on Green (-15.0), emergency braking on Yellow (-10.0), and emergency braking on Red (-20.0) are intentionally punitive as they represent unsafe control actions that fire rarely in a well-trained policy."),
+      spacer(),
+
+      h3("r_signal_compliance  (headway sweet-spot)"),
+      formula("+1,500 / ~3,000 sweet-spot steps  =  +0.5 per step"),
+      p("This is the most significant magnitude correction. The previous value of +25.0 fired on every Green-aspect step when the agent was in the 3–4 SH following zone, contributing approximately +75,000 per episode — more than reaching the terminus. This turned headway maintenance into the dominant objective and gave the agent no incentive to actually drive to Nowy Sacz. Reducing to +0.5 makes it a gentle shaping gradient rather than the primary goal."),
+      spacer(),
+
+      h3("r_station  (station milestone rewards)"),
+      formula("+4,000 total across 6 stations,  exponentially weighted toward terminus"),
+      p("The previous values summed to +82,400, approximately 8× the entire episode budget. This made station rewards lottery tickets that overwhelmed all continuous feedback. The revised values sum to +4,000 and follow an exponential weighting so that the terminus contributes the majority of the milestone budget:"),
+      spacer(),
+      makeTable(
+        ["Station", "Name", "Old Value", "New Value", "% of Budget"],
+        [
+          ["1", "Rabka-Zdro\u0301j",  "+400",    "+100",   "1%"],
+          ["2", "Mszana Dolna", "+3,000",  "+200",   "2%"],
+          ["3", "Tymbark",      "+8,000",  "+400",   "4%"],
+          ["4", "Limanowa",     "+13,000", "+700",   "7%"],
+          ["5", "Marcinkowice", "+8,000",  "+600",   "6%"],
+          ["6", "Nowy Sa\u0328cz (terminus)", "+50,000", "+2,000", "20%"],
+        ],
+        [1040, 2080, 1300, 1300, 1640]
+      ),
+      spacer(),
+
+      h3("r_time  (punctuality reward)"),
+      formula("+2,000 / 6 stations  =  +333 per on-time arrival"),
+      p("The on-time bonus was reduced from +1,000 to +333 to align with the budget allocation. The late penalty was tightened from -100 to -150 to create a deliberate asymmetry — arriving late should be more costly than the magnitude of the bonus forgone, discouraging the agent from treating punctuality as optional."),
+      spacer(),
+
+      h3("r_jerk  (jerk penalty)"),
+      formula("-500 / ~500 jerk events  =  -1.0 per jerk event"),
+      p("Fires only when the rate of acceleration change exceeds 1.0 m/s\u00B3. The magnitude of -1.0 was already correctly calibrated and required no change."),
+      spacer(),
+
+      h3("r_patience  (dwell compliance)"),
+      formula("+300 / ~180 dwell steps  =  +1.67 per dwell step"),
+      p("The dwell bonus was increased from +1.0 to +1.5 to better reflect its budget allocation. The impatience penalty of -10.0 (leaving too early after clearance) was retained."),
+
+      // ── 5. Weight Tuning ─────────────────────────────────────────────────
+      h1("5.  Weight Tuning"),
+      p("The weights in config.py are multiplicative scalars applied on top of the calibrated magnitudes. All weights default to 1.0, meaning magnitudes are used as-is. The weights are a post-calibration adjustment layer — they do not replace the frequency-based derivation, they modify relative importance after calibration."),
+      spacer(),
+      p("Weight tuning is empirical and guided by TensorBoard observations after training. The process is:"),
+      bullet("Train a full run with all weights at 1.0."),
+      bullet("Observe which components are persistently imbalanced in TensorBoard."),
+      bullet("Increase the weight of an under-influential component by 1.5–2.0×, or decrease an over-influential one by 0.5×."),
+      bullet("Retrain and compare eval/mean_reward."),
+      spacer(),
+      note("Rule: change one weight at a time. Changing multiple weights simultaneously makes it impossible to attribute changes in behaviour to a specific component."),
+      spacer(),
+
+      h2("5.1  Do You Re-run Optimise After Changing Weights?"),
+      p("No — not for every weight change. Here is the decision rule:"),
+      spacer(),
+      makeTable(
+        ["Change Type", "Re-run Optimise?", "Reason"],
+        [
+          ["Weights only (magnitudes unchanged)", "No", "Optimised hyperparameters remain valid. The reward scale changes slightly but VecNormalize absorbs it."],
+          ["Magnitudes changed in reward_function.py", "Yes", "The reward distribution has changed. Previously optimal learning rate, batch size, and entropy coefficient may no longer be appropriate."],
+          ["New reward component added or removed", "Yes", "Structural change to the reward signal. Full re-optimisation is warranted."],
+          ["Station rewards or punctuality changed", "Recommended", "These are sparse signals that interact with gamma and GAE lambda. It is worth re-optimising if changes are large."],
+        ],
+        [2600, 1800, 4960]
+      ),
+      spacer(),
+      p("The practical reason weights do not require re-optimisation is that VecNormalize applies running mean/standard deviation normalisation to the reward stream before the PPO loss is computed. Moderate weight changes shift the raw reward distribution, but VecNormalize re-normalises it within a few hundred thousand steps. The optimised hyperparameters — which govern gradient step size, clipping, and entropy — are relatively insensitive to this."),
+      spacer(),
+      p("Magnitude changes and structural changes, however, alter the gradient landscape itself, not just its scale. Re-optimisation is necessary in those cases."),
+
+      // ── 6. Summary Table ─────────────────────────────────────────────────
+      h1("6.  Summary of Final Magnitudes"),
+      makeTable(
+        ["Component", "Old Magnitude", "New Magnitude", "Change Reason"],
+        [
+          ["r_step",              "-5.0/step",    "-0.3/step",   "Was 5\u00D7 total budget, dominated all signals"],
+          ["r_progress (cap)",    "2.0",          "0.5",         "Rescaled to match new step penalty"],
+          ["r_progress (mult.)",  "0.028",        "0.016",       "Targets +0.4/step at speed limit"],
+          ["Service brake bonus", "+5.0",         "+7.0",        "Aligned to +1,500 budget allocation"],
+          ["Sweet-spot bonus",    "+25.0/step",   "+0.5/step",   "Was dominant objective — 8\u00D7 terminus value"],
+          ["Station total",       "+82,400",      "+4,000",      "Was 8\u00D7 episode budget"],
+          ["Punctuality on-time", "+1,000",       "+333",        "Aligned to +2,000 budget allocation"],
+          ["Punctuality late",    "-100",         "-150",        "Asymmetry: lateness costs more than bonus"],
+          ["Patience dwell",      "+1.0/step",    "+1.5/step",   "Aligned to +300 budget allocation"],
+          ["r_jerk",              "-1.0",         "-1.0",        "Already correctly calibrated"],
+        ],
+        [2200, 1600, 1600, 3960]
+      ),
+      spacer(),
+      note("All weights in config.py remain at 1.0 as the starting point for training. Adjust weights only in response to observed TensorBoard behaviour — never pre-emptively."),
+    ]
+  }]
+});
+
+Packer.toBuffer(doc).then(buf => {
+  fs.writeFileSync("/home/claude/reward_magnitude_docs.docx", buf);
+  console.log("Done");
+});
