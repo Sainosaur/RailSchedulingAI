@@ -150,8 +150,8 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         # Only award when the agent is moving (not coasting at a stop).
         if 3*sh <= x_diff <= 4*sh and u > 0.5:
             out.r_signal_compliance += 25.0  # Sweet spot bonus
-        #elif x_diff > 4*sh and u > 0.5:
-            #out.r_signal_compliance -= 3.0  # Penalty for lagging too far behind
+        elif x_diff > 4*sh and u > 0.5:
+            out.r_signal_compliance -= 1.0  # Penalty for lagging too far behind
 
     # Station Signal
     if station_aspect == 0:
