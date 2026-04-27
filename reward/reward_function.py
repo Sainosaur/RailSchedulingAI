@@ -160,11 +160,11 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
 
     # 7. Station Milestone Reward
     STATION_REWARDS = {
-        1: +500.0,   # Rabka-Zdrój
-        2: +5000.0,   # Mszana Dolna
-        3: +7000.0,   # Tymbark
-        4: +11000.0,   # Limanowa
-        5: +5000.0,   # Marcinkowice
+        1: +400.0,   # Rabka-Zdrój
+        2: +3000.0,   # Mszana Dolna
+        3: +8000.0,   # Tymbark
+        4: +13000.0,   # Limanowa
+        5: +8000.0,   # Marcinkowice
         6: +50000.0,  # Nowy Sącz (terminus — maximum reward)
     }
     if state.reached_new_station:
