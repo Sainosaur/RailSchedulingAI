@@ -1,0 +1,417 @@
+# Gemini CLI Task Prompt — Railway RL Reward Architecture Completion
+
+## Your Role
+You are an expert reinforcement learning engineer. You are working on a PPO-based autonomous train
+control project using Stable Baselines 3. The project simulates a unidirectional single-track
+railway (Line 104) where an AI agent controls train speed to arrive at stations on time while
+respecting signals and maintaining safe headway from a lead train.
+
+## Project File Structure
+The relevant files you will be editing are:
+- `reward/reward_function.py` — reward computation logic
+- `environment/railway_env.py` — Gymnasium environment (step, reset, obs)
+- `think_layer/config.py` — central configuration dataclass
+- `think_layer/trainer.py` — training orchestrator and callbacks
+
+Do NOT edit `agent.py`, `train.py`, `evaluate.py`, or `optimise.py`.
+
+---
+
+## Context: What Is Already Done
+
+The project already has three reward architecture layers partially implemented:
+
+1. **VecNormalize (Layer 3)** — FULLY complete in `agent.py` and `trainer.py`. Do not touch it.
+
+2. **Reward Decomposition (Layer 1)** — STRUCTURALLY done. `reward_function.py` has a
+   `RewardOutput` dataclass with named components (`r_step`, `r_progress`, `r_speed`,
+   `r_signal_compliance`, `r_station`, `r_time`, `r_jerk`, `r_patience`) and a `compute_reward()`
+   function that fills them. However, the weights are currently baked as hardcoded magnitudes
+   inside the function body — not as a tuneable weight vector. This must be fixed.
+
+3. **PBRS / Potential-Based Reward Shaping (Layer 2)** — NOT implemented at all. No potential
+   function exists anywhere. This must be added from scratch.
+
+Additionally, the reward breakdown logging pipeline from `reward_function.py` → `info` dict →
+TensorBoard is broken/missing and must be completed.
+
+---
+
+## Your Tasks — Execute In This Exact Order
+
+---
+
+### TASK 1 — Read All Relevant Files First
+
+Before writing any code, read the full contents of:
+- `reward/reward_function.py`
+- `environment/railway_env.py`
+- `think_layer/config.py`
+- `think_layer/trainer.py`
+
+Understand:
+- How `compute_reward()` is called from `railway_env.py` (what arguments are passed, when it is called relative to the physics update)
+- How `info` dict is constructed and returned from `railway_env.py`'s `step()` method
+- What state variables are available in `TrainState` (already defined in `reward_function.py`)
+- What the `TrainConfig` dataclass looks like in `config.py`
+
+---
+
+### TASK 2 — Add `REWARD_WEIGHTS` to `config.py`
+
+**What to do:**
+Inside the `TrainConfig` dataclass in `think_layer/config.py`, add a new section called
+`# ── Reward Weights ──` and add the following field using `dataclasses.field`:
+
+```python
+reward_weights: dict = field(default_factory=lambda: {
+    "step":              1.0,
+    "progress":          1.0,
+    "speed":             1.0,
+    "signal_compliance": 1.0,
+    "station":           1.0,
+    "time":              1.0,
+    "jerk":              1.0,
+    "patience":          1.0,
+})
+```
+
+**Rules:**
+- Place this field AFTER the existing normalisation fields and BEFORE the seed field.
+- Do not change any existing fields.
+- The weights default to 1.0 because the raw magnitudes inside `compute_reward()` are already
+  calibrated — the weights are a multiplier on top of those magnitudes for tuning purposes only.
+- Import `field` from `dataclasses` if it is not already imported (check first).
+
+---
+
+### TASK 3 — Refactor `compute_reward()` to Use the Weight Vector
+
+**What to do:**
+In `reward/reward_function.py`, modify the `compute_reward()` function signature and the final
+summation block.
+
+**Step 3a — Update function signature:**
+Change the signature from:
+```python
+def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
+```
+To:
+```python
+def compute_reward(state: TrainState, info: Dict[str, Any], weights: Optional[Dict[str, float]] = None) -> RewardOutput:
+```
+
+**Step 3b — Add weight resolution at the top of the function body:**
+At the very top of the function, after the `info.get(...)` extraction block but before any reward
+computation, add:
+
+```python
+# Resolve weights — default to 1.0 for all components if not provided
+_w = weights or {}
+w_step              = _w.get("step",              1.0)
+w_progress          = _w.get("progress",          1.0)
+w_speed             = _w.get("speed",             1.0)
+w_signal_compliance = _w.get("signal_compliance", 1.0)
+w_station           = _w.get("station",           1.0)
+w_time              = _w.get("time",              1.0)
+w_jerk              = _w.get("jerk",              1.0)
+w_patience          = _w.get("patience",          1.0)
+```
+
+**Step 3c — Replace the final summation:**
+Find this block at the bottom of `compute_reward()`:
+```python
+out.r_total = (out.r_step + out.r_progress + out.r_speed + 
+               out.r_signal_compliance + out.r_station + out.r_time + out.r_jerk + 
+               out.r_patience)
+```
+
+Replace it with:
+```python
+out.r_total = (
+    w_step              * out.r_step +
+    w_progress          * out.r_progress +
+    w_speed             * out.r_speed +
+    w_signal_compliance * out.r_signal_compliance +
+    w_station           * out.r_station +
+    w_time              * out.r_time +
+    w_jerk              * out.r_jerk +
+    w_patience          * out.r_patience
+)
+```
+
+**Rules:**
+- Do NOT change any of the individual component computation logic. Only the summation and the
+  function signature change.
+- The individual magnitudes (e.g. `r_station = 50000.0`, `r_step = -5`) stay exactly as they are.
+  The weights multiply on top of them.
+
+---
+
+### TASK 4 — Fix the `reward_breakdown` → `info` Pipeline in `railway_env.py`
+
+**What to do:**
+Find the `step()` method in `environment/railway_env.py`. Locate where `compute_reward()` is
+called. You need to ensure the following happens correctly.
+
+**Step 4a — Pass weights from config:**
+When `compute_reward()` is called, it must now receive the `weights` argument from the environment's
+config. Check if `railway_env.py` has access to a `TrainConfig` instance or a `reward_weights`
+dict. If it does, pass it. If it does not:
+
+- Import `TrainConfig` and `DEFAULT_CONFIG` at the top of `railway_env.py`
+- In `ModernizedLine104.__init__()`, add: `self.reward_weights = DEFAULT_CONFIG.reward_weights`
+- When calling `compute_reward()`, pass `weights=self.reward_weights`
+
+**Step 4b — Ensure `reward_breakdown` is in `info`:**
+After `compute_reward()` returns a `RewardOutput` object (call it `reward_output`), find where
+the `info` dict is constructed or finalised before being returned from `step()`. Add this line
+to that `info` dict:
+
+```python
+info["reward_breakdown"] = reward_output.to_dict()
+```
+
+**Critical check:** Search the entire `step()` method for anywhere that `return` is used to exit
+early (e.g. collision termination, truncation). Every early-return path that constructs an `info`
+dict must also include `info["reward_breakdown"] = reward_output.to_dict()`. If `reward_output`
+is not yet computed at an early-return point, create a zeroed fallback:
+
+```python
+info["reward_breakdown"] = RewardOutput().to_dict()
+```
+
+**Step 4c — Import `RewardOutput` if not already imported:**
+Check the imports at the top of `railway_env.py`. If `RewardOutput` is not imported from
+`reward.reward_function`, add it.
+
+---
+
+### TASK 5 — Add the `potential()` Function to `reward_function.py`
+
+**What to do:**
+Add a new standalone function `potential()` directly above `compute_reward()` in
+`reward/reward_function.py`.
+
+```python
+# ── Potential-Based Reward Shaping ───────────────────────────────────────────
+# γ must match PPO's gamma in config.py exactly.
+PBRS_GAMMA = 0.999  # matches TrainConfig.gamma
+
+def potential(state: TrainState) -> float:
+    """
+    Potential function φ(s) for PBRS shaping.
+    The shaping bonus applied each step is: PBRS_GAMMA * φ(s') - φ(s)
+    
+    Design rules:
+      - Must be BOUNDED: no component should be able to grow to ±infinity.
+      - Must be SMOOTH: no hard step functions. Use clamp/min/max for transitions.
+      - Units are arbitrary — only differences φ(s') - φ(s) matter to the agent.
+    
+    Returns a scalar float.
+    """
+
+    # ── Component 1: Segment progress ────────────────────────────────────────
+    # How far through the current inter-station segment is the train?
+    # Bounded [0.0, 5.0]. Smooth — increases monotonically with position.
+    total_span = max(state.next_station_position - state.last_station_position, 1.0)
+    progress_ratio = (state.current_position - state.last_station_position) / total_span
+    progress_ratio = max(0.0, min(1.0, progress_ratio))  # clamp to [0, 1]
+    phi_progress = progress_ratio * 5.0
+
+    # ── Component 2: Speed profile adherence ─────────────────────────────────
+    # Reward being close to the speed limit without exceeding it.
+    # speed_ratio = 1.0 when at exactly the speed limit, 0.0 when stopped.
+    # Bounded [0.0, 3.0].
+    speed_ratio = min(state.current_speed / max(state.speed_limit, 1.0), 1.0)
+    phi_speed = speed_ratio * 3.0
+
+    # ── Component 3: Schedule adherence ──────────────────────────────────────
+    # Penalise growing time deficit smoothly. Uses time remaining to next station.
+    # Bounded [-2.0, 2.0].
+    if state.next_scheduled_arrival_time > 0.0 and state.current_time > 0.0:
+        time_remaining = state.next_scheduled_arrival_time - state.current_time
+        phi_schedule = max(-2.0, min(2.0, time_remaining * 0.001))
+    else:
+        phi_schedule = 0.0
+
+    # ── Component 4: Headway safety ───────────────────────────────────────────
+    # Smooth repulsive gradient as train closes in on lead train's danger zone.
+    # Only activates when closer than 3 spatial headway units.
+    # Bounded [-2.0, 0.0].
+    safe_distance = 3.0 * state.spatial_headway
+    if safe_distance > 0.0 and state.distance_to_occupied < safe_distance:
+        phi_headway = -2.0 * (1.0 - state.distance_to_occupied / safe_distance)
+        phi_headway = max(-2.0, phi_headway)  # hard floor
+    else:
+        phi_headway = 0.0
+
+    return phi_progress + phi_speed + phi_schedule + phi_headway
+```
+
+**Rules:**
+- Do NOT call `potential()` from inside `compute_reward()`. It is applied separately in the
+  environment (Task 6).
+- Do NOT change `PBRS_GAMMA` independently of `config.py`'s `TrainConfig.gamma`. They must
+  always match. Add a comment warning about this.
+
+---
+
+### TASK 6 — Apply PBRS Shaping Inside `railway_env.py`'s `step()`
+
+**What to do:**
+This is where PBRS is actually applied. The shaping term `PBRS_GAMMA * φ(s') - φ(s)` requires
+both the pre-step state and the post-step state.
+
+**Step 6a — Import `potential` and `PBRS_GAMMA`:**
+At the top of `railway_env.py`, add to the import from `reward.reward_function`:
+```python
+from reward.reward_function import compute_reward, RewardOutput, TrainState, potential, PBRS_GAMMA
+```
+(Adjust to match the actual existing import statement — just add `potential` and `PBRS_GAMMA`
+to whatever is already being imported from that module.)
+
+**Step 6b — Capture pre-step state snapshot:**
+In `step()`, BEFORE the physics update / train movement logic executes, call:
+```python
+pre_step_state = self._build_train_state()
+```
+Where `_build_train_state()` is the method that constructs the `TrainState` object. If this
+method does not exist yet, check what the existing call to `compute_reward()` uses — it likely
+constructs a `TrainState(...)` inline. Extract that construction into a helper method
+`_build_train_state()` that returns a `TrainState` and call it from both places.
+
+**Step 6c — Capture post-step state and apply shaping:**
+AFTER the physics update and AFTER `compute_reward()` is called, add:
+```python
+# PBRS shaping: γφ(s') - φ(s)
+# Adds a smooth dense gradient toward better states without changing optimal policy.
+pbrs_shaping = PBRS_GAMMA * potential(post_step_state) - potential(pre_step_state)
+reward_output.r_total += pbrs_shaping
+
+# Log shaping term separately for TensorBoard debugging
+info["reward_breakdown"]["r_shaping"] = pbrs_shaping
+```
+
+Where `post_step_state` is the `TrainState` object already being used for `compute_reward()`.
+
+**Step 6d — Return the shaped total reward:**
+Ensure the value returned as the reward from `step()` is `reward_output.r_total` (which now
+includes the PBRS shaping). If the environment was previously returning a raw float from
+`compute_reward()`, make sure it now returns `reward_output.r_total` after shaping is applied.
+
+---
+
+### TASK 7 — Add `RewardLoggerCallback` to `trainer.py`
+
+**What to do:**
+Add a new callback class to `think_layer/trainer.py` that logs every reward component to
+TensorBoard on every step.
+
+**Step 7a — Add the class:**
+Insert the following class definition in `trainer.py`, after the existing `SaveBestVecNormalizeCallback` class and before the `train()` function:
+
+```python
+class RewardLoggerCallback(BaseCallback):
+    """
+    Logs per-component reward breakdown to TensorBoard every step.
+    Reads from info['reward_breakdown'] which is populated by railway_env.step().
+    
+    Enables per-component TensorBoard charts so each reward term can be
+    monitored independently — essential for diagnosing weight imbalance
+    and verifying PBRS shaping is behaving as expected.
+    """
+
+    REWARD_KEYS = [
+        "r_step",
+        "r_progress",
+        "r_speed",
+        "r_signal_compliance",
+        "r_station",
+        "r_time",
+        "r_jerk",
+        "r_patience",
+        "r_shaping",   # PBRS shaping term — will be 0.0 until Task 6 is complete
+        "r_total",
+    ]
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        if not infos:
+            return True
+
+        for key in self.REWARD_KEYS:
+            values = [
+                info["reward_breakdown"][key]
+                for info in infos
+                if "reward_breakdown" in info and key in info["reward_breakdown"]
+            ]
+            if values:
+                self.logger.record(
+                    f"reward/{key}",
+                    sum(values) / len(values)
+                )
+        return True
+```
+
+**Step 7b — Register the callback in `train()`:**
+Inside the `train()` function, find where `callbacks = CallbackList([...])` is constructed.
+Add `RewardLoggerCallback()` to the list:
+
+```python
+reward_logger_cb = RewardLoggerCallback()
+
+callbacks = CallbackList([
+    checkpoint_cb,
+    eval_cb,
+    sync_cb,
+    save_best_vecnorm_cb,
+    reward_logger_cb,   # ← add this
+])
+```
+
+---
+
+### TASK 8 — Verification Checks
+
+After completing all tasks, perform these checks:
+
+**Check 1 — No circular imports:**
+Verify that `railway_env.py` importing from `reward.reward_function` and
+`reward_function.py` importing nothing from `railway_env.py` creates no circular dependency.
+
+**Check 2 — GAMMA consistency:**
+Verify that `PBRS_GAMMA` in `reward_function.py` equals `TrainConfig.gamma` in `config.py`.
+Both must be `0.999`. If they differ, fix `PBRS_GAMMA` to match `config.py`.
+
+**Check 3 — Potential function is bounded:**
+Manually trace through `potential()` with extreme state values:
+- `current_position == next_station_position` (at station): should return a finite value
+- `current_speed == 0`: `phi_speed` should be 0.0
+- `distance_to_occupied == 0`: `phi_headway` should be -2.0
+- `distance_to_occupied >> safe_distance`: `phi_headway` should be 0.0
+Confirm no component returns `inf` or `nan`.
+
+**Check 4 — `reward_breakdown` present on all exit paths:**
+Read the entire `step()` method in `railway_env.py`. List every `return` statement. Confirm
+every single one includes `info["reward_breakdown"]`. There must be no return path where
+`info` is returned without this key.
+
+**Check 5 — Dry run import check:**
+Run `python -c "from reward.reward_function import compute_reward, potential, PBRS_GAMMA; print('OK')`
+from the project root. It must print `OK` with no errors.
+
+---
+
+## Output Requirements
+
+After completing all tasks:
+1. Show a diff or the complete modified content of every file you changed.
+2. Confirm which tasks were completed and flag any task where you had to make a judgment call
+   (e.g. the structure of `railway_env.py` differed from what was described).
+3. Do NOT refactor, rename, or restructure anything beyond what is specified in these tasks.
+4. Do NOT change PPO hyperparameters, environment physics, observation space, action space,
+   or VecNormalize configuration.
+5. If `railway_env.py` constructs `TrainState` inline rather than via a `_build_train_state()`
+   helper method, extract that construction into a helper as part of Task 6 but do not change
+   any of the field values being assigned.
