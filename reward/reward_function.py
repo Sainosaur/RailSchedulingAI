@@ -151,7 +151,7 @@ def compute_reward(state: TrainState, info: Dict[str, Any]) -> RewardOutput:
         if 3*sh <= x_diff <= 4*sh and u > 0.5:
             out.r_signal_compliance += 5.0  # Sweet spot bonus
         elif x_diff > 4*sh and u > 0.5:
-            out.r_signal_compliance -= 5.0  # Penalty for lagging too far behind
+            out.r_signal_compliance -= 20.0  # Penalty for lagging too far behind
 
     # Station Signal
     if station_aspect == 0:
