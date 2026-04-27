@@ -17,7 +17,7 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 3_000_000
+    total_timesteps: int = 5_000_000
 
     learning_rate: float = 0.00038
     gamma: float = 0.999 # must match phi in reward_function.py, PBRS code.
