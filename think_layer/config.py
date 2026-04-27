@@ -29,7 +29,7 @@ class TrainConfig:
     max_grad_norm: float = 0.5
     n_epochs: int = 10
 
-    n_steps: int = 2048
+    n_steps: int = 4096
     batch_size: int = 16_384
 
     # ── Network Architecture ─────────────────────────────────────────
@@ -44,7 +44,7 @@ class TrainConfig:
     # 94.7m = original 34.7m + 60m extra clearance.
     lead_stop_offset: float = 94.7
     max_episode_steps: int = 10_000
-    n_envs: int = 12
+    n_envs: int = 16
     slack_factor: float = 1.1  # 10% operational buffer for RL stability
 
     # ── Normalisation ────────────────────────────────────────────────

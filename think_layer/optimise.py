@@ -29,7 +29,7 @@ from think_layer.config import TrainConfig
 # HPO trials use "PPO_{trial_number}" so the two namespaces never collide.
 
 _HPO_TOTAL_TIMESTEPS = 150_000  # reduced: 50 trials × 150k is plenty to rank configs
-_HPO_N_ENVS = 256  # fewer workers → less SubprocVecEnv IPC overhead
+_HPO_N_ENVS = 16  # fewer workers → less SubprocVecEnv IPC overhead
 _HPO_MAX_EP_STEPS = 10_000   # halved: cuts stalled-episode tail, still covers full line
 _HPO_N_EVAL_EPS = 1  # sequential eval is the bottleneck; 1 ep is enough
 _HPO_TB_PREFIX = "PPO"  # saved as PPO_1, PPO_2 … never PPO_Line104_x
@@ -39,7 +39,7 @@ _HPO_TB_PREFIX = "PPO"  # saved as PPO_1, PPO_2 … never PPO_Line104_x
 # Tuned for 128 envs on an RTX 3050 — change here to propagate everywhere.
 # n_envs × n_steps must be divisible by batch_size:
 #   128 × 2048 = 262,144 / 16,384 = 16 minibatches per epoch ✓
-_HPO_N_STEPS   = 2048    # steps collected per env before each update
+_HPO_N_STEPS   = 4096    # steps collected per env before each update
 _HPO_BATCH     = 16_384  # minibatch size fed to GPU each gradient step
 _HPO_N_EPOCHS  = 10      # gradient passes over each rollout buffer
 _HPO_NET_ARCH  = [256, 256]  # sufficient for a 9-dim obs space; bigger = wasted params
