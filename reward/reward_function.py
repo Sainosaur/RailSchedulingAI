@@ -137,20 +137,22 @@ def compute_reward(state: TrainState, info: Dict[str, Any], weights: Optional[Di
 
     out = RewardOutput()
 
-    # Step penalty — drives directed exploration toward the terminus
-    out.r_step = -5
+    # Step penalty — constant cost per timestep that drives the agent toward the terminus.
+    # Budget: -0.3/step × 10,000 steps = -3,000 over a perfect episode (~30% of budget).
+    # Previous value of -5 produced -50,000 over an episode, dominating all other signals.
+    out.r_step = -0.3
 
     # 1. Progress Reward
-    # Scaled so that driving at the speed limit always roughly offsets the step penalty,
-    # regardless of which segment the train is on. At 90 km/h (25 m/s): 25 * 0.028 = 0.7.
-    # At 30 km/h (8.33 m/s): 8.33 * 0.028 = 0.23 — used to bleed -0.27/step on slow segments.
-    # Fix: scale the multiplier by (max_limit / current_limit) so the reward is always ~0.7
-    # when driving at the local speed limit.
+    # Scaled so that driving at the speed limit always offsets the step penalty,
+    # regardless of which segment the train is on.
+    # Budget: +0.4/step × 9,500 moving steps = ~+4,000 over a perfect episode.
+    # Multiplier 0.016 with speed_limit_scale gives ~0.4 at 25 m/s (90 km/h).
+    # At 30 km/h (8.33 m/s): 8.33 * 0.016 * (25/8.33) = 0.4 — consistent across segments.
     MAX_LINE_SPEED_MS = 25.0  # 90 km/h in m/s — fastest segment on line 104
     speed_limit_scale = MAX_LINE_SPEED_MS / max(state.speed_limit, 1.0)
     distance_travelled = state.current_position - state.previous_position
     if distance_travelled > 0:
-        out.r_progress = min(2.0, distance_travelled * 0.028 * speed_limit_scale)
+        out.r_progress = min(0.5, distance_travelled * 0.016 * speed_limit_scale)
     else:
         out.r_progress = 0.0
     
@@ -179,11 +181,11 @@ def compute_reward(state: TrainState, info: Dict[str, Any], weights: Optional[Di
         # cannot be accelerating at/above the limit, and must not use emergency braking.
         # Coasting at or below the speed limit is perfectly valid.
         if a <= -1.0:
-            out.r_speed = -10.0 # Penalty for emergency braking on cautionary signals
+            out.r_speed = -10.0  # Penalty for emergency braking on cautionary signals
         elif a > 0.01 and u >= state.speed_limit - 0.1:
             out.r_speed = -5.0   # Accelerating at or above speed limit toward obstacle
         elif -0.55 <= a <= -0.45:
-            out.r_speed = 5.0    # Correct service braking
+            out.r_speed = 7.0    # Correct service braking — budget: +7 × ~200 steps = +1,400
         elif -1.0 < a < -0.55:
             out.r_speed = -2.0   # Harder than service braking but not emergency
         else:
@@ -214,10 +216,13 @@ def compute_reward(state: TrainState, info: Dict[str, Any], weights: Optional[Di
     if train_aspect == 3:
         # Sweet spot bonus: reward maintaining the ideal following gap (3–4 SH).
         # Only award when the agent is moving (not coasting at a stop).
+        # Budget: +0.5/step × ~3,000 sweet-spot steps = +1,500 over a perfect episode.
+        # Previous value of +25.0 fired every Green step and contributed ~+75,000 per episode
+        # — more than reaching the terminus — causing the agent to prefer loitering over driving.
         if 3*sh <= x_diff <= 4*sh and u > 0.5:
-            out.r_signal_compliance += 25.0  # Sweet spot bonus
+            out.r_signal_compliance += 0.5   # Sweet spot bonus
         elif x_diff > 4*sh and u > 0.5:
-            out.r_signal_compliance -= 1.0  # Penalty for lagging too far behind
+            out.r_signal_compliance -= 1.0   # Penalty for lagging too far behind
 
     # Station Signal
     if station_aspect == 0:
@@ -225,29 +230,35 @@ def compute_reward(state: TrainState, info: Dict[str, Any], weights: Optional[Di
             out.r_signal_compliance += -10.0
 
     # 7. Station Milestone Reward
+    # Budget: +4,000 total across 6 stations, weighted exponentially toward terminus.
+    # Previous values summed to +82,400 (~8× the entire episode budget), turning
+    # station rewards into lottery tickets that drowned out all other signals.
     STATION_REWARDS = {
-        1: +400.0,   # Rabka-Zdrój
-        2: +3000.0,   # Mszana Dolna
-        3: +8000.0,   # Tymbark
-        4: +13000.0,   # Limanowa
-        5: +8000.0,   # Marcinkowice
-        6: +50000.0,  # Nowy Sącz (terminus — maximum reward)
+        1: +100.0,   # Rabka-Zdrój   —  1% of episode budget
+        2: +200.0,   # Mszana Dolna  —  2%
+        3: +400.0,   # Tymbark       —  4%
+        4: +700.0,   # Limanowa      —  7%
+        5: +600.0,   # Marcinkowice  —  6%
+        6: +2000.0,  # Nowy Sącz     — 20% (terminus — maximum reward)
     }
     if state.reached_new_station:
         out.r_station = STATION_REWARDS.get(state.station_index, 0.0)
 
     # 8. Punctuality Reward
+    # Budget: +333/station × 6 stations = +2,000 over a perfect episode (20% of budget).
+    # Penalty tightened to -150 (was -100) to make lateness more costly than it is worth.
     if state.reached_new_station:
         if state.scheduled_arrival_time is not None and state.actual_arrival_time is not None:
             deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
             if deviation <= 60.0:
-                out.r_time = 1000.0
+                out.r_time = 333.0
             else:
-                out.r_time = -100.0
+                out.r_time = -150.0
     
     # 9. Patience Reward
+    # Budget: +1.5/step × ~180 dwell steps = +270 over a perfect episode (~3% of budget).
     if state.is_dwelling and u < 0.1:
-        out.r_patience = 1.0
+        out.r_patience = 1.5
     elif station_cleared and train_aspect == 3 and u < 0.1:
         # Only penalise if station was already cleared last step too (avoid race condition
         # on the exact frame clearance flips — agent has no chance to react that step)
