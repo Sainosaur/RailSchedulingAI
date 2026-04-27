@@ -18,16 +18,19 @@ class TrainConfig:
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 3_000_000
+    
     learning_rate: float = 5.7e-5
-    n_steps: int = 2048
-    batch_size: int = 512
     n_epochs: int = 5
     gamma: float = 0.999 # must match phi in reward_function.py, PBRS code.
     gae_lambda: float = 0.9
-    clip_range: float = 0.2
     ent_coef: float = 0.0182
+
+    clip_range: float = 0.2
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
+
+    n_steps: int = 2048
+    batch_size: int = 512
 
     # ── Network Architecture ─────────────────────────────────────────
     policy_net: list[int] = field(default_factory=lambda: [256, 256])

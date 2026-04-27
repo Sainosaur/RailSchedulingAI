@@ -29,10 +29,20 @@ from think_layer.config import TrainConfig
 # HPO trials use "PPO_{trial_number}" so the two namespaces never collide.
 
 _HPO_TOTAL_TIMESTEPS = 150_000  # reduced: 50 trials × 150k is plenty to rank configs
-_HPO_N_ENVS = 128  # fewer workers → less SubprocVecEnv IPC overhead
+_HPO_N_ENVS = 256  # fewer workers → less SubprocVecEnv IPC overhead
 _HPO_MAX_EP_STEPS = 10_000   # halved: cuts stalled-episode tail, still covers full line
 _HPO_N_EVAL_EPS = 1  # sequential eval is the bottleneck; 1 ep is enough
 _HPO_TB_PREFIX = "PPO"  # saved as PPO_1, PPO_2 … never PPO_Line104_x
+
+# ── Fixed computational parameters (not searched) ─────────────────────────────
+# These affect GPU utilisation and sample throughput, not what the agent learns.
+# Tuned for 128 envs on an RTX 3050 — change here to propagate everywhere.
+# n_envs × n_steps must be divisible by batch_size:
+#   128 × 2048 = 262,144 / 16,384 = 16 minibatches per epoch ✓
+_HPO_N_STEPS   = 2048    # steps collected per env before each update
+_HPO_BATCH     = 16_384  # minibatch size fed to GPU each gradient step
+_HPO_N_EPOCHS  = 10      # gradient passes over each rollout buffer
+_HPO_NET_ARCH  = [256, 256]  # sufficient for a 9-dim obs space; bigger = wasted params
 
 
 class TrialEvalCallback(EvalCallback):
@@ -80,41 +90,33 @@ def objective(trial: optuna.Trial) -> float:
     4. Returns the final evaluation score.
     """
     # ── 1. Sample Hyperparameters ──────────────────────────────────────────────
+    # Only parameters that genuinely change *what* the agent learns are searched.
+    # Computational params (n_steps, batch_size, n_epochs, net_arch) are fixed
+    # above — Optuna finding "2048 > 1024" is trial variance, not signal.
     kwargs = {
-        # Tightened around known-good PPO range for continuous control
+        # Single most impactful param — always search this
         "learning_rate": trial.suggest_float("lr", 5e-5, 5e-4, log=True),
-        "batch_size": trial.suggest_categorical("batch_size", [256, 512]),
-        "n_steps": trial.suggest_categorical("n_steps", [1024, 2048]),
-        # Long-horizon journey — high gamma is essential, no point exploring lower
+        # Critical for long-horizon journeys: 0.99 may blind the agent to terminus reward
         "gamma": trial.suggest_categorical("gamma", [0.99, 0.999]),
+        # Credit assignment across long episodes
         "gae_lambda": trial.suggest_categorical("gae_lambda", [0.90, 0.95, 0.99]),
-        # Keep entropy low — this env has clear signal, not sparse reward
+        # Exploration vs exploitation — clear signal env so keep range tight
         "ent_coef": trial.suggest_float("ent_coef", 0.001, 0.05, log=True),
-        "n_epochs": trial.suggest_categorical("n_epochs", [5, 10]),
     }
-
-    # Drop xlarge/deep variants — overkill for a 9-dim obs space, wastes trial time
-    net_arch_type = trial.suggest_categorical(
-        "net_arch", ["small", "medium", "large"]
-    )
-    net_arch_map = {
-        "small":  [128, 128],
-        "medium": [256, 256],
-        "large":  [512, 512],
-    }
-    net_arch = net_arch_map[net_arch_type]
 
     # ── 2. Configure Run ───────────────────────────────────────────────────────
     config = TrainConfig()
     config.learning_rate = kwargs["learning_rate"]
-    config.batch_size = kwargs["batch_size"]
-    config.n_steps = kwargs["n_steps"]
-    config.gamma = kwargs["gamma"]
-    config.gae_lambda = kwargs["gae_lambda"]
-    config.n_epochs = kwargs["n_epochs"]
-    config.ent_coef = kwargs["ent_coef"]
-    config.policy_net = net_arch
-    config.value_net = net_arch
+    config.gamma         = kwargs["gamma"]
+    config.gae_lambda    = kwargs["gae_lambda"]
+    config.ent_coef      = kwargs["ent_coef"]
+
+    # Fixed computational params — consistent across all trials so results are comparable
+    config.n_steps    = _HPO_N_STEPS
+    config.batch_size = _HPO_BATCH
+    config.n_epochs   = _HPO_N_EPOCHS
+    config.policy_net = _HPO_NET_ARCH
+    config.value_net  = _HPO_NET_ARCH
 
     # HPO-specific overrides for speed
     config.total_timesteps = _HPO_TOTAL_TIMESTEPS
