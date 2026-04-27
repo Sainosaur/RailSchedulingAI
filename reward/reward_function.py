@@ -3,7 +3,6 @@ reward/reward_function.py
 Railway RL Reward Function
 """
 
-import math
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any
 
@@ -46,6 +45,7 @@ class RewardOutput:
     r_time: float = 0.0
     r_jerk: float = 0.0
     r_patience: float = 0.0
+    r_shaping: float = 0.0  # PBRS shaping term: γφ(s') - φ(s), applied in railway_env
     r_total: float = 0.0
 
     def to_dict(self):
