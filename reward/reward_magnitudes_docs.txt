@@ -322,3 +322,29 @@ Packer.toBuffer(doc).then(buf => {
   fs.writeFileSync("/home/claude/reward_magnitude_docs.docx", buf);
   console.log("Done");
 });
+
+REWARD MAGNITUDE & TUNING GUIDE
+
+1. IS IT "TRIAL AND ERROR"? (YES, BUT WITH GUIDERAILS)
+Tuning rewards is like adjusting a musical instrument to get the right "behavioral sound."
+- Order of Magnitude: Weights should reflect priorities. Critical safety penalties should be an order of magnitude larger than minor comfort penalties (e.g., Collisions >> Jerk).
+- The "Net Zero" Check: Ensure a standard successful trip remains positive. If the existence tax is too high, the agent may prefer to crash immediately to stop the point loss.
+- Visualization: Use reward landscape plots to verify the "staircase" effect. Ensure no single reward component is so large it drowns out all other signals into flat noise.
+
+2. DO YOU HAVE TO OPTIMIZE EVERY TIME YOU CHANGE WEIGHTS?
+Strictly speaking: No. Minor tweaks do not require a full Optuna study. Follow the "Scale Rule":
+- Relative Balance: Changing a weight slightly (e.g., 1.0 to 1.2) shifts priorities but keeps the "mountain shape" similar. Re-optimization is usually unnecessary.
+- Absolute Magnitude: Changing the scale significantly (e.g., 5,000 to 50,000) makes the reward gradient much steeper.
+- The Danger: A high learning rate tuned for a small scale will cause the agent to "overshoot" peaks on a large scale, leading to instability. Re-optimization is essential here.
+
+3. DECISION FRAMEWORK: TO OPTIMIZE OR NOT?
+- Minor Tweak: [Re-Optimize: No] Small behavioral shifts don't break the math.
+- New Component: [Re-Optimize: Maybe] Test with 1M steps first; re-optimize if learning fails.
+- Changing the "Goal": [Re-Optimize: Yes] Major shifts in objective (e.g., massive collision penalty) change the agent's risk profile.
+- Changing Reward Scale: [Re-Optimize: Essential] High reward magnitudes require lower Learning Rates for stability.
+
+PRO TIP: THE "NORMALIZED" SHORTCUT
+Use a REWARD_WEIGHTS dictionary in your config. Keep raw reward components small (between -1 and 1) and use the weights to scale them. This allows you to tune importance without swinging the total magnitude so wildly that it breaks the neural network's training stability.
+
+SUMMARY
+Only re-run Optuna if the agent's Entropy stays high or Value Loss spikes after a change. These are the technical signals that your current hyperparameters no longer fit the new reward landscape.
