@@ -18,20 +18,20 @@ class TrainConfig:
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 5_000_000
-    learning_rate: float = 5.12e-5
+    learning_rate: float = 0.00018
     n_steps: int = 2048
     batch_size: int = 512
-    n_epochs: int = 10
-    gamma: float = 0.999
-    gae_lambda: float = 0.99
-    clip_range: float = 0.00433
-    ent_coef: float = 0.0022
+    n_epochs: int = 5
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    clip_range: float = 0.2
+    ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
 
     # ── Network Architecture ─────────────────────────────────────────
-    policy_net: list[int] = field(default_factory=lambda: [256, 256])
-    value_net: list[int] = field(default_factory=lambda: [256, 256])
+    policy_net: list[int] = field(default_factory=lambda: [128, 128])
+    value_net: list[int] = field(default_factory=lambda: [128, 128])
 
     # ── Environment ──────────────────────────────────────────────────
     lead_train_speed: float = 20.0
@@ -41,7 +41,7 @@ class TrainConfig:
     # 94.7m = original 34.7m + 60m extra clearance.
     lead_stop_offset: float = 94.7
     max_episode_steps: int = 10_000
-    n_envs: int = 10
+    n_envs: int = 12
     slack_factor: float = 1.1  # 10% operational buffer for RL stability
 
     # ── Normalisation ────────────────────────────────────────────────
