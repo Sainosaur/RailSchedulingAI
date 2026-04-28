@@ -63,7 +63,7 @@ class RewardOutput:
 
 # ── Potential-Based Reward Shaping ───────────────────────────────────────────
 # γ must match PPO's gamma in config.py exactly.
-PBRS_GAMMA = 0.999  # matches gamma in config.py
+PBRS_GAMMA = 0.99  # matches gamma in config.py
 
 
 def potential(state: TrainState) -> float:
