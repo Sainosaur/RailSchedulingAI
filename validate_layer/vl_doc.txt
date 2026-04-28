@@ -29,9 +29,9 @@ Layer 3: Constraint Monitoring
 - NEGATIVE_SPEED_VIOLATION: Projected speed < 0.0.
 - SPEED_LIMIT_VIOLATION: Speed > segment limit.
 - ACCEL_NOT_ZERO_VIOLATION: Negative acceleration when stationary (would reverse
-  the train), or positive acceleration when already at the segment speed limit.
+  the train).
   Note: Positive acceleration when stationary is intentionally NOT flagged here —
-  if the train creeps into the next zone, the spatial violation fires instead.
+  if the train creeps into the next zone, the spatial violation fires instead. Positive acceleration at cruise speed is also NOT flagged, as the environment's internal clamp handles it gracefully.
 - STATION_SIGNAL_VIOLATION: Attempting to pass a station zone before dwell completion.
 - LEAD_TRAIN_SIGNAL_VIOLATION: Accelerating at a Red train aspect.
 

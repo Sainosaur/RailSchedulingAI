@@ -38,7 +38,7 @@ A. CONTINUOUS REWARDS (Calculated every physical timestep)
 - Penalty: Proportional to (jerk - 1.0) if jerk > 1.0.
 
 5. Signal Compliance
-- Lead Train Signal: Massive penalty for accelerating at a Red train aspect. Sweet spot bonus (+5.0) for staying 3-4 zones behind the lead train.
+- Lead Train Signal: Massive penalty for accelerating at a Red train aspect. Sweet spot bonus (+5.0) for staying 3-4 SH behind the lead train, provided the lead train is actively moving (v > 0.5) and the absolute gap is less than 8 SH.
 - Station Signal: Penalty for approaching station zone at speed during dwell.
 
 6. Headway Penalty
