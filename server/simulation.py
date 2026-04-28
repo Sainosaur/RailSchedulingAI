@@ -46,16 +46,16 @@ class SimulationRunner:
         # 2. Vectorise
         self.venv = DummyVecEnv([make_env])
 
-        # 3. Load Normalisation Stats
-        final_vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "final_vecnormalize.pkl"
+        # 3. Load Normalisation Stats (best first — matches evaluate.py)
         best_vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "best_vecnormalize.pkl"
+        final_vecnorm_path = PROJECT_ROOT / "think_layer" / "models" / "final_vecnormalize.pkl"
 
-        if final_vecnorm_path.exists():
-            vecnorm_path = final_vecnorm_path
-            print(f"SUCCESS: Loaded final normalisation stats from {vecnorm_path}")
-        elif best_vecnorm_path.exists():
+        if best_vecnorm_path.exists():
             vecnorm_path = best_vecnorm_path
-            print(f"SUCCESS: final_vecnormalize.pkl not found. Falling back to {vecnorm_path}")
+            print(f"SUCCESS: Loaded best normalisation stats from {vecnorm_path}")
+        elif final_vecnorm_path.exists():
+            vecnorm_path = final_vecnorm_path
+            print(f"SUCCESS: best_vecnormalize.pkl not found. Falling back to {vecnorm_path}")
         else:
             vecnorm_path = None
             print(f"WARNING: No VecNormalize stats found. Running without normalisation.")
@@ -100,19 +100,19 @@ class SimulationRunner:
             self.venv.training = False
             self.venv.norm_reward = False
 
-        # 4. Load PPO Checkpoint
-        final_model_path = PROJECT_ROOT / "think_layer" / "models" / "final_model.zip"
+        # 4. Load PPO Checkpoint (best first — peak performance, final as fallback)
         best_model_path = PROJECT_ROOT / "think_layer" / "models" / "best_model.zip"
+        final_model_path = PROJECT_ROOT / "think_layer" / "models" / "final_model.zip"
 
-        if final_model_path.exists():
-            model_path = final_model_path
-            print(f"SUCCESS: Loaded final model checkpoint from {model_path}")
-        elif best_model_path.exists():
+        if best_model_path.exists():
             model_path = best_model_path
-            print(f"SUCCESS: final_model.zip not found. Falling back to {model_path}")
+            print(f"SUCCESS: Loaded best model checkpoint from {model_path}")
+        elif final_model_path.exists():
+            model_path = final_model_path
+            print(f"SUCCESS: best_model.zip not found. Falling back to {model_path}")
         else:
             raise FileNotFoundError(
-                f"ERROR: No model found at {final_model_path} or {best_model_path}. You need to train it first!"
+                f"ERROR: No model found at {best_model_path} or {final_model_path}. You need to train it first!"
             )
 
         self.model = PPO.load(str(model_path), env=self.venv, device="cpu")
