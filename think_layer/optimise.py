@@ -29,7 +29,7 @@ from think_layer.config import TrainConfig
 # HPO trials use "PPO_{trial_number}" so the two namespaces never collide.
 
 _HPO_TOTAL_TIMESTEPS = 150_000  # reduced: 50 trials × 150k is plenty to rank configs
-_HPO_N_ENVS = 16  # fewer workers → less SubprocVecEnv IPC overhead
+_HPO_N_ENVS = 6  # fewer workers → less SubprocVecEnv IPC overhead
 _HPO_MAX_EP_STEPS = 10_000   # halved: cuts stalled-episode tail, still covers full line
 _HPO_N_EVAL_EPS = 1  # sequential eval is the bottleneck; 1 ep is enough
 _HPO_TB_PREFIX = "PPO"  # saved as PPO_1, PPO_2 … never PPO_Line104_x
