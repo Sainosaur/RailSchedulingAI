@@ -23,12 +23,18 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from validate_layer.validator import ValidationLayer   # noqa: E402
-from reward.reward_function import compute_reward, TrainState  # noqa: E402
+from reward.reward_function import compute_reward, TrainState, RewardConfig  # noqa: E402
 from environment.timetable import (                             # noqa: E402
     Timetable, generate_timetable, compute_eta_to_station,
     STATION_NAMES,
 )
 from dataclasses import dataclass
+
+@dataclass
+class Landslide:
+    id: int
+    position: float
+    active: bool = True
 
 
 class ModernizedLine104(gym.Env):
@@ -79,14 +85,18 @@ class ModernizedLine104(gym.Env):
         self.lead_train_speed = lead_train_speed
         self.training_mode = training_mode
         self.active_hazards: set[tuple[float, float]] = set()  # {(block_start, block_end), ...}
+        self.landslides: dict[int, Landslide] = {}
+        self._next_landslide_id: int = 0
 
         # Validation Layer (safety sieve)
         self.vl = ValidationLayer()
 
         # Spaces
+        # Symmetric action space for stable PPO exploration.
+        # It will be scaled to [-1.0, 0.5] in the step function.
         self.action_space = gym.spaces.Box(
             low=np.array([-1.0], dtype=np.float32),
-            high=np.array([0.5], dtype=np.float32),
+            high=np.array([1.0], dtype=np.float32),
             dtype=np.float32,
         )
         self.observation_space = gym.spaces.Box(
@@ -170,15 +180,24 @@ class ModernizedLine104(gym.Env):
             4.  Compute the reward.
         """
         # Ensure action is a float scalar
-        proposed_a = float(action[0])
+        raw_a = float(action[0])
+        
+        # Scale positive actions from [0.0, 1.0] -> [0.0, 0.5]
+        # Negative actions [-1.0, 0.0] remain 1:1.
+        proposed_a = raw_a * 0.5 if raw_a > 0 else raw_a
 
         # Current signal aspect (derived from distance to lead train)
         env_aspect = self._get_signal_aspect()
 
         # ----- 1. Validation Layer (Layers 1–4) -----
         # VL handles the safety check against the aspect and dtz.
+<<<<<<< Updated upstream
         safe_a, overridden = self.vl.get_safe_action(
             proposed_a, env_aspect, self.x, self.v, self.dtz,
+=======
+        safe_a, safety_overridden = self.vl.get_safe_action(
+            proposed_a, env_aspect, self.x, self.v, self.dtz, self._cached_dist_to_occupied
+>>>>>>> Stashed changes
         )
 
         # Jerk tracking: delta of the *physically executed* acceleration
@@ -252,10 +271,26 @@ class ModernizedLine104(gym.Env):
         actual_arrival_time = None
         
         if next_st_idx < len(self.STATIONS):
-            if self.x >= self.STATIONS[next_st_idx]:
+            dist_to_st = self.STATIONS[next_st_idx] - self.x
+            # Arrival condition: physically crossed OR stopped within 60m (buffer zone)
+            if dist_to_st <= 0.0 or (dist_to_st <= 60.0 and self.v <= 0.5):
                 reached_new_station = True
                 self.last_station_idx = next_st_idx
                 self.visited_stations.add(next_st_idx)
+<<<<<<< Updated upstream
+=======
+
+                # --- AI station dwell ---
+                # Trigger dwell if the train is essentially stopped (snapping to coordinate)
+                if self.v <= 1.0:
+                    self.x = self.STATIONS[next_st_idx]
+                    self.v = 0.0
+                    # Sample dwell from the same range as the lead train
+                    if next_st_idx < len(self.STATIONS) - 1:  # not terminus
+                        self.ai_dwell_timer = int(self.np_random.integers(
+                            self.LEAD_DWELL_RANGE[0], self.LEAD_DWELL_RANGE[1]
+                        ))
+>>>>>>> Stashed changes
                 
                 # BUG 13 FIX: Supply arrival times to TrainState so the
                 # punctuality penalty is actually calculated.
@@ -296,8 +331,13 @@ class ModernizedLine104(gym.Env):
             applied_traction=applied_traction,
         )
 
-        reward_out = compute_reward(state)
-        total_reward = reward_out.r_total
+        reward_out = compute_reward(
+            state,
+            RewardConfig(training_mode=self.training_mode),
+        )
+        
+        # Let VecNormalize handle reward scaling dynamically instead of static division
+        scaled_reward = reward_out.r_total
 
         # ----- 6. Termination & Truncation -----
         terminated = bool(self.x >= self.TRACK_END or reward_out.terminate)
@@ -323,10 +363,11 @@ class ModernizedLine104(gym.Env):
                 "violation": reward_out.r_violation,
                 "collision": reward_out.r_collision,
             },
+            "raw_reward": reward_out.r_total, # For unscaled logging
             "punctuality_status": self.get_punctuality_status(),
         }
 
-        return self._get_obs(), total_reward, terminated, truncated, info
+        return self._get_obs(), scaled_reward, terminated, truncated, info
 
     def render(self):
         if self.render_mode == "human":
@@ -360,13 +401,18 @@ class ModernizedLine104(gym.Env):
         Obstructions are:
             1. The lead train (at self.lead_x)
             2. Any active hazard block whose start is ahead of *from_x*
+            3. Any active landslide whose position is ahead of *from_x*
 
         Returns the position (metres) of the closest one.
         """
-        nearest = self.lead_x
+        # Subtract a 50m safety buffer so the train physically stops behind the lead train
+        nearest = max(from_x, self.lead_x - 50.0)
         for h_start, _h_end in self.active_hazards:
             if h_start > from_x:
-                nearest = min(nearest, h_start)
+                nearest = min(nearest, h_start - 50.0)
+        for ls in self.landslides.values():
+            if ls.active and ls.position > from_x:
+                nearest = min(nearest, ls.position - 50.0)
         return nearest
 
     def _get_signal_aspect(self) -> int:
@@ -490,6 +536,10 @@ class ModernizedLine104(gym.Env):
             if h_start >= self.lead_x:
                 d_hazard = h_start - self.lead_x  # 0 when parked at boundary
                 v_ceil_hazard = min(v_ceil_hazard, math.sqrt(2 * brake_a * max(0.0, d_hazard)))
+        for ls in self.landslides.values():
+            if ls.active and ls.position >= self.lead_x:
+                d_hazard = ls.position - self.lead_x
+                v_ceil_hazard = min(v_ceil_hazard, math.sqrt(2 * brake_a * max(0.0, d_hazard)))
 
         # Effective ceiling: lowest of all constraints
         v_ceil = min(seg_limit, v_ceil_station, v_ceil_seg, v_ceil_hazard)
@@ -546,6 +596,11 @@ class ModernizedLine104(gym.Env):
                 self.lead_x = h_start
                 self.lead_v = 0.0
                 return  # parked at hazard — skip station snap
+        for ls in self.landslides.values():
+            if ls.active and prev_lead_x < ls.position <= self.lead_x:
+                self.lead_x = ls.position
+                self.lead_v = 0.0
+                return
 
         # --- Snap to station on arrival ---
         if self.lead_station_idx < len(self.STATIONS):
@@ -602,6 +657,22 @@ class ModernizedLine104(gym.Env):
         """Remove all active hazards."""
         self.active_hazards.clear()
 
+    def set_landslide(self, position: float) -> int:
+        idx = self._next_landslide_id
+        self._next_landslide_id += 1
+        self.landslides[idx] = Landslide(id=idx, position=position, active=True)
+        return idx
+
+    def toggle_landslide(self, idx: int) -> bool:
+        if idx in self.landslides:
+            self.landslides[idx].active = not self.landslides[idx].active
+            return self.landslides[idx].active
+        return False
+
+    def clear_landslide(self, idx: int) -> None:
+        if idx in self.landslides:
+            del self.landslides[idx]
+
     # ------------------------------------------------------------------
     # Timetable & Punctuality
     # ------------------------------------------------------------------
@@ -611,6 +682,7 @@ class ModernizedLine104(gym.Env):
         position: float,
         last_visited_idx: int,
         arrival_log: dict[int, float],
+        dwell_timer: int = 0,
     ) -> dict:
         """Compute live punctuality for one train.
 
@@ -654,11 +726,12 @@ class ModernizedLine104(gym.Env):
                 },
             }
 
-        # ETA: segment-aware with accel/decel buffer
+        # ETA: segment-aware with accel/decel buffer.
+        # Include current dwell timer if the train is currently at a station.
         remaining_travel = compute_eta_to_station(
             position, entry.position_m, self.vl.segments,
         )
-        eta = self.time + remaining_travel
+        eta = self.time + dwell_timer + remaining_travel
 
         slack = entry.scheduled_arrival - eta  # positive = ahead, negative = behind
 
@@ -689,7 +762,7 @@ class ModernizedLine104(gym.Env):
         return {
             "sim_time": round(self.time, 1),
             "ai": self._train_punctuality(
-                self.x, self.last_station_idx, self.ai_arrival_times
+                self.x, self.last_station_idx, self.ai_arrival_times, self.ai_dwell_timer
             ),
         }
 
@@ -712,7 +785,7 @@ if __name__ == "__main__":
         if step_i % 500 == 0:
             env.render()
             print(f"     step {step_i:4d}  reward={reward:+8.3f}  "
-                  f"overridden={info['overridden']}  "
+                  f"overridden={info.get('safety_overridden', False)}  "
                   f"safe_a={info['safe_a']:.2f}")
 
         if terminated or truncated:

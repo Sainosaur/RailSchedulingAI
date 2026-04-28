@@ -129,9 +129,25 @@ class ValidationLayer:
         # Beyond all segments — return a large safe value
         return seg.spatial_headway
 
+<<<<<<< Updated upstream
     # ------------------------------------------------------------------
     # Layer 1 — Ingestion & Dynamic Limits
     # ------------------------------------------------------------------
+=======
+    @staticmethod
+    def _speed_for_aspect(aspect: int, segment: VLSegment, dtz: float, dist_to_obstruction: float) -> Tuple[float, float]:
+        # Maps signal to distance: 0=Red(DTZ), 1=Orange(DTZ+1SH), etc.
+        distance_available = dtz + (aspect * segment.spatial_headway)
+        
+        # Cap the available distance at the physical obstruction (e.g. station or lead train)
+        distance_available = min(distance_available, max(0.0, dist_to_obstruction))
+        
+        # Uses EMERGENCY_DECEL to find the physical limit.
+        a_brake = abs(EMERGENCY_DECEL)
+        v_dynamic = math.sqrt(2 * a_brake * max(0.0, distance_available))
+        
+        return min(v_dynamic, segment.limit_ms), distance_available
+>>>>>>> Stashed changes
 
     @staticmethod
     def _speed_for_aspect(
@@ -213,6 +229,7 @@ class ValidationLayer:
         # Track_Bounds_Violation via get_segment(), not be silently hidden.
         return x_proj, max(0.0, v)
 
+<<<<<<< Updated upstream
     def _check_action_safety(
         self,
         proposed_a: float,
@@ -251,6 +268,11 @@ class ValidationLayer:
         max_safe_v, distance_available = self._speed_for_aspect(
             env_aspect, current_seg, dtz
         )
+=======
+    def _check_action_safety(self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float, dist_to_obstruction: float) -> Tuple[bool, str]:
+        current_seg = self.get_segment(x)
+        max_safe_v, distance_available = self._speed_for_aspect(env_aspect, current_seg, dtz, dist_to_obstruction)
+>>>>>>> Stashed changes
         boundary_x = x + distance_available
 
         v_ceiling = current_seg.limit_ms
@@ -297,6 +319,7 @@ class ValidationLayer:
 
         return True, ""
 
+<<<<<<< Updated upstream
     # ------------------------------------------------------------------
     # Layer 3 — The Decision Node (Direct Interceptor)
     # ------------------------------------------------------------------
@@ -347,6 +370,23 @@ class ValidationLayer:
         is_safe, constraint = self._check_action_safety(
             clamped_a, env_aspect, x, u, dtz
         )
+=======
+    def get_safe_action(self, proposed_a: float, env_aspect: int, x: float, u: float, dtz: float, dist_to_obstruction: float) -> Tuple[float, bool]:
+        """
+        Layer 3 — Continuous Decision Node.
+        """
+        # 1. Hardware clamp
+        clamped_a = max(EMERGENCY_DECEL, min(ACCEL, proposed_a))
+        
+        # 2. FIXED: Red Signal Stop Logic
+        # If stopped at Red and AI stays stopped (proposed_a <= 0), it's safe and NO override is flagged.
+        # This prevents the AI from being punished for obeying the signal.
+        if u < 0.1 and env_aspect == 0 and proposed_a <= 0.0:
+            return 0.0, False
+
+        # 3. Safety check
+        is_safe, constraint = self._check_action_safety(clamped_a, env_aspect, x, u, dtz, dist_to_obstruction)
+>>>>>>> Stashed changes
 
         if is_safe:
             if was_hardware_clamped:
@@ -354,6 +394,7 @@ class ValidationLayer:
                 return clamped_a, True
             return clamped_a, False
 
+<<<<<<< Updated upstream
         # Already stopped — no braking required.  Short-circuit before the
         # graduated override to avoid spamming the XAI log every step while
         # the train is legally waiting at a Red signal.
@@ -362,6 +403,11 @@ class ValidationLayer:
                 self._log_override(proposed_a, 0.0, "Hardware_Limit_Clamp")
                 return 0.0, True
             return 0.0, False
+=======
+        # 4. Violation Resolution
+        seg = self.get_segment(x)
+        v_safe_limit, distance_available = self._speed_for_aspect(env_aspect, seg, dtz, dist_to_obstruction)
+>>>>>>> Stashed changes
 
         # Compute the minimum deceleration required to stop within available distance.
         # SUVAT: v² = u² + 2as, with v=0 → a = -u² / (2s)
