@@ -1,0 +1,77 @@
+RAIL SCHEDULING AI: PLOT REWARD DOCUMENTATION
+Current Revision: v2.0 (Telemetry Plotting & Heuristic Audit)
+
+The plot_reward.py script generates a high-fidelity visual audit of the 
+environment's reward landscape across the entire 76.6km Line 104 journey.
+
+------------------------------------------------------------------
+A. OPERATIONAL MODES
+------------------------------------------------------------------
+
+1. Model Mode (AI Analysis)
+- Trigger: Existence of 'best_model.zip' in think_layer/models/.
+- Logic: Loads the trained PPO agent and its Normalization statistics.
+- Purpose: Evaluates actual AI behavior and policy performance.
+
+2. Heuristic Mode (Stress Testing)
+- Trigger: No model found.
+- Logic: Runs a "Perfect Driver" dummy AI based on target velocities.
+- Target Velocities:
+    - Green (3): 100% of segment speed limit.
+    - Double Yellow (2): 70% of segment speed limit.
+    - Yellow (1): 40% of segment speed limit.
+    - Red (0): 0.0 m/s (or 3.0 m/s crawl near stations).
+- Purpose: Validates the reward function's "Golden Curve" baseline.
+
+------------------------------------------------------------------
+B. VISUALIZATION PANELS
+------------------------------------------------------------------
+
+Panel 1: Journey Profile
+- Logic: Overlays Agent Speed, Speed Limit, and Lead Train Speed.
+- Signal Secondary Axis: Shows real-time signal aspect (0-3).
+
+Panel 2: Reward Components (Detailed Audit)
+- Logic: Plots individual reward signals (r_progress, r_speed, etc.).
+- Purpose: Identifies which components are driving the agent's behavior.
+- Scale: Clamped to [-12, +12] to highlight continuous control signals.
+
+Panel 3: Milestones & Punctuality
+- Logic: Breaks out sparse event-based rewards (Stations, Time Bonuses).
+- Purpose: Monitors subgoal achievement and schedule adherence.
+
+Panel 4: The Golden Curve (Cumulative Reward)
+- Logic: Simple integration of all rewards over time.
+- Success Metric: A monotonic upward slope toward a terminal peak.
+
+------------------------------------------------------------------
+C. TECHNICAL CLAUSE: EXPLAINING THE TERMINAL DIP
+------------------------------------------------------------------
+
+Observation: In Heuristic Mode, the Golden Curve shows a sharp -1000 dip 
+at the very end of the journey (76.6km).
+
+1. The Lead Train Constraint:
+   The lead train parks at 76,685.7m (roughly 35m past the terminus).
+
+2. Heuristic Arrival shortfall:
+   The dummy AI heuristic stops at 76,594m (approximately 57m short of 
+   the actual TRACK_END).
+
+3. State Interlock:
+   At 76,594m, the distance to the lead train zone start is exactly 
+   1 SH (40m), which forces train_aspect to RED (0).
+
+4. Stagnation Period:
+   Because TRACK_END termination was removed and MAX_STEPS=10000 is 
+   high, the dummy AI correctly obeys the Red signal and sits stationary 
+   at the 76.5km mark for the remaining simulation steps.
+
+5. Step Penalty Bleed:
+   During this "idling" period, the agent continues to incur the 
+   -0.5 r_step penalty on every timestep.
+
+Result: 2,000 steps of idling × -0.5 = -1,000 point dip. 
+Note: The real PPO agent will not exhibit this behavior as it is 
+trained to maximize progress and will naturally drive to the terminus 
+to stop the step penalty accumulation.

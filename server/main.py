@@ -1,9 +1,9 @@
+import asyncio
 import csv
 import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
-import asyncio
 
 # Ensure project-root imports work regardless of working directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -12,9 +12,11 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from stable_baselines3.common.vec_env import VecNormalize
 
+from environment.railway_env import ModernizedLine104
+from environment.timetable import STATION_NAMES
 from graph.graph import graph
-from validate_layer import log_manager
 from server.simulation import SimulationRunner
+from validate_layer import log_manager
 
 
 def serialise_graph(g) -> dict:
@@ -43,8 +45,14 @@ class ConnectionManager:
         self.active.remove(ws)
 
     async def broadcast(self, data: dict):
+        dead = []
         for ws in self.active:
-            await ws.send_json(data)
+            try:
+                await ws.send_json(data)
+            except (RuntimeError, Exception):
+                dead.append(ws)
+        for ws in dead:
+            self.active.remove(ws)
 
 
 app = FastAPI()
@@ -80,9 +88,22 @@ app.add_middleware(
 @app.post("/api/hazard/{segmentPosition}/{block}/{status}")
 async def hazard(segmentPosition: int, block: int, status: bool):
     nodes = [data["data"] for _, data in g.nodes(data=True)]
-    start = next(s for s in nodes if s.position == segmentPosition)
-    end = next(s for s in nodes if s.position == segmentPosition + 1)
+    try:
+        start = next(s for s in nodes if s.position == segmentPosition)
+        end = next(s for s in nodes if s.position == segmentPosition + 1)
+    except StopIteration:
+        return {
+            "success": False,
+            "error": f"No segment found at position {segmentPosition}",
+        }
+
     edge = g.get_edge_data(start.name, end.name)
+    if not edge:
+        return {
+            "success": False,
+            "error": f"No edge found between {start.name} and {end.name}",
+        }
+
     edge["data"].block_boundaries[block].hazard = status
     edge["data"].hazard = any(b.hazard for b in edge["data"].block_boundaries)
     # Propagate hazard to the running simulation environment
@@ -91,7 +112,10 @@ async def hazard(segmentPosition: int, block: int, status: bool):
         block_obj = edge["data"].block_boundaries[block]
         raw_env.set_block_hazard(block_obj.start, block_obj.end, status)
     await graph_manager.broadcast({"type": "graph_update", "graph": serialise_graph(g)})
-    return {"segment": asdict(edge["data"]), "success": edge["data"].block_boundaries[block].hazard == status}
+    return {
+        "segment": asdict(edge["data"]),
+        "success": edge["data"].block_boundaries[block].hazard == status,
+    }
 
 
 # Dashboard Endpoints
@@ -104,14 +128,20 @@ async def root():
 
 # Returns the logs to front end client
 @app.get("/api/dashboard/logs")
-async def log():
+async def log(limit: int = 100):
     path = log_manager.get_log_path()
     if not os.path.exists(path):
         return {"logs": []}
     with open(path, "r") as f:
         reader = csv.DictReader(f)
-        return {"logs": list(reader)}
+        logs = list(reader)
+        return {"logs": logs[-limit:] if limit > 0 else logs}
 
+
+@app.post("/api/dashboard/logs/reset")
+async def reset_logs():
+    log_manager.clear_log()
+    return {"status": "success", "message": "Override logs cleared."}
 
 
 # BUG 15 FIX: Wire up the kill/restore endpoints directly to the
@@ -141,12 +171,14 @@ async def system_status():
 async def _broadcast_lead_status():
     """Push lead train state to all /ws/lead/status clients."""
     raw_env = _get_raw_env()
-    await lead_status_manager.broadcast({
-        "stalled": raw_env.lead_stalled,
-        "held": raw_env.lead_held,
-        "speed_ms": float(raw_env.lead_v),
-        "dwell_timer": int(raw_env.lead_dwell_timer),
-    })
+    await lead_status_manager.broadcast(
+        {
+            "stalled": raw_env.lead_train.stalled,
+            "held": raw_env.lead_train.held,
+            "speed_ms": float(raw_env.lead_train.v),
+            "dwell_timer": int(raw_env.lead_train.dwell_timer),
+        }
+    )
 
 
 @app.post("/api/sim/lead/stall")
@@ -181,16 +213,19 @@ async def hold_lead():
     await _broadcast_lead_status()
     return {"held": True}
 
+
 @app.websocket("/ws/lead/status")
 async def lead_status(websocket: WebSocket):
     await lead_status_manager.connect(websocket)
-    
+
     if simulation_runner.venv is not None:
         raw_env = _get_raw_env()
-        await websocket.send_json({
-            "stalled": raw_env.lead_stalled,
-            "held": raw_env.lead_held,
-        })
+        await websocket.send_json(
+            {
+                "stalled": raw_env.lead_train.stalled,
+                "held": raw_env.lead_train.held,
+            }
+        )
     else:
         await websocket.send_json(None)
     try:
@@ -199,10 +234,12 @@ async def lead_status(websocket: WebSocket):
     except WebSocketDisconnect:
         lead_status_manager.disconnect(websocket)
 
+
 # TODO
 @app.get("/api/dashboard/recommendations")
 async def recommendations():
     return {"recommendations": "Not Implemented"}
+
 
 @app.get("/api/sim/timetable")
 async def get_timetable():
@@ -230,62 +267,69 @@ async def sim_updates(websocket: WebSocket):
     await sim_manager.connect(websocket)
     try:
         if simulation_runner.venv is not None:
+            # We want to send the actual initial state to the client immediately
+            # but simulation_runner._broadcast_step calls the global broadcast.
+            # Here we just want to send to this specific websocket once.
             raw_env = _get_raw_env()
-            segment = raw_env.vl.get_segment(raw_env.x)
-            progress = (raw_env.x - segment.start) / (segment.end - segment.start)
-            next_st_idx = min(raw_env.last_station_idx + 1, len(raw_env.STATIONS) - 1)
-            next_st_pos = raw_env.STATIONS[next_st_idx]
-            headway = float((raw_env.lead_x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0)
-            signal_aspect = raw_env._get_signal_aspect()
-            if signal_aspect == 3:
-                 signal = "green"
-            elif signal_aspect == 2:
-                signal = "double-amber"
-            elif signal_aspect == 1:
-                signal = "amber"
-            else:
-                signal = "red"
-                
-            lead_segment = raw_env.vl.get_segment(min(raw_env.lead_x, raw_env.TRACK_END))
-            lead_progress = (raw_env.lead_x - lead_segment.start) / (lead_segment.end - lead_segment.start)
             
-            await websocket.send_json({
-                "type": "sim_update",
-                "step": raw_env.step_count,
-                "time": raw_env.time,
-                "ai": {
-                    "progress": float(progress),
-                    "speed_ms": float(raw_env.v),
-                    "speed_kmh": float(raw_env.v) * 3.6,
-                    "dtz": float(raw_env.dtz),
-                    "signal": signal,
-                    "dist_to_next_station": float(next_st_pos - raw_env.x),
-                    "speed_limit_ms": float(segment.limit_ms),
-                    "headway": headway,
-                    "segment": segment.id,
-                },
-                "lead": {
-                    "progress": float(lead_progress),
-                    "speed_ms": float(raw_env.lead_v),
-                    "speed_kmh": float(raw_env.lead_v) * 3.6,
-                    "signal": "green",
-                    "segment": lead_segment.id,
-                    "dwell_timer": int(raw_env.lead_dwell_timer),
-                    "stalled": raw_env.lead_stalled,
-                    "held": raw_env.lead_held,
-                },
-                "override": {
-                    "active": False,
-                    "proposed_a": 0.0,
-                    "safe_a": 0.0,
-                },
-                "stations_visited": list(raw_env.visited_stations),
-                "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
-                "done": False,
-                "timetable": raw_env.timetable.to_dict(),
-                "punctuality": raw_env.get_punctuality_status(),
-            })
-            await asyncio.sleep(0.5)
+            async def get_state_snapshot():
+                segment = raw_env.vl.get_segment(raw_env.x)
+                progress = (raw_env.x - segment.start) / (segment.end - segment.start)
+                next_st_idx = min(raw_env.last_station_idx + 1, len(raw_env.STATIONS) - 1)
+                next_st_pos = raw_env.STATIONS[next_st_idx]
+                signal_aspect = raw_env._get_signal_aspect()
+                signal_map = {3: "green", 2: "double-amber", 1: "amber", 0: "red"}
+                signal = signal_map.get(signal_aspect, "red")
+
+                lead_segment = raw_env.vl.get_segment(min(raw_env.lead_train.x, raw_env.TRACK_END))
+                lead_progress = (raw_env.lead_train.x - lead_segment.start) / (lead_segment.end - lead_segment.start)
+
+                return {
+                    "type": "sim_update",
+                    "step": raw_env.step_count,
+                    "time": raw_env.time,
+                    "ai": {
+                        "position_m": float(raw_env.x),
+                        "progress": float(progress),
+                        "speed_ms": float(raw_env.v),
+                        "speed_kmh": float(raw_env.v) * 3.6,
+                        "acceleration": float(raw_env.last_a),
+                        "dtz": float(raw_env.dtz),
+                        "signal": signal,
+                        "dist_to_next_station": float(next_st_pos - raw_env.x),
+                        "dist_to_obstruction": float(raw_env._dist_to_nearest_occupied()),
+                        "speed_limit_ms": float(segment.limit_ms),
+                        "headway": float((raw_env.lead_train.x - raw_env.x) / raw_env.v if raw_env.v > 0.01 else 9999.0),
+                        "segment_id": segment.id,
+                        "approaching_station": STATION_NAMES[next_st_idx],
+                        "dwell_timer": int(raw_env.ai_dwell_timer),
+                    },
+                    "lead": {
+                        "position_m": float(raw_env.lead_train.x),
+                        "progress": float(lead_progress),
+                        "speed_ms": float(raw_env.lead_train.v),
+                        "speed_kmh": float(raw_env.lead_train.v) * 3.6,
+                        "signal": "green",
+                        "segment": lead_segment.id,
+                        "dwell_timer": int(raw_env.lead_train.dwell_timer),
+                        "stalled": raw_env.lead_train.stalled,
+                        "held": raw_env.lead_train.held,
+                    },
+                    "override": {"active": False, "proposed_a": 0.0, "safe_a": 0.0},
+                    "reward": {"total": 0.0, "breakdown": {}},
+                    "stations_visited": list(raw_env.visited_stations),
+                    "hazards": [{"start": s, "end": e} for s, e in raw_env.active_hazards],
+                    "done": False,
+                    "timetable": raw_env.timetable.to_dict(),
+                    "punctuality": raw_env.get_punctuality_status(),
+                }
+            
+            try:
+                snapshot = await get_state_snapshot()
+                await websocket.send_json(snapshot)
+            except Exception as e:
+                print(f"Error sending initial sim state: {e}")
+
         while True:
             await websocket.receive_text()  # keep connection alive
     except WebSocketDisconnect:
@@ -308,6 +352,32 @@ async def stop_sim():
     await simulation_runner.stop()
     return {"status": "stopped"}
 
+
+@app.post("/api/sim/reset")
+async def reset_sim():
+    await simulation_runner.reset()
+    return {"status": "reset"}
+
+
 @app.get("/api/sim/status")
 async def sim_status():
     return {"status": simulation_runner.is_running}
+
+
+@app.post("/api/sim/vl/toggle")
+async def toggle_vl(active: bool = True):
+    """Toggle Validation Layer checks on/off during simulation."""
+    simulation_runner.set_vl_active(active)
+    return {"vl_active": active}
+
+
+@app.get("/api/sim/vl/status")
+async def vl_status():
+    """Return current VL active state."""
+    return {"vl_active": simulation_runner.vl_active}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

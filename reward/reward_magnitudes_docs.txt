@@ -1,0 +1,143 @@
+REWARD MAGNITUDE DESIGN
+Line 104 Autonomous Train RL Agent
+Method: Reward Magnitude Normalisation by Expected Frequency
+
+1. OVERVIEW
+The reward magnitudes in reward_function.py were determined using a principled method called Reward Magnitude Normalisation by Expected Frequency. This method eliminates the need to guess magnitudes through trial and error by grounding every value in two measurable properties: how often a component fires during an episode, and what fraction of the total learning signal it should contribute.
+
+The core idea is that the agent learns by comparing cumulative contributions from each reward term. If one term contributes orders of magnitude more than another over the course of an episode — regardless of its per-step value — it will dominate the agent's behaviour. Magnitude normalisation ensures no component accidentally becomes the dominant objective.
+
+2. THE METHOD
+2.1 Core Formula
+For each reward component, the per-event magnitude is derived as:
+magnitude = (intended_share * episode_budget) / expected_frequency
+
+Where:
+- episode_budget: the total cumulative reward a perfect episode should yield
+- intended_share: the fraction of that budget allocated to this component
+- expected_frequency: how many times this component fires in a perfect episode
+
+This ensures that every component's total episode contribution equals its intended budget share, regardless of how frequently it fires.
+
+2.2 Episode Budget
+A target episode reward of +10,000 was chosen as the reference point for a perfect episode — one in which the agent reaches all six stations on time with smooth control. All magnitudes are scaled relative to it.
+
+Episode parameters used for frequency estimation:
+- Maximum steps per episode: 10,000
+- Number of station arrivals in a complete run: 6
+- Estimated moving steps: ~9,500 (train is in motion for most of the episode)
+- Estimated cautionary signal steps: ~200 (Yellow/Red braking events)
+- Estimated sweet-spot steps on Green: ~3,000
+- Estimated total dwell steps across all stations: ~180 (6 stations * 30s average)
+- Estimated jerk events: ~500 (acceleration transitions)
+
+3. BUDGET ALLOCATION
+The episode budget is allocated across components in proportion to their role in the overall task.
+
+Component | Role | Budget Share | Budget (of 10,000)
+-------------------------------------------------------------------------
+r_step | Constant pressure toward terminus | -30% (cost) | -3,000
+r_progress | Offsets step penalty when moving | +40% | +4,000
+r_speed | Signal and speed compliance shaping | +15% | +1,500
+r_signal_compliance | Headway maintenance behaviour | +15% | +1,500
+r_station | Milestone achievement (sparse) | +40% | +4,000
+r_time | Punctuality at each station (sparse) | +20% | +2,000
+r_jerk | Comfort shaping — penalty only | -5% (cost) | -500
+r_patience | Correct dwell behaviour | +3% | +300
+
+4. DERIVED MAGNITUDES
+r_step (step penalty)
+Formula: -3,000 / 10,000 steps = -0.3 per step
+Fires every step regardless of behaviour. A value of -0.3 creates a total episode cost of -3,000 for a perfect run. The previous value of -5.0 produced -50,000 over an episode — approximately 5x the entire positive budget.
+
+r_progress (distance-based progress)
+Formula: +4,000 / 9,500 moving steps = ~+0.42 per step at speed limit
+Uses a distance-based formula scaled to the local speed limit. Multiplier adjusted to 0.016 (from 0.028) with a per-step cap of 0.5 (from 2.0).
+
+r_speed (speed and signal compliance)
+Formula: +1,500 / ~200 cautionary braking steps = ~+7.5 per service-brake step
+Service braking bonus increased to +7.0. Emergency braking penalties: Green (-15.0), Yellow (-10.0), Red (-20.0).
+
+r_signal_compliance (headway sweet-spot)
+Formula: +1,500 / ~3,000 sweet-spot steps = +0.5 per step
+Reduced from +25.0, which contributed ~75,000 per episode, dominating all other objectives.
+
+r_station (station milestone rewards)
+Formula: +4,000 total across 6 stations, exponentially weighted toward terminus
+Revised values sum to +4,000 (previously +82,400):
+- Station 1 (Rabka-Zdroj): +100
+- Station 2 (Mszana Dolna): +200
+- Station 3 (Tymbark): +400
+- Station 4 (Limanowa): +700
+- Station 5 (Marcinkowice): +600
+- Station 6 (Nowy Sacz - terminus): +2,000
+
+r_time (punctuality reward)
+Formula: +2,000 / 6 stations = +333 per on-time arrival
+Reduced from +1,000. Late penalty increased to -150 to create asymmetry.
+
+r_jerk (jerk penalty)
+Formula: -500 / ~500 jerk events = -1.0 per jerk event
+Calibrated to fire when acceleration change exceeds 1.0 m/s^3. No change required.
+
+r_patience (dwell compliance)
+Formula: +300 / ~180 dwell steps = +1.67 per dwell step
+Increased to +1.5. Impatience penalty of -10.0 retained.
+
+5. WEIGHT TUNING
+Weights in config.py are multiplicative scalars applied to calibrated magnitudes (default 1.0). Tuning is empirical based on TensorBoard observations:
+1. Train with weights at 1.0.
+2. Identify imbalanced components.
+3. Adjust under-influential weights (1.5-2.0x) or over-influential ones (0.5x).
+4. Retrain and compare.
+Rule: Change one weight at a time.
+
+5.1 Do You Re-run Optimise After Changing Weights?
+Change Type | Re-run Optimise? | Reason
+-------------------------------------------------------------------------
+Weights only | No | VecNormalize absorbs slight scale changes.
+Magnitudes changed | Yes | Reward distribution and gradients changed.
+New/Removed component | Yes | Structural change to reward signal.
+Station/Time changes | Recommended | Interact with gamma/GAE lambda.
+
+6. SUMMARY OF FINAL MAGNITUDES
+Component | Old Magnitude | New Magnitude | Change Reason
+-------------------------------------------------------------------------
+r_step | -5.0/step | -0.3/step | Was 5x budget, dominated signals.
+r_progress (cap) | 2.0 | 0.5 | Rescaled to match new step penalty.
+r_progress (mult.) | 0.028 | 0.016 | Targets +0.4/step at limit.
+Service brake bonus | +5.0 | +7.0 | Aligned to budget allocation.
+Sweet-spot bonus | +25.0/step | +0.5/step | Was 8x terminus value.
+Station total | +82,400 | +4,000 | Was 8x episode budget.
+Punctuality on-time | +1,000 | +333 | Aligned to budget allocation.
+Punctuality late | -100 | -150 | Lateness costs more than bonus.
+Patience dwell | +1.0/step | +1.5/step | Aligned to budget allocation.
+r_jerk | -1.0 | -1.0 | Correctly calibrated.
+
+Note: All weights in config.py start at 1.0. Adjust weights only in response to observed behavior.
+
+REWARD MAGNITUDE & TUNING GUIDE
+
+1. IS IT "TRIAL AND ERROR"? (YES, BUT WITH GUIDERAILS)
+Tuning rewards is like adjusting a musical instrument to get the right "behavioral sound."
+- Order of Magnitude: Weights should reflect priorities. Critical safety penalties should be an order of magnitude larger than minor comfort penalties (e.g., Collisions >> Jerk).
+- The "Net Zero" Check: Ensure a standard successful trip remains positive. If the existence tax is too high, the agent may prefer to crash immediately to stop the point loss.
+- Visualization: Use reward landscape plots to verify the "staircase" effect. Ensure no single reward component is so large it drowns out all other signals into flat noise.
+
+2. DO YOU HAVE TO OPTIMIZE EVERY TIME YOU CHANGE WEIGHTS?
+Strictly speaking: No. Minor tweaks do not require a full Optuna study. Follow the "Scale Rule":
+- Relative Balance: Changing a weight slightly (e.g., 1.0 to 1.2) shifts priorities but keeps the "mountain shape" similar. Re-optimization is usually unnecessary.
+- Absolute Magnitude: Changing the scale significantly (e.g., 5,000 to 50,000) makes the reward gradient much steeper.
+- The Danger: A high learning rate tuned for a small scale will cause the agent to "overshoot" peaks on a large scale, leading to instability. Re-optimization is essential here.
+
+3. DECISION FRAMEWORK: TO OPTIMIZE OR NOT?
+- Minor Tweak: [Re-Optimize: No] Small behavioral shifts don't break the math.
+- New Component: [Re-Optimize: Maybe] Test with 1M steps first; re-optimize if learning fails.
+- Changing the "Goal": [Re-Optimize: Yes] Major shifts in objective (e.g., massive collision penalty) change the agent's risk profile.
+- Changing Reward Scale: [Re-Optimize: Essential] High reward magnitudes require lower Learning Rates for stability.
+
+PRO TIP: THE "NORMALIZED" SHORTCUT
+Use a REWARD_WEIGHTS dictionary in your config. Keep raw reward components small (between -1 and 1) and use the weights to scale them. This allows you to tune importance without swinging the total magnitude so wildly that it breaks the neural network's training stability.
+
+SUMMARY
+Only re-run Optuna if the agent's Entropy stays high or Value Loss spikes after a change. These are the technical signals that your current hyperparameters no longer fit the new reward landscape.

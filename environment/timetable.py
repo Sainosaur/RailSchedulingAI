@@ -14,20 +14,21 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TimetableEntry:
     """One row of the timetable — a single station stop."""
+
     station_idx: int
     station_name: str
     position_m: float
-    scheduled_arrival: float   # seconds from episode start
-    scheduled_dwell: float     # seconds (0 for origin and terminus)
-    scheduled_departure: float # arrival + dwell
+    scheduled_arrival: float  # seconds from episode start
+    scheduled_dwell: float  # seconds (0 for origin and terminus)
+    scheduled_departure: float  # arrival + dwell
 
     def to_dict(self) -> dict:
         return {
@@ -43,6 +44,7 @@ class TimetableEntry:
 @dataclass
 class Timetable:
     """Full timetable for one episode — a list of TimetableEntry objects."""
+
     entries: list[TimetableEntry] = field(default_factory=list)
 
     def to_dict(self) -> list[dict]:
@@ -68,31 +70,26 @@ class Timetable:
 # ETA helper — segment-aware with accel/decel buffer
 # ---------------------------------------------------------------------------
 
+
 def _compute_segment_travel_time(
     distance_m: float,
     speed_limit_ms: float,
     accel: float = 0.5,
     decel: float = 0.5,
 ) -> float:
-    """Compute travel time across a segment accounting for acceleration
-    from rest and deceleration to rest at segment boundaries.
+    # Ensure accel/decel are non-zero to avoid NaNs
+    accel = max(0.01, accel)
+    decel = max(0.01, decel)
+    speed_limit_ms = max(0.1, speed_limit_ms)
+    distance_m = max(0.0, distance_m)
 
-    Uses a trapezoidal velocity profile:
-        1. Accelerate from 0 → speed_limit at `accel` m/s²
-        2. Cruise at speed_limit
-        3. Decelerate from speed_limit → 0 at `decel` m/s²
+    if distance_m == 0:
+        return 0.0
 
-    If the segment is too short to reach full speed, uses a triangular
-    profile (accelerate then immediately decelerate).
-
-    This is used for **inter-station** travel (station stops require
-    braking to zero and accelerating from zero), giving a realistic
-    buffer over the naive distance/speed calculation.
-    """
     # Distance required to accelerate to limit
-    d_accel = (speed_limit_ms ** 2) / (2 * accel)
+    d_accel = (speed_limit_ms**2) / (2 * accel)
     # Distance required to decelerate from limit
-    d_decel = (speed_limit_ms ** 2) / (2 * decel)
+    d_decel = (speed_limit_ms**2) / (2 * decel)
 
     if d_accel + d_decel >= distance_m:
         # Triangular profile — never reaches full speed
@@ -152,15 +149,14 @@ def compute_eta_to_station(
         # Portion of this segment the train must traverse
         seg_start = max(seg.start, current_position)
         seg_end = min(seg.end, target_position)
-        seg_dist = seg_end - seg_start
 
-        if seg_dist <= 0:
+        if seg_end <= seg_start:
             continue
 
+        seg_dist = seg_end - seg_start
+
         # Use segment speed limit with accel/decel buffer
-        total_time += _compute_segment_travel_time(
-            seg_dist, seg.limit_ms, accel, decel
-        )
+        total_time += _compute_segment_travel_time(seg_dist, seg.limit_ms, accel, decel)
 
     return total_time
 
@@ -184,7 +180,8 @@ STATION_NAMES: list[str] = [
 def generate_timetable(
     segments: list,
     station_positions: list[float],
-    dwell_seconds: float = 60.0,
+    dwell_seconds: float = 120.0,
+    slack_factor: float = 1.10,  # 10% operational buffer
     station_names: list[str] | None = None,
     accel: float = 0.5,
     decel: float = 0.5,
@@ -200,6 +197,7 @@ def generate_timetable(
     segments          : list of VLSegment objects from the Validation Layer.
     station_positions : list of station positions in metres (ascending).
     dwell_seconds     : float  Scheduled dwell time at intermediate stations.
+    slack_factor      : float  Multiplier for travel times (1.10 = 10% slack).
     station_names     : optional list of human-readable station names.
                         Falls back to STATION_NAMES if not provided.
     accel             : float  Traction acceleration (m/s²).
@@ -222,21 +220,24 @@ def generate_timetable(
     for i, pos in enumerate(station_positions):
         if i == 0:
             # Origin station — departure at t=0, no dwell
-            entries.append(TimetableEntry(
-                station_idx=i,
-                station_name=names[i],
-                position_m=pos,
-                scheduled_arrival=0.0,
-                scheduled_dwell=0.0,
-                scheduled_departure=0.0,
-            ))
+            entries.append(
+                TimetableEntry(
+                    station_idx=i,
+                    station_name=names[i],
+                    position_m=pos,
+                    scheduled_arrival=0.0,
+                    scheduled_dwell=0.0,
+                    scheduled_departure=0.0,
+                )
+            )
             continue
 
         # Travel time from previous station to this one
         prev_pos = station_positions[i - 1]
-        travel_time = compute_eta_to_station(
-            prev_pos, pos, segments, accel, decel
-        )
+        travel_time = compute_eta_to_station(prev_pos, pos, segments, accel, decel)
+
+        # Apply slack to the travel time portion
+        travel_time *= slack_factor
 
         # Add departure dwell from previous station (except origin handled above)
         if i > 1:
@@ -245,16 +246,17 @@ def generate_timetable(
         cumulative_time += travel_time
 
         # Terminus gets no dwell; intermediate stations get scheduled dwell
-        is_terminus = (i == len(station_positions) - 1)
+        is_terminus = i == len(station_positions) - 1
         dwell = 0.0 if is_terminus else dwell_seconds
 
-        entries.append(TimetableEntry(
-            station_idx=i,
-            station_name=names[i],
-            position_m=pos,
-            scheduled_arrival=cumulative_time,
-            scheduled_dwell=dwell,
-            scheduled_departure=cumulative_time + dwell,
-        ))
-
+        entries.append(
+            TimetableEntry(
+                station_idx=i,
+                station_name=names[i],
+                position_m=pos,
+                scheduled_arrival=cumulative_time,
+                scheduled_dwell=dwell,
+                scheduled_departure=cumulative_time + dwell,
+            )
+        )
     return Timetable(entries=entries)

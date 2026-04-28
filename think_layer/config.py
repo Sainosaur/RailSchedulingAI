@@ -9,7 +9,6 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Root of the think_layer package
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
 
@@ -18,26 +17,35 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 1_000_000
-    learning_rate: float = 3e-4
-    n_steps: int = 2048          # rollout buffer size per update
-    batch_size: int = 64         # SGD minibatch size
-    n_epochs: int = 10           # PPO clipping epochs per update
-    gamma: float = 0.99          # discount factor
-    gae_lambda: float = 0.95     # GAE advantage estimator
-    clip_range: float = 0.2      # PPO surrogate clip
-    ent_coef: float = 0.01       # entropy bonus for exploration
-    vf_coef: float = 0.5         # value function loss weight
-    max_grad_norm: float = 0.5   # gradient clipping
+    total_timesteps: int = 20_000_000
+
+    learning_rate: float = 0.00037
+    gamma: float = 0.99 # must match phi in reward_function.py, PBRS code.
+    gae_lambda: float = 0.95
+    ent_coef: float = 0.016
+
+    clip_range: float = 0.2
+    vf_coef: float = 0.5
+    max_grad_norm: float = 0.5
+    n_epochs: int = 10
+
+    n_steps: int = 4096
+    batch_size: int = 8192
 
     # ── Network Architecture ─────────────────────────────────────────
-    # Two hidden layers for both policy and value networks
-    policy_net: list[int] = field(default_factory=lambda: [64, 64])
-    value_net: list[int] = field(default_factory=lambda: [64, 64])
+    policy_net: list[int] = field(default_factory=lambda: [256, 256])
+    value_net: list[int] = field(default_factory=lambda: [256, 256])
 
     # ── Environment ──────────────────────────────────────────────────
-    lead_train_speed: float = 20.0  # m/s — midpoint; randomised per episode in training_mode
-    max_episode_steps: int = 15_000  # truncation safety net
+    lead_train_speed: float = 20.0
+    # Offset past TRACK_END (76651m) where the lead train parks.
+    # Must be > 1 SH (~40m) + terminus gap so the AI sees Green/Yellow
+    # all the way to 76651m and avoids the Red-aspect stagnation trap.
+    # 94.7m = original 34.7m + 60m extra clearance.
+    lead_stop_offset: float = 94.7
+    max_episode_steps: int = 10_000
+    n_envs: int = 6
+    slack_factor: float = 1.1  # 10% operational buffer for RL stability
 
     # ── Normalisation ────────────────────────────────────────────────
     normalize_obs: bool = True
@@ -45,13 +53,23 @@ class TrainConfig:
     norm_obs_clip: float = 10.0
     norm_reward_clip: float = 10.0
 
+    # ── Reward Weights ───────────────────────────────────────────────
+    reward_weights: dict = field(default_factory=lambda: {
+        "progress":     1.0,
+        "overspeed":    1.0,
+        "headway":      1.0,
+        "station":      1.0,
+        "punctuality":  1.0,
+        "jerk":         1.0,
+    })
+
     # ── Reproducibility ──────────────────────────────────────────────
     seed: int = 42
 
     # ── Checkpointing & Evaluation ───────────────────────────────────
-    checkpoint_freq: int = 250_000   # save a checkpoint every N steps
-    eval_freq: int = 50_000          # run evaluation every N steps
-    eval_episodes: int = 5           # episodes per evaluation round
+    checkpoint_freq: int = 250_000
+    eval_freq: int = 100_000
+    eval_episodes: int = 5
 
     # ── Paths ────────────────────────────────────────────────────────
     log_dir: str = str(_PACKAGE_DIR / "runs")
@@ -59,10 +77,8 @@ class TrainConfig:
     results_dir: str = str(_PACKAGE_DIR / "results")
 
     def __post_init__(self):
-        """Create output directories if they don't exist."""
         for d in (self.log_dir, self.model_dir, self.results_dir):
             os.makedirs(d, exist_ok=True)
 
 
-# Singleton default config
 DEFAULT_CONFIG = TrainConfig()

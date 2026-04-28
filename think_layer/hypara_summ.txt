@@ -1,0 +1,57 @@
+=== HYPERPARAMETER SUMMARY FOR RAIL SCHEDULING AI (PPO) ===
+
+total_timesteps
+What it is: Total physical simulation steps generated across all parallel environments before training completes.
+- High (e.g. 20,000,000): Provides ample time to learn complex behaviors (like full 76km route navigation and speed limits) and secure convergence, but training takes longer.
+- Low (e.g. 100,000): Lightning fast to run, but the AI barely learns anything beyond immediate survival.
+
+learning_rate
+What it is: The mathematical step size for neural network gradient updates.
+- High (e.g. 3e-4): Faster, standard PPO learning. Helpful with normalized observations to quickly explore connections.
+- Low (e.g. 1e-5): Very stable, safe updates. Slower to train, but often creates a smoother curve.
+
+n_steps
+What it is: The number of simulation steps each parallel environment runs before the agent pauses to update.
+- High (e.g. 4096): The agent sees very long temporal sequences, making it easier to learn delayed physical consequences (like braking distances).
+- Low (e.g. 128): Updates frequently on short chunks. Bad for anticipating long-term trajectory needs.
+
+batch_size
+What it is: The chunk of memories drawn from the rollout buffer to calculate a single gradient step.
+- High (e.g. 8192): Fast hardware utilization and lower variance gradient steps over a massive buffer, ideal for complex continuous control logic.
+- Low (e.g. 64): Noisy gradients.
+
+n_epochs
+What it is: How many times the algorithm loops over the collected rollout buffer to squeeze out learning value.
+- High (e.g. 10): Extracts maximum knowledge from a dataset. Standard for PPO when combined with clipping.
+
+gamma (Discount Factor)
+What it is: How much the AI cares about long-term future consequences vs immediate short-term rewards.
+- High (e.g. 0.999): The AI cares deeply about events ~1000 steps into the future. Vital for heavy physical trains that require early braking. MUST match PBRS_GAMMA.
+
+gae_lambda
+What it is: The bias vs variance tradeoff parameter for Generalized Advantage Estimation (GAE).
+- High (e.g. 0.95): Balances the actual raw reward signals with the AI estimating its own advantage.
+
+clip_range
+What it is: A mathematical boundary that prevents the new policy from deviating too far from the old policy in an update.
+- (e.g. 0.2): Standard stable boundary. Allows consistent evolution while protecting from catastrophic forgetting.
+
+ent_coef (Entropy Coefficient)
+What it is: The magnitude of the "curiosity" bonus. Forces the AI to inject random noise into its throttle decisions.
+- High (e.g. 0.05): Forces aggressive exploration. Vital to prevent the agent getting stuck driving the lowest possible speed limit everywhere safely.
+- Low (e.g. 0.0): Completely deterministic and exploitative. 
+
+vf_coef (Value Function Coefficient)
+What it is: How heavily the overall loss function weighs the Critic's prediction errors compared to the Actor's policy updates.
+
+max_grad_norm
+What it is: A hard mathematical safety cap on the size of a gradient explosion during a bad backpropagation cycle.
+- (e.g. 0.5): Extremely safe safety net to prevent internal mathematical overflow.
+
+policy_net / value_net (Architecture)
+What it is: The explicit number and size of the hidden layers acting as the AI's "brain".
+- Deep (e.g. [256, 256]): Massive capacity to memorize complex rules and mapping 9-dimensional conditional observations effectively.
+
+n_envs
+What it is: How many isolated train simulators to spawn in parallel on your CPU.
+- High (e.g. 16): Captures massive amounts of highly diverse trajectory data quickly across standard sub-processes.

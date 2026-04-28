@@ -31,6 +31,8 @@ test-results/
 # ── Runtime logs & generated data ────────────────────────────────────────────
 *.log
 *.csv
+validate_layer/override_log.csv
+validate_layer/override_log.txt
 # Keep the committed blank/template logs if any exist, but ignore generated ones.
 # If you want to track a specific CSV template, use: git add -f <file>
 
@@ -60,3 +62,5 @@ desktop.ini
 .env.*
 *.pem
 *.key
+.pip_tmp/
+validate_layer/override_log.csv

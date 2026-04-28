@@ -14,6 +14,15 @@ import argparse
 import sys
 from pathlib import Path
 
+# ── Silence Optuna trial-by-trial chatter ────────────────────────────────────
+# Must be set before any optuna objects are created. Only WARNING and above
+# (i.e. actual failures) will be printed. Remove to restore verbose output.
+try:
+    import optuna
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+except ImportError:
+    pass  # Optuna not installed — no-op
+
 # Ensure project-root imports work
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -27,7 +36,7 @@ def main():
     )
     parser.add_argument(
         "--timesteps", type=int, default=None,
-        help="Total training timesteps (default: 500,000)"
+        help="Total training timesteps (default: 1,000,000)"
     )
     parser.add_argument(
         "--lr", type=float, default=None,
@@ -49,6 +58,14 @@ def main():
         "--eval-freq", type=int, default=None,
         help="Evaluation frequency in steps (default: 10,000)"
     )
+    parser.add_argument(
+        "--verbose", type=int, default=0, choices=[0, 1, 2],
+        help="SB3 verbosity: 0=silent (default), 1=info, 2=debug"
+    )
+    parser.add_argument(
+        "--detailed-logs", action="store_true",
+        help="Write per-step reward breakdown into info dict (slower — use for debugging)"
+    )
 
     args = parser.parse_args()
 
@@ -67,6 +84,13 @@ def main():
         config.checkpoint_freq = args.checkpoint_freq
     if args.eval_freq is not None:
         config.eval_freq = args.eval_freq
+
+    # ── Verbosity / logging flags ─────────────────────────────────────────────
+    # verbose=0 → SB3 prints nothing (faster; default for speed runs).
+    # detailed_logs=True → reward_function writes breakdown into info dict
+    #                       (needed for TensorBoard component tracking).
+    config.verbose = args.verbose
+    config.detailed_logs = args.detailed_logs
 
     train(config)
 

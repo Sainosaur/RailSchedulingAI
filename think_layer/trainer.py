@@ -9,20 +9,94 @@ import sys
 from pathlib import Path
 
 from stable_baselines3.common.callbacks import (
+    CallbackList,
     CheckpointCallback,
     EvalCallback,
-    CallbackList,
+    BaseCallback,
 )
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 # Ensure project-root imports work
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from think_layer.config import TrainConfig  # noqa: E402
 from think_layer.agent import build_agent, make_env  # noqa: E402
+from think_layer.config import TrainConfig  # noqa: E402
 
 
-def train(config: TrainConfig) -> None:
+class SyncNormCallback(BaseCallback):
+    """Re-syncs eval VecNormalize obs_rms from training env every N steps."""
+    def __init__(self, train_env: VecNormalize, eval_env: VecNormalize, sync_freq: int = 10_000):
+        super().__init__()
+        self.train_env = train_env
+        self.eval_env = eval_env
+        self.sync_freq = sync_freq
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.sync_freq == 0:
+            self.eval_env.obs_rms = self.train_env.obs_rms
+        return True
+
+
+class SaveBestVecNormalizeCallback(BaseCallback):
+    """Saves the VecNormalize statistics whenever a new best model is found by EvalCallback."""
+    def __init__(self, vec_env: VecNormalize, eval_cb: EvalCallback, model_dir: str, verbose: int = 1):
+        super().__init__(verbose)
+        self.vec_env = vec_env
+        self.eval_cb = eval_cb
+        self.save_path = os.path.join(model_dir, "best_vecnormalize.pkl")
+        self.last_best_reward = -float("inf")
+
+    def _on_step(self) -> bool:
+        # Check if EvalCallback has updated its best_mean_reward
+        if self.eval_cb.best_mean_reward > self.last_best_reward:
+            self.last_best_reward = self.eval_cb.best_mean_reward
+            if self.verbose > 0:
+                print(f"DEBUG: New best model found (reward: {self.last_best_reward:.2f}). Saving VecNormalize stats to {self.save_path}")
+            self.vec_env.save(self.save_path)
+        return True
+
+
+class RewardLoggerCallback(BaseCallback):
+    """
+    Logs per-component reward breakdown to TensorBoard every step.
+    Reads from info['reward_breakdown'] which is populated by railway_env.step().
+    
+    Enables per-component TensorBoard charts so each reward term can be
+    monitored independently — essential for diagnosing weight imbalance
+    and verifying PBRS shaping is behaving as expected.
+    """
+
+    REWARD_KEYS = [
+        "r_progress",
+        "r_overspeed",
+        "r_headway",
+        "r_station",
+        "r_punctuality",
+        "r_jerk",
+        "r_shaping",
+        "r_total",
+    ]
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        if not infos:
+            return True
+
+        for key in self.REWARD_KEYS:
+            values = [
+                info["reward_breakdown"][key]
+                for info in infos
+                if "reward_breakdown" in info and key in info["reward_breakdown"]
+            ]
+            if values:
+                self.logger.record(
+                    f"reward/{key}",
+                    sum(values) / len(values)
+                )
+        return True
+
+
+def train(config: TrainConfig) -> None:  # noqa: C901
     """
     Run the full PPO training loop.
 
@@ -41,6 +115,16 @@ def train(config: TrainConfig) -> None:
     print(f"  Lead train speed: {config.lead_train_speed} m/s")
     print(f"  Log dir         : {config.log_dir}")
     print(f"  Model dir       : {config.model_dir}")
+
+    # ── Verbosity / logging flags (set via CLI or config) ────────────────────
+    # verbose=0      → SB3 + callbacks print nothing (fastest)
+    # detailed_logs  → reward_breakdown written into info dict each step;
+    #                  required for RewardLoggerCallback TensorBoard charts.
+    sb3_verbose    = getattr(config, "verbose",       0)
+    detailed_logs  = getattr(config, "detailed_logs", False)
+
+    print(f"  SB3 verbose     : {sb3_verbose}")
+    print(f"  Detailed logs   : {detailed_logs}")
     print("=" * 60)
 
     # 1. Build model
@@ -50,21 +134,25 @@ def train(config: TrainConfig) -> None:
     checkpoint_dir = os.path.join(config.model_dir, "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    # save_freq is in _on_step calls (1 call = n_envs timesteps)
     checkpoint_cb = CheckpointCallback(
-        save_freq=config.checkpoint_freq,
+        save_freq=max(1, config.checkpoint_freq // config.n_envs),
         save_path=checkpoint_dir,
         name_prefix="rl_model",
-        verbose=1,
+        verbose=sb3_verbose,
     )
 
     # Separate eval environment (also normalised, but stats frozen)
-    eval_venv = DummyVecEnv([
-        make_env(
-            seed=config.seed + 1000,
-            lead_train_speed=config.lead_train_speed,
-            max_episode_steps=config.max_episode_steps,
-        )
-    ])
+    eval_venv = DummyVecEnv(
+        [
+            make_env(
+                seed=config.seed + 1000,
+                lead_train_speed=config.lead_train_speed,
+                slack_factor=config.slack_factor,
+                max_episode_steps=config.max_episode_steps,
+            )
+        ]
+    )
     eval_venv = VecNormalize(
         eval_venv,
         norm_obs=config.normalize_obs,
@@ -73,20 +161,30 @@ def train(config: TrainConfig) -> None:
     )
     # Sync normalisation stats from training env
     eval_venv.obs_rms = vec_env.obs_rms
-    eval_venv.training = False   # freeze stats during evaluation
-    eval_venv.norm_reward = False
+    eval_venv.training = False  # freeze stats during evaluation
 
+    # eval_freq is in _on_step calls (1 call = n_envs timesteps)
     eval_cb = EvalCallback(
         eval_venv,
         best_model_save_path=config.model_dir,
         log_path=config.log_dir,
-        eval_freq=config.eval_freq,
+        eval_freq=max(1, config.eval_freq // config.n_envs),
         n_eval_episodes=config.eval_episodes,
         deterministic=True,
-        verbose=1,
+        verbose=sb3_verbose,
     )
 
-    callbacks = CallbackList([checkpoint_cb, eval_cb])
+    sync_cb = SyncNormCallback(vec_env, eval_venv, sync_freq=10_000)
+    save_best_vecnorm_cb = SaveBestVecNormalizeCallback(vec_env, eval_cb, config.model_dir, verbose=sb3_verbose)
+
+    # RewardLoggerCallback requires info["reward_breakdown"] which is only
+    # populated when detailed_logs=True. Skip it entirely in speed-mode runs
+    # to avoid silent KeyErrors and the overhead of iterating infos each step.
+    if detailed_logs:
+        reward_logger_cb = RewardLoggerCallback()
+        callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb, save_best_vecnorm_cb, reward_logger_cb])
+    else:
+        callbacks = CallbackList([checkpoint_cb, eval_cb, sync_cb, save_best_vecnorm_cb])
 
     # 3. Train
     print("\nStarting training...\n")
@@ -94,22 +192,23 @@ def train(config: TrainConfig) -> None:
         total_timesteps=config.total_timesteps,
         callback=callbacks,
         tb_log_name="PPO_Line104",
+        reset_num_timesteps=True,
+        progress_bar=sb3_verbose > 0,
     )
 
     # 4. Save final model + normalisation stats
     final_model_path = os.path.join(config.model_dir, "final_model")
     final_vecnorm_path = os.path.join(config.model_dir, "final_vecnormalize.pkl")
+    best_vecnorm_path = os.path.join(config.model_dir, "best_vecnormalize.pkl")
 
     model.save(final_model_path)
     vec_env.save(final_vecnorm_path)
-
-    # Also save the best model's VecNormalize stats
-    best_vecnorm_path = os.path.join(config.model_dir, "best_vecnormalize.pkl")
+    # Also save as best_vecnormalize.pkl to ensure dashboard fallback works
     vec_env.save(best_vecnorm_path)
 
     print("\n" + "=" * 60)
     print("  Training complete!")
     print(f"  Final model  : {final_model_path}.zip")
     print(f"  Best model   : {os.path.join(config.model_dir, 'best_model.zip')}")
-    print(f"  VecNormalize : {final_vecnorm_path}")
+    print(f"  VecNormalize : {final_vecnorm_path} and {best_vecnorm_path}")
     print("=" * 60)

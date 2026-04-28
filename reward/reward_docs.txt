@@ -1,64 +1,78 @@
 RAIL SCHEDULING AI: REWARD & PENALTY DOCUMENTATION
-==================================================
+Current Revision: Final Prototype v2.0 (Arithmetic VL & Direct Control)
 
-This text elaborates on the exact mathematics and purpose of every single reward/penalty component tracked within `reward_function.py`.
-
-The reinforcement learning agent operates by calculating these rewards every single timestep. The total reward (`r_total`) is the sum of Continuous Rewards, Event Rewards, and Terminal Penalties.
+The total reward (r_total) is calculated every timestep as a weighted sum:
+r_total = sum of all active components.
 
 ------------------------------------------------------------------
 A. CONTINUOUS REWARDS (Calculated every physical timestep)
 ------------------------------------------------------------------
 
-1. Progress Reward (`_compute_progress_reward`)
-- Goal: Encourage the train to move forward along the track.
-- Logic: Takes the percentage of track completed between the last station and the next station. By subtracting the previous percentage from the current percentage, we measure how much the train advanced in that exact timestep. 
-- Formula: `k_p * (p_current - p_previous)`
+1. Progress Reward
+- Goal: Incentivize forward movement.
+- Logic: Change in percentage progress between stations.
+- Lead Protection: Suspend accumulation if the lead train is stalled or held.
 
-2. Headway Penalty (`_compute_headway_penalty`)
-- Goal: Discourage the train from getting too close to the train ahead.
-- Logic: The segment dictates a Temporal Headway (TH). The warning zone begins at `3 * TH` and ends at `1 * TH` (the severe violation boundary). If the train is in this warning zone, it receives a scaling penalty that grows steeper the closer it gets to the violaton line.
+2. Speed Compliance (Aspect-Based)
+- Goal: Smooth, safe velocity curves driven by signal aspect.
+- Regime uses effective_aspect = min(train_aspect, station_aspect).
+- Green (3): Penalty proportional to deviation from the segment speed limit.
+- Double Yellow / Yellow (2/1): Reward (+5.0) for service braking at 0.5 m/s².
+  Penalty (-2.0) for braking harder than 0.5 m/s² but not emergency.
+  Emergency braking: see rule below.
+- Red (0): Reward (+2.0) for braking toward stop. No reward if already stopped.
+  Penalty (-5.0) for moving at Red without adequate braking.
+  Emergency braking: see rule below.
+- Emergency Braking Rule: Emergency braking (a <= -1.0 m/s²) is only justified
+  when effective_aspect == 0 (Red) AND speed >= 80% of the segment speed limit.
+  In all other contexts, emergency braking incurs a penalty (-10.0).
 
-3. Speed Target Penalty (`_compute_speed_reward`)
-- Goal: Create a highly efficient, comfortable, physics-driven velocity curve.
-- Logic: Uses the Kinematic Dynamic Trapezoid. It calculates a continuously adapting "Perfect Velocity Target" using SUVAT physics (`√2ad`) based on distance from the station and a comfortable acceleration/deceleration factor (`0.5 m/s²`).
-- Penalty: If the train accelerates faster or slower than this curve, it is penalized. Overspeeding is penalized heavily (quadratically) to ensure ETCS compliance, while underspeeding is penalized linearly (preventing crawling).
+3. Regenerative Braking
+- Goal: Energy efficiency.
+- Reward: +2.0 per step if deceleration is between -0.5 and -0.01 m/s².
+- Penalty: Small penalty for non-regenerative deceleration between -1.0 and -0.5 m/s².
 
-4. Energy Penalty (`_compute_energy_penalty`)
-- Goal: Optimise for Energy Efficiency.
-- Logic: Penalises only "positive acceleration" (throttle traction). If the train is aggressively throttling up to stay close to a target speed, it bleeds points. Coasting (0 traction) and braking burn almost zero energy and receive no penalty. This naturally creates "Eco-Driving" coast profiles.
+4. Jerk Compliance
+- Goal: Passenger comfort.
+- Reward: +1.0 per step if jerk < 0.5 m/s³/s.
+- Penalty: Proportional to (jerk - 1.0) if jerk > 1.0.
 
-5. Heartbeat Penalty (`_compute_heartbeat_penalty`)
-- Goal: Prevents deadlocks and stagnation.
-- Logic: A constant, small negative reward (`-0.1`) applied every single timestep that the train is alive. This teaches the AI that "sitting completely still" is not a safe strategy—it bleeds points over time. The only way to stop the bleeding is to finish its journey.
+5. Signal Compliance
+- Lead Train Signal: Massive penalty for accelerating at a Red train aspect. Sweet spot bonus (+5.0) for staying 3-4 SH behind the lead train, provided the lead train is actively moving (v > 0.5) and the absolute gap is less than 8 SH.
+- Station Signal: Penalty for approaching station zone at speed during dwell.
+
+6. Headway Penalty
+- Logic: Linear ramp penalty activating when x_diff < 3*SH.
+- x_diff = x_lead_zone_start - x_ai_zone_end.
+- Scale: 0 at 3*SH to -k_h at 1*SH.
+
+7. Patience & Stall Logic
+- Patience: +10.0 per step while stationary during mandatory dwell.
+- Stalling: -20.0 per step if stationary at a Green signal with a clear road.
+- Existence: -0.1 per step tax.
 
 ------------------------------------------------------------------
-B. EVENT REWARDS (Calculated strictly on triggering conditions)
+B. EVENT REWARDS (Triggered on specific conditions)
 ------------------------------------------------------------------
 
-6. Station Reward (`_compute_station_reward`)
-- Goal: Celebrate the main objective.
-- Logic: Applies a large chunk of positive points exclusively on the exact timestep that the train pulls into the target station border.
+8. Station Milestones
+- Rewards increase by 30% per station.
+- Grand Prize: +50,000 for reaching Nowy Sącz.
 
-7. Punctuality Penalty (`_compute_punctuality_penalty`)
-- Goal: Keep the ETCS line fluid according to rigid timetables.
-- Logic: Also triggered only upon reaching a station. It measures the `abs(scheduled_time - actual_time)`. A generous buffer (e.g. 60 seconds) is granted as tolerance without penalty. Every second late/early beyond that window applies a scaling deduction.
-
-8. Override Penalty (`_compute_override_penalty`)
-- Goal: Teach the AI to be safe so the Validation Layer doesn't have to be.
-- Logic: The Safety Validation Layer (VL) acts as a deterministic wall. If the RL Agent suggests an unsafe action, the VL forcefully overrides it. This penalty violently punishes the model whenever the VL has to jump in, thereby teaching the RL to learn perfectly safe boundaries independently.
-
-9. Jerk Penalty (`_compute_jerk_penalty`)
-- Goal: Prevent passenger whiplash from flip-flopping control decisions.
-- Logic: In RL, models often output "0, 3, 0, 3" (Max Brake then Max Accelerate) rapidly. We track the `action_delta` (the magnitude of the shift, e.g. shifting from signal 3 to signal 1 is a delta of 2). We penalise the delta *squared*, meaning a smooth transition (delta 1) is a tiny penalty, while slamming the brakes (delta 3) is a massive penalty.
+9. Punctuality
+- +10,000 bonus for arriving within a 60-second window.
 
 ------------------------------------------------------------------
 C. TERMINAL PENALTIES (Triggers "Terminate = True")
 ------------------------------------------------------------------
 
-10. Headway Violation Penalty (`_compute_headway_violation`)
-- Goal: The ultimate safety boundary for spacing.
-- Logic: If the train crosses beneath `1 * Temporal Headway`, it is dangerously close to a crash. It receives a massive negative score (e.g. `-150`) and the simulation/episode immediately aborts forcefully.
+10. Collision (Zone Overlap)
+- Penalty: -100,000. Triggers if x_diff <= 0.
 
-11. Collision Penalty (`_compute_collision_penalty`)
-- Goal: Avoid the ultimate physical catastrophe.
-- Logic: If physical spatial collision actually occurs, it receives another massive deduction (e.g. `-200`) and the episode concludes immediately in failure.
+11. Safety Violation
+- Small penalty (-10.0) for any violation logged by the VL.
+- Episode may terminate based on violation type (handled in env).
+
+12. Removal of Lateness Threshold
+
+WARNING: gamme from config.py must equat the number used in PBRS formula in reward_function.py

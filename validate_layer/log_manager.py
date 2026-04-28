@@ -12,14 +12,17 @@ from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Hardcoded reset flag — set to True to wipe the log on next run.
+# LOG_ENABLED flag — set to False during PPO training to prevent disk I/O thrashing.
 # ---------------------------------------------------------------------------
 LOG_RESET: bool = True
+LOG_ENABLED: bool = True
+
 # Log file lives inside validate_layer/
 _LOG_DIR = str(Path(__file__).resolve().parent)
 _LOG_FILENAME = "override_log.csv"
 _LOG_PATH = os.path.join(_LOG_DIR, _LOG_FILENAME)
 
-_HEADER = ["timestamp", "original_ppo_a", "corrected_a", "constraint_id"]
+_HEADER = ["timestamp", "x_ai_zone_end", "x_obs_zone_start", "ai_speed", "constraint_id"]
 
 
 def get_log_path() -> str:
@@ -35,6 +38,9 @@ def init_log() -> None:
     * If LOG_RESET is False → create the log only if it does not exist
       (preserving previous rows).
     """
+    if not LOG_ENABLED:
+        return
+
     if LOG_RESET and os.path.exists(_LOG_PATH):
         os.remove(_LOG_PATH)
 
@@ -43,10 +49,18 @@ def init_log() -> None:
             csv.writer(fh).writerow(_HEADER)
 
 
-def append_row(timestamp: float, original: float, corrected: float,
-               constraint_id: str) -> None:
+def append_row(
+    timestamp: float, x_ai_zone_end: float, x_obs_zone_start: float, ai_speed: float, constraint_id: str
+) -> None:
     """Append a single override event row to the log."""
+    if not LOG_ENABLED:
+        return
+
     with open(_LOG_PATH, "a", newline="") as fh:
-        csv.writer(fh).writerow(
-            [timestamp, original, corrected, constraint_id]
-        )
+        csv.writer(fh).writerow([timestamp, x_ai_zone_end, x_obs_zone_start, ai_speed, constraint_id])
+
+
+def clear_log() -> None:
+    """Wipe the override log file and re-initialise the header."""
+    with open(_LOG_PATH, "w", newline="") as fh:
+        csv.writer(fh).writerow(_HEADER)

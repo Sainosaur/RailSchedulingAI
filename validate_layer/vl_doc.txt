@@ -1,141 +1,58 @@
 Validation Layer (VL) Documentation
-Current Revision: Draft 9 
+Current Revision: Final Prototype v2.0 (Arithmetic VL & Log-Only)
 
-1. Why have a Validation Layer?
-The RL Agent (PPO) is a non-deterministic black box.
-This layer provides absolute mathematical determinism so the AI can undergo aggressive learning and exploration whilst ensuring zero risk of accidents.
-PPO is used purely for optimisation; the VL is used for guaranteed, mathematically proven safety.
+1. Purpose
+The Validation Layer (VL) provides absolute mathematical monitoring of the RL Agent.
+In this version, the VL no longer overrides actions. It acts as a passive safety monitor and logger.
+Behavioral shaping is handled by the Reward Function, while the VL provides an audit trail of safety breaches.
 
-2. High-Level Architecture
-This prototype focuses on a unidirectional convoy model.
-It utilises Automatic Train Operation (ATO) Continuous Actions superimposed over standard ETCS Level 2 Fixed-Block infrastructure.
+2. Architecture
+The VL uses arithmetic zone computation based on fixed block geometry.
+- O(n) segment lookup: Linear scan over segments.
+- O(1) zone arithmetic: All calculations within a segment use direct arithmetic rather than list lookups.
+- Modular Design: Adding trains, segments, or obstacles requires no changes to core VL logic.
 
-The L2 / Continuous Paradigm:
-Environment Constraints (ETCS L2): The track is divided into fixed blocks marked by balises.
-The environment tells the train the current signal aspect (0=Red, 1=Orange, 2=Flashing Green, 3=Green).
-AI Action Space: The AI outputs a continuous floating-point throttle command: proposed_a ranging from -1.0 m/s² (Emergency Braking) to +0.5 m/s² (Maximum Acceleration).
-O(1) Direct Interception: Because we possess a continuous physics model, the VL computes if the AI's requested proposed_a will breach the boundary allowed by the signal aspect, and applies a proportional correction in O(1) constant time.
+3. Monitoring Layers
 
-3. The 4-Layer Safety Pipeline
+Layer 1: Aspect Computation
+Uses zone geometry to compute signal aspects relative to obstacles (lead train or station).
+Aspects: 0=Red, 1=Yellow, 2=Double Yellow, 3=Green.
+x_diff = x_obs_zone_start - x_ai_zone_end.
+Violation (Collision/Overlap) occurs if x_diff <= 0.
 
-Layer 1: Ingestion & Dynamic Limits
-Inputs: x (current position), v (current velocity), proposed_a (AI continuous throttle), env_aspect (L2 signal 0-3), dtz (Distance to next zone boundary).
-Logic: Maps the env_aspect to an exact physical clearance distance (distance_available = dtz + aspect * SH).
-It then uses reversed SUVAT (v = sqrt(2ad)) to find the absolute maximum speed the train is physically allowed to travel before catastrophic failure.
+Layer 2: SUVAT Stopping Distance Check
+Replaces kinematic lookahead with a direct physical check.
+Required Stopping Distance: d_stop = u² / (2 * |EMERGENCY_DECEL|).
+Spatial Violation occurs if: x_ai_zone_end + d_stop >= x_obs_zone_start.
 
-Layer 2: Kinematic Simulation (Adaptive Lookahead) and Multi-Factor Violation Check
-The VL simulates the train's trajectory over three time horizons sampled at 33%, 67%, and 100% of the segment's stopping time:
-    t_stop = v_limit / |EMERGENCY_DECEL|
-This gives segment-specific windows:
-    S0/S1 (90 km/h): approx [8, 17, 25] seconds
-    S2    (60 km/h): approx [6, 11, 17] seconds
-    S3-S5 (30 km/h): approx [3, 6, 8]  seconds
+Layer 3: Constraint Monitoring
+- NEGATIVE_SPEED_VIOLATION: Projected speed < 0.0.
+- SPEED_LIMIT_VIOLATION: Speed > segment limit.
+- ACCEL_NOT_ZERO_VIOLATION: Negative acceleration when stationary (would reverse
+  the train).
+  Note: Positive acceleration when stationary is intentionally NOT flagged here —
+  if the train creeps into the next zone, the spatial violation fires instead. Positive acceleration at cruise speed is also NOT flagged, as the environment's internal clamp handles it gracefully.
+- STATION_SIGNAL_VIOLATION: Attempting to pass a station zone before dwell completion.
+- LEAD_TRAIN_SIGNAL_VIOLATION: Accelerating at a Red train aspect.
 
-Design Decision — Adaptive vs. Fixed Lookahead:
-A fixed global window (originally 5, 10, 15 seconds) caused persistent false Spatial Violations in short-block segments (S3-S5, SH=34.7m).
-At the S3 speed limit (8.33 m/s), 15 seconds of travel covers ~125m, which exceeds the 3-block Green authority (~104m).
-The VL therefore predicted a boundary breach even when the train was safely cruising at the speed limit.
-Capping the lookahead to t_stop is physically correct — there is no safety value in projecting beyond the horizon at which the train would have already stopped.
-This is consistent with ETCS Level 2 movement authority principles.
+Layer 4: Logging (Explainable AI)
+All violations are appended to `override_log.csv`.
+Columns: timestamp, x_ai_zone_end, x_obs_zone_start, ai_speed, constraint_id.
 
-Safety of the 100% (t_stop) horizon:
-The 100% horizon does not recreate the original problem. At t_stop seconds, a train coasting at v_limit travels at most:
-    s = v_limit * t_stop = v_limit² / |EMERGENCY_DECEL|
-For S3: s = 8.33² / 1.0 = 69.4 m. Green authority (3 × SH) = 104 m. So 69.4m < 104m — safe.
-By contrast, the old 15-second window gave 15 × 8.33 = 124.9m > 104m, causing false violations.
-The insight is that SH is derived from the stopping distance formula, so 1 × SH ≈ one stopping distance, and Green grants 3 × SH. Projecting for t_stop can only cover ≈2 stopping distances worth of cruising, which never reaches the Green boundary.
+4. Track Data (Line 104)
 
-Checks performed at each sim horizon:
-Spatial Violation: Projected position must not exceed the clearance boundary established by Layer 1.
-Kinematic Violation: Projected speed must not exceed the dynamic speed ceiling for that aspect.
-Segment Limit Violation: Projected speed must not exceed the static limit of the entered segment.
+Index   SH (m)   TH (s)
+0       390.0    15.6
+1       390.0    15.6
+2       170.0    10.2
+3       40.0     4.8
+4       40.0     4.8
+5       40.0     4.8
 
-Note: A Temporal Violation check (time_to_zone < 5s) was considered but removed as provably
-redundant. Proof: if any sim step has time_to_zone < 5s, the final sim step (t_stop =
-v_limit / |a_emergency|) will always produce a Spatial Violation, since t_stop-t₁ ≥ 5.36s
-for all segments (minimum t_stop=8s, S3). The sim steps already guarantee full stopping-
-horizon coverage, making a separate temporal check unnecessary.
-
-Layer 3: The Decision Node (Graduated Interceptor)
-Pass: If Layer 2 proves the trajectory is safe, return proposed_a unchanged.
-Fail (Graduated Override): If a violation is predicted, compute the minimum deceleration required to stop within the available distance using SUVAT:
-    a_needed = -u² / (2 * distance_available)
-Clamped to [EMERGENCY_DECEL, SERVICE_DECEL].
-
-Override severity scales with urgency:
-    Distant boundary, low speed  →  gentle correction (a near SERVICE_DECEL)
-    Approaching boundary fast    →  service braking (~-0.5 m/s²)
-    Imminent spatial breach      →  emergency braking (-1.0 m/s²)
-    Zero distance or stationary  →  always emergency braking (-1.0 m/s²)
-
-Design Decision — Graduated vs. Binary Override:
-The original design always applied EMERGENCY_DECEL (-1.0) on any violation.
-This created a sawtooth speed profile: the train braked hard, speed dropped, the VL approved, the train accelerated, the VL blocked again, and so on indefinitely in short-block segments.
-This collapsed the PPO agent's reward gradient — the agent could not distinguish a minor predicted overspeed from an imminent collision, and learned to stall.
-A graduated response proportional to the actual hazard severity mirrors real ETCS intervention levels, preserves the reward signal gradient, and allows the AI to learn smooth, safe control.
-
-Layer 4: Explainable AI (XAI) Logging
-Any time Layer 3 triggers an override, it appends a row to override_log.csv.
-Data Logged: timestamp, original_ppo_a, corrected_a, constraint_id (e.g., Aspect_Spatial_Violation, S3_Limit).
-Note: In this prototype the log resets on each run (LOG_RESET = True) for development convenience.
-In a production deployment, the log would persist across sessions for auditability and regulatory compliance.
-
-4. Track Data Structures
-
-Segment Map (Lookup Table)
-Segment   Start(m)   End(m)   Limit(km/h)   Spatial_Headway
-S0        00582      05481    90            312.5
-S1        05481      14951    90            312.5
-S2        14951      37160    60            138.9
-S3        37160      47017    30            034.7
-S4        47017      67394    30            034.7
-S5        67394      76651    30            034.7
-
-Table values rounded to nearest decimal place.
-Gradients ignored in calculations for prototype phase.
-
-Justification for Segments: The segments and speed limits are based on Line 104 data released in 2025.
-Standardisation reduced ~26 raw segments down to 6 core functional blocks for simulation simplicity.
-Spatial Headway (SH) was reverse-engineered using standard SUVAT formulas bounds.
+Note: The last zone of each segment is the station stopping zone. It may be oversized (>= SH) due to the safety merge.
 
 5. Safety Constants
-Max Acceleration (ACCEL): 0.5 m/s² (Needs final verification from mechanical group).
-Service Deceleration (SERVICE_DECEL): -0.5 m/s² (Needs final verification from mechanical group).
-Emergency Deceleration (EMERGENCY_DECEL): -1.0 m/s² (Needs final verification from mechanical group).
-Temporal Headway Buffer: 5.0 s
-
-6. Future Work
-For simplicity, gradients (elevation changes) were ignored in calculations for prototype phase.
-For simplicity, integrity is always assumed (no detached components and no sensor failures).
-For simplicity, we assumed a no signal transmission time delay.
-
-Analyze estimated CapEx start-up and OpEx long-term costs for running this architecture at the Edge.
-
-Edge Deployment — Cloud Requirement:
-The PPO model does not require cloud infrastructure at inference time. 
-Weights are trained centrally and frozen before deployment. 
-At runtime, each trainborne computer executes a single neural network forward pass — 
-no connectivity to a central server is needed. 
-This is possible because inference is stateless and deterministic once weights are fixed.
-ETCS Level 2 further supports this: 
-it uses trackside balises for position fixing and hardened Radio Block Centre (RBC) hardware 
-for Movement Authority transmission. 
-RBC is dedicated wayside equipment, not cloud infrastructure. 
-Level 3 (moving block) would require continuous train position reporting which uses Galileo and 
-EGNOS. Eventhough these are free to use and more robust, the technology is not mature and 
-infrastructure is not ready for it. Also, mountainous region and tunnels can block the signals.  
-
-Edge Deployment — Multi-Train VL Architecture:
-Each train hosts its own VL instance independently. 
-The VL requires no knowledge of any other train's absolute position. 
-Train occupancy of blocks ahead is already encoded in the signal aspect received from trackside 
-infrastructure — a Red aspect means the next block is occupied, regardless of which train holds it. 
-In a scaled deployment of 150+ trains, each edge VL remains computationally identical; 
-there is no central coordination bottleneck.
-
-AI Declaration
-AI was used iteratively during research and planning, and provided structural review for this document.
-All final safety design choices (logic, formulae, discrete-to-continuous action space mapping, 
-architectural tracking) were uniquely synthesised and chosen by the team.
-
-
+- ACCEL: 0.5 m/s²
+- SERVICE_DECEL: -0.5 m/s²
+- EMERGENCY_DECEL: -1.0 m/s²
+- DT: 1.0 s

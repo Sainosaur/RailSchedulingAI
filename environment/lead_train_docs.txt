@@ -1,0 +1,46 @@
+RAIL SCHEDULING AI: LEAD TRAIN DOCUMENTATION
+Current Revision: Final Prototype v1.0 (Line 104)
+
+File: environment/lead_train.py
+
+1. CORE CONCEPT
+The Lead Train acts as the "pace car" and primary obstacle for the AI agent. 
+It represents a preceding service on the line that follows a professional schedule but is subject 
+to realistic physics, random delays, and external hazards. It operates autonomously within the `railway_env` 
+but its physics are distinctly separated from the AI train's control loop.
+
+2. PHYSICAL PARAMETERS
+The lead train adheres to the following fixed performance characteristics:
+- Acceleration (ACCEL): 0.5 m/s² (Standard traction).
+- Service Deceleration (LEAD_SERVICE_DECEL): -0.5 m/s² (Comfortable braking for stations/limits).
+- Emergency Deceleration (DECEL): -1.0 m/s² (Used during stalls/emergency stops).
+- Dwell Range: 20s to 40s (Randomly assigned at every station stop).
+
+3. MOVEMENT LOGIC (THE SPEED CEILING)
+The lead train determines its target velocity (`v_ceil`) by choosing the most restrictive of four constraints:
+1. Segment Limit: The maximum speed allowed by the current track segment from the Validation Layer.
+2. Station Approach: A calculated speed limit using a reverse SUVAT projection to ensure the train reaches 
+exactly 0 m/s at the next station platform.
+3. Segment Transition: Anticipates upcoming speed limit drops, slowing down in advance to ensure the train 
+is at the new limit before crossing the boundary.
+4. Hazard Awareness: If a hazard (e.g., track defect) is active, the lead train calculates a stopping profile 
+to halt before reaching it.
+
+4. EVOLUTION & PHYSICS (ADVANCE)
+The train advances using a two-phase SUVAT integration every 1.0s:
+- Phase 1: Determines if it needs to accelerate, cruise, or brake to meet the current `v_ceil`.
+- Phase 2: Updates position (`x`) and velocity (`v`) using constant acceleration formulas. 
+If the train reaches its target velocity mid-step, the integration is split to prevent overshooting.
+
+5. STATION MANAGEMENT
+- Arrival Trigger: Activated when `x >= next_station_position`.
+- Snapping: Upon arrival, the position is snapped exactly to the station coordinates and velocity is set to 0.0.
+- Dwell State: A timer is initialized (20-40s). While dwelling, the train is "held," meaning it 
+cannot move even if the timer reaches zero until the environment releases it.
+
+6. TRAINING DYNAMICS (RANDOM STALLS)
+To make the AI agent robust, the lead train has a "Training Mode" feature:
+- Random Stalls: There is a 0.1% chance per second of a random mechanical failure.
+- Recovery: Stalls last between 15s and 60s, forcing the lead train to emergency brake and wait, 
+requiring the AI to react correctly to the closing headway.
+- External Holds: The `held` flag can be set by the environment to simulate dispatching delays.
