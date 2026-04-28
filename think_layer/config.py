@@ -30,7 +30,7 @@ class TrainConfig:
     n_epochs: int = 10
 
     n_steps: int = 4096
-    batch_size: int = 16_384
+    batch_size: int = 8192
 
     # ── Network Architecture ─────────────────────────────────────────
     policy_net: list[int] = field(default_factory=lambda: [256, 256])
