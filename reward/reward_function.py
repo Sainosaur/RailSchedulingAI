@@ -1,10 +1,20 @@
 """
 reward/reward_function.py
-Railway RL Reward Function
+Railway RL Reward Function — Simplified
+
+Design principles:
+  1. Dense progress signal dominates: moving > stationary, always
+  2. Outcome-based rewards, not input-based (reward speed, not exact accel value)
+  3. Minimal components to reduce reward-hacking surface
+  4. Emergency braking: single flat penalty regardless of aspect
+  5. Headway sweet-spot: bonus for staying in 3-4 SH bracket
+  6. Slight exponential station milestones (progressive rewards)
+  7. No patience/dwell rewards — agent doesn't gain from sitting
 """
 
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any
+
 
 @dataclass
 class TrainState:
@@ -34,76 +44,52 @@ class TrainState:
     current_time: float = 0.0
     next_scheduled_arrival_time: float = 0.0
 
+
 @dataclass
 class RewardOutput:
-    """Structured reward breakdown for easy debugging."""
-    r_step: float = 0.0
+    """Structured reward breakdown for debugging."""
     r_progress: float = 0.0
-    r_speed: float = 0.0
-    r_signal_compliance: float = 0.0
+    r_overspeed: float = 0.0
+    r_headway: float = 0.0
     r_station: float = 0.0
-    r_time: float = 0.0
+    r_punctuality: float = 0.0
     r_jerk: float = 0.0
-    r_patience: float = 0.0
     r_shaping: float = 0.0  # PBRS shaping term: γφ(s') - φ(s), applied in railway_env
     r_total: float = 0.0
 
     def to_dict(self):
         return asdict(self)
 
+
 # ── Potential-Based Reward Shaping ───────────────────────────────────────────
 # γ must match PPO's gamma in config.py exactly.
-PBRS_GAMMA = 0.999  # matches TrainConfig.gamma
+PBRS_GAMMA = 0.999  # matches gamma in config.py
+
 
 def potential(state: TrainState) -> float:
     """
     Potential function φ(s) for PBRS shaping.
-    The shaping bonus applied each step is: PBRS_GAMMA * φ(s') - φ(s)
-    
-    Design rules:
-      - Must be BOUNDED: no component should be able to grow to ±infinity.
-      - Must be SMOOTH: no hard step functions. Use clamp/min/max for transitions.
-      - Units are arbitrary — only differences φ(s') - φ(s) matter to the agent.
-    
-    Returns a scalar float.
+    Shaping bonus each step: PBRS_GAMMA * φ(s') - φ(s)
+
+    Simplified to 2 components: progress + speed.
+    Both bounded, smooth, monotonic — no sharp transitions.
     """
 
     # ── Component 1: Segment progress ────────────────────────────────────────
-    # How far through the current inter-station segment is the train?
-    # Bounded [0.0, 5.0]. Smooth — increases monotonically with position.
+    # How far through current inter-station segment.
+    # Bounded [0.0, 5.0].
     total_span = max(state.next_station_position - state.last_station_position, 1.0)
     progress_ratio = (state.current_position - state.last_station_position) / total_span
-    progress_ratio = max(0.0, min(1.0, progress_ratio))  # clamp to [0, 1]
+    progress_ratio = max(0.0, min(1.0, progress_ratio))
     phi_progress = progress_ratio * 5.0
 
     # ── Component 2: Speed profile adherence ─────────────────────────────────
-    # Reward being close to the speed limit without exceeding it.
-    # speed_ratio = 1.0 when at exactly the speed limit, 0.0 when stopped.
+    # Being at speed limit = 3.0, stopped = 0.0.
     # Bounded [0.0, 3.0].
     speed_ratio = min(state.current_speed / max(state.speed_limit, 1.0), 1.0)
     phi_speed = speed_ratio * 3.0
 
-    # ── Component 3: Schedule adherence ──────────────────────────────────────
-    # Penalise growing time deficit smoothly. Uses time remaining to next station.
-    # Bounded [-2.0, 2.0].
-    if state.next_scheduled_arrival_time > 0.0 and state.current_time > 0.0:
-        time_remaining = state.next_scheduled_arrival_time - state.current_time
-        phi_schedule = max(-2.0, min(2.0, time_remaining * 0.001))
-    else:
-        phi_schedule = 0.0
-
-    # ── Component 4: Headway safety ───────────────────────────────────────────
-    # Smooth repulsive gradient as train closes in on lead train's danger zone.
-    # Only activates when closer than 3 spatial headway units.
-    # Bounded [-2.0, 0.0].
-    safe_distance = 3.0 * state.spatial_headway
-    if safe_distance > 0.0 and state.distance_to_occupied < safe_distance:
-        phi_headway = -2.0 * (1.0 - state.distance_to_occupied / safe_distance)
-        phi_headway = max(-2.0, phi_headway)  # hard floor
-    else:
-        phi_headway = 0.0
-
-    return phi_progress + phi_speed + phi_schedule + phi_headway
+    return phi_progress + phi_speed
 
 
 def compute_reward(
@@ -115,179 +101,149 @@ def compute_reward(
     # Extract info
     train_aspect = info.get("train_aspect", 3)
     station_aspect = info.get("station_aspect", 3)
-    station_cleared = info.get("station_cleared", False)
     x_lead_zone_start = info.get("x_lead_zone_start", 99999.0)
-    x_station_zone_start = info.get("x_station_zone_start", 99999.0)
     violations = info.get("violations", {})
     lead_train_stalled = info.get("lead_train_stalled", False)
     lead_train_held = info.get("lead_train_held", False)
 
     # Resolve weights — default to 1.0 for all components if not provided
     _w = weights or {}
-    w_step              = _w.get("step",              1.0)
-    w_progress          = _w.get("progress",          1.0)
-    w_speed             = _w.get("speed",             1.0)
-    w_signal_compliance = _w.get("signal_compliance", 1.0)
-    w_station           = _w.get("station",           1.0)
-    w_time              = _w.get("time",              1.0)
-    w_jerk              = _w.get("jerk",              1.0)
-    w_patience          = _w.get("patience",          1.0)
-    
+    w_progress     = _w.get("progress",     1.0)
+    w_overspeed    = _w.get("overspeed",    1.0)
+    w_headway      = _w.get("headway",      1.0)
+    w_station      = _w.get("station",      1.0)
+    w_punctuality  = _w.get("punctuality",  1.0)
+    w_jerk         = _w.get("jerk",         1.0)
+
     sh = state.spatial_headway
     dt = 1.0
     u = state.current_speed
     a = state.applied_acceleration
     x_ai_zone_end = info.get("x_ai_zone_end", state.current_position)
-    x_diff = x_lead_zone_start - x_ai_zone_end  # zones between AI and lead train
+    x_diff = x_lead_zone_start - x_ai_zone_end  # gap between AI and lead train
 
     out = RewardOutput()
 
-    # Step penalty — constant cost per timestep that drives the agent toward the terminus.
-    # Budget: -0.3/step × 10,000 steps = -3,000 over a perfect episode (~30% of budget).
-    # Previous value of -5 produced -50,000 over an episode, dominating all other signals.
-    out.r_step = -0.3
-
-    # 1. Progress Reward
-    # Scaled so that driving at the speed limit always offsets the step penalty,
-    # regardless of which segment the train is on.
-    # Budget: +0.4/step × 9,500 moving steps = ~+4,000 over a perfect episode.
-    # Multiplier 0.016 with speed_limit_scale gives ~0.4 at 25 m/s (90 km/h).
-    # At 30 km/h (8.33 m/s): 8.33 * 0.016 * (25/8.33) = 0.4 — consistent across segments.
-    MAX_LINE_SPEED_MS = 25.0  # 90 km/h in m/s — fastest segment on line 104
-    speed_limit_scale = MAX_LINE_SPEED_MS / max(state.speed_limit, 1.0)
-    distance_travelled = state.current_position - state.previous_position
-    if distance_travelled > 0:
-        out.r_progress = min(0.5, distance_travelled * 0.016 * speed_limit_scale)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 1. PROGRESS — dense, every step
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Reward = speed / max_line_speed, capped at 1.0
+    # Stopped → 0.0 (this IS the penalty for not moving, no separate step cost)
+    # At speed limit → ~1.0
+    # Budget: ~1.0/step × 9500 moving steps = ~9,500 over perfect episode
+    MAX_LINE_SPEED_MS = 25.0  # 90 km/h — fastest segment on line 104
+    if u > 0.01:
+        out.r_progress = min(1.0, u / MAX_LINE_SPEED_MS)
     else:
         out.r_progress = 0.0
-    
-    # Suspend if lead train issues
+
+    # Suspend progress reward if lead train stalled/held (not AI's fault)
     if lead_train_stalled or lead_train_held:
         out.r_progress = max(0.0, out.r_progress)
 
-    # 2. Speed Compliance Reward
-    effective_aspect = min(train_aspect, station_aspect)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 2. OVERSPEED & EMERGENCY BRAKING — penalty only
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Two violations: exceeding speed limit, or using emergency braking
+    # Flat penalties regardless of signal aspect — simplest possible
+    # Budget: ~-500 total (if agent hits ~100 violations per episode)
 
-    # At terminus, stopped — no speed penalty applies
-    at_terminus = (state.current_position >= state.next_station_position - 10.0 and u < 0.1)
-    if at_terminus:
-        out.r_speed = 0.0
-    elif effective_aspect == 3:
-        # Green: penalise overspeed only.
-        if a <= -1.0:
-            out.r_speed = -15.0 # High penalty for emergency braking on green
-        elif u > state.speed_limit + 0.1:
-            out.r_speed = max(-10.0, -(u - state.speed_limit))  # overspeed penalty
-        else:
-            out.r_speed = 0.0  # at or below limit — fine
+    # Emergency braking penalty (a <= -1.0 is emergency decel)
+    if a <= -1.0:
+        out.r_overspeed = -5.0
 
-    elif effective_aspect in (1, 2):
-        # Yellow / Double-Yellow: train does NOT need to brake right now — it just
-        # cannot be accelerating at/above the limit, and must not use emergency braking.
-        # Coasting at or below the speed limit is perfectly valid.
-        if a <= -1.0:
-            out.r_speed = -10.0  # Penalty for emergency braking on cautionary signals
-        elif a > 0.01 and u >= state.speed_limit - 0.1:
-            out.r_speed = -5.0   # Accelerating at or above speed limit toward obstacle
-        elif -0.55 <= a <= -0.45:
-            out.r_speed = 7.0    # Correct service braking — budget: +7 × ~200 steps = +1,400
-        elif -1.0 < a < -0.55:
-            out.r_speed = -2.0   # Harder than service braking but not emergency
-        else:
-            out.r_speed = 0.0    # Coasting or gentle accel below limit — acceptable
+    # Overspeed penalty (above segment speed limit)
+    elif u > state.speed_limit + 0.5:
+        overspeed_amount = u - state.speed_limit
+        out.r_overspeed = max(-5.0, -overspeed_amount * 2.0)
 
-    elif effective_aspect == 0:
-        # Red: must stop. Reward braking, penalise anything else.
-        if u < 0.1:
-            out.r_speed = 2.0 # Bonus for being perfectly stopped
-        elif a <= -1.0:
-            out.r_speed = -20.0 # Heavy penalty for slamming brakes at red (use service braking!)
-        elif -0.6 <= a <= -0.4:
-            out.r_speed = 5.0 # Bonus for smooth service braking
-        else:
-            out.r_speed = -5.0   # Moving at Red without adequate braking
+    # Smooth approach bonus: reward smooth service braking when approaching
+    # station or red signal. Deceleration in [-0.6, -0.3] range = service braking.
+    # Agent discovers optimal ~0.5 m/s/s naturally.
+    elif station_aspect == 0 and -0.6 <= a <= -0.3 and u > 0.5:
+        out.r_overspeed = 1.0  # mild bonus for smooth approach
 
-    # 4. Jerk Penalty (penalty-only — smooth control is the expected baseline, not a bonus)
-    # A constant +2.0 bonus every cruise step was inflating cumulative reward by ~30,000+
-    jerk = abs(state.applied_acceleration - info.get("previous_a", 0.0)) / dt
-    if jerk > 1.0:
-        out.r_jerk = -1.0
-    # else: 0.0 — smooth control is expected, not rewarded
+    # Red signal: must be braking or stopped
+    elif station_aspect == 0 and u > 0.1 and a > -0.1:
+        out.r_overspeed = -3.0  # moving at red without braking
 
-    # 5. Signal Compliance
-    # Train Signal
-    if train_aspect == 0 and state.proposed_acceleration > 0.01:
-        out.r_signal_compliance += -10.0
-    if train_aspect == 3:
-        # Sweet spot bonus: reward maintaining the ideal following gap (3–4 SH).
-        # Only award when the agent is moving (not coasting at a stop).
-        # Budget: +0.5/step × ~3,000 sweet-spot steps = +1,500 over a perfect episode.
-        # Previous value of +25.0 fired every Green step and contributed ~+75,000 per episode
-        # — more than reaching the terminus — causing the agent to prefer loitering over driving.
-        if 3*sh <= x_diff <= 4*sh and u > 0.5:
-            out.r_signal_compliance += 0.5   # Sweet spot bonus
-        elif x_diff > 4*sh and u > 0.5:
-            out.r_signal_compliance -= 1.0   # Penalty for lagging too far behind
+    elif train_aspect == 0 and u > 0.1 and a > -0.1:
+        out.r_overspeed = -3.0  # moving at red lead signal without braking
 
-    # Station Signal
-    if station_aspect == 0:
-        if state.current_position >= x_station_zone_start and u > 0.1:
-            out.r_signal_compliance += -10.0
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 3. HEADWAY SWEET-SPOT — bonus for staying in bracket
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Reward staying 3-4 SH behind lead train (max throughput + safety)
+    # Only when moving (no bonus for sitting in the sweet spot stopped)
+    # Budget: +0.5/step × ~3000 steps in bracket = +1,500
+    if u > 0.5 and sh > 0:
+        if 3 * sh <= x_diff <= 4 * sh:
+            out.r_headway = 0.5   # in sweet spot — bonus
+        # No penalty for being outside — just no bonus
 
-    # 7. Station Milestone Reward
-    # Budget: +4,000 total across 6 stations, weighted exponentially toward terminus.
-    # Previous values summed to +82,400 (~8× the entire episode budget), turning
-    # station rewards into lottery tickets that drowned out all other signals.
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 4. STATION MILESTONES — sparse, progressive
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Slight exponential weighting — later stations worth more
+    # Total budget: ~3,500 across 6 stations
     STATION_REWARDS = {
-        1: +100.0,   # Rabka-Zdrój   —  1% of episode budget
-        2: +200.0,   # Mszana Dolna  —  2%
-        3: +400.0,   # Tymbark       —  4%
-        4: +700.0,   # Limanowa      —  7%
-        5: +600.0,   # Marcinkowice  —  6%
-        6: +2000.0,  # Nowy Sącz     — 20% (terminus — maximum reward)
+        1: 200.0,    # Rabka-Zdrój
+        2: 300.0,    # Mszana Dolna
+        3: 400.0,    # Tymbark
+        4: 500.0,    # Limanowa
+        5: 600.0,    # Marcinkowice
+        6: 1500.0,   # Nowy Sącz (terminus)
     }
     if state.reached_new_station:
         out.r_station = STATION_REWARDS.get(state.station_index, 0.0)
 
-    # 8. Punctuality Reward
-    # Budget: +333/station × 6 stations = +2,000 over a perfect episode (20% of budget).
-    # Penalty tightened to -150 (was -100) to make lateness more costly than it is worth.
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 5. PUNCTUALITY — sparse, on arrival
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Budget: +200/station × 6 = +1,200 total for on-time arrivals
     if state.reached_new_station:
         if state.scheduled_arrival_time is not None and state.actual_arrival_time is not None:
             deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
             if deviation <= 60.0:
-                out.r_time = 333.0
+                out.r_punctuality = 200.0
             else:
-                out.r_time = -150.0
-    
-    # 9. Patience Reward
-    # Budget: +1.5/step × ~180 dwell steps = +270 over a perfect episode (~3% of budget).
-    if state.is_dwelling and u < 0.1:
-        out.r_patience = 1.5
-    elif station_cleared and train_aspect == 3 and u < 0.1:
-        # Only penalise if station was already cleared last step too (avoid race condition
-        # on the exact frame clearance flips — agent has no chance to react that step)
-        if info.get("station_cleared_prev", False) and x_diff > 3*sh:
-            out.r_patience = -10.0
+                out.r_punctuality = -100.0
 
-    # Sum all
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 6. JERK — penalty only, smooth control is baseline expectation
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Budget: ~-250 total (if agent has ~500 jerk events)
+    jerk = abs(state.applied_acceleration - info.get("previous_a", 0.0)) / dt
+    if jerk > 1.0:
+        out.r_jerk = -0.5
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SUM
+    # ═══════════════════════════════════════════════════════════════════════════
     out.r_total = (
-        w_step              * out.r_step +
-        w_progress          * out.r_progress +
-        w_speed             * out.r_speed +
-        w_signal_compliance * out.r_signal_compliance +
-        w_station           * out.r_station +
-        w_time              * out.r_time +
-        w_jerk              * out.r_jerk +
-        w_patience          * out.r_patience
+        w_progress    * out.r_progress +
+        w_overspeed   * out.r_overspeed +
+        w_headway     * out.r_headway +
+        w_station     * out.r_station +
+        w_punctuality * out.r_punctuality +
+        w_jerk        * out.r_jerk
     )
 
     # ── Speed Mode ────────────────────────────────────────────────────────────
-    # When detailed_logs=False (default during training), skip populating
-    # info["reward_breakdown"] to avoid ~256 × 10,000 dict allocations per
-    # second across parallel envs. Pass detailed_logs=True in eval callbacks
-    # or when you need TensorBoard breakdowns.
     if detailed_logs:
         info["reward_breakdown"] = out.to_dict()
 
     return out
+"""
+BUDGET SUMMARY (perfect episode ~10,000 steps):
+  r_progress:    +1.0/step × 9500 steps  = +9,500   (dominant signal)
+  r_overspeed:   -5.0/event × ~50 events = -250     (penalty only)
+  r_headway:     +0.5/step × ~3000 steps = +1,500   (bonus for bracket)
+  r_station:     progressive totaling     = +3,500   (sparse milestones)
+  r_punctuality: +200 × 6 stations        = +1,200   (sparse on-time)
+  r_jerk:        -0.5/event × ~500 events = -250     (penalty only)
+  PBRS shaping:  net ~0 over episode      = ~0       (dense gradient)
+  ──────────────────────────────────────────────────
+  TOTAL PERFECT EPISODE                   ≈ +15,200
+  TOTAL STATIONARY EPISODE (never moves)  ≈ 0        (no exploit)
+"""

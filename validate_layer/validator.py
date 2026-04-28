@@ -21,9 +21,11 @@ EMERGENCY_DECEL: float = -1.0
 
 
 class ValidationLayer:
-    def __init__(self):
+    def __init__(self, vl_active: bool = True): # toggle to activate VL in simulation. True is on, False if off.
+        self.vl_active = vl_active
         self.segments: List[VLSegment] = build_vl_segments()
-        init_log()
+        if self.vl_active:
+            init_log()
         self.dt: float = 1.0
 
     def get_segment(self, x: float) -> VLSegment:
@@ -59,34 +61,7 @@ class ValidationLayer:
         x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
         return max(0.0, x_ai_zone_end - x)
 
-    def compute_signal_aspect(
-        self,
-        x: float,
-        seg: VLSegment,
-        x_obs_zone_start: float
-    ) -> int:
-        """
-        Compute train signal aspect from zone geometry.
-        x_obs_zone_start: start of the zone containing the obstacle (lead train or station).
-        Returns: 0=Red, 1=Yellow, 2=Double Yellow, 3=Green.
-        """
-        # x_diff thresholds use the AI train's segment SH. If the obstacle is in a
-        # different segment with a different SH, the zone count is approximate but
-        # intentionally consistent — the AI always reasons in terms of its own segment.
-        x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
-        sh = seg.spatial_headway
-        x_diff = x_obs_zone_start - x_ai_zone_end
 
-        if x_diff <= 0:
-            return -1  # Violation — zone overlap (collision)
-        elif 0 < x_diff <= sh:
-            return 0   # Red
-        elif sh < x_diff <= 2 * sh:
-            return 1   # Yellow
-        elif 2 * sh < x_diff <= 3 * sh:
-            return 2   # Double Yellow
-        else:
-            return 3   # Green
 
     def check_and_log(
         self,
@@ -111,8 +86,6 @@ class ValidationLayer:
           accel_not_zero_violation: bool
           any_violation: bool
         """
-        sh = seg.spatial_headway
-        x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
         violations = {
             "spatial_violation": False,
             "speed_limit_violation": False,
@@ -122,6 +95,13 @@ class ValidationLayer:
             "accel_not_zero_violation": False,
             "any_violation": False,
         }
+
+        # When VL is inactive, skip all checks — return clean violations dict
+        if not self.vl_active:
+            return violations
+
+        sh = seg.spatial_headway
+        x_ai_zone_end, _ = self.compute_zone_boundaries(x, seg)
 
         # 1. Negative speed check
         projected_v = u + proposed_a * self.dt

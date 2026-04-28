@@ -67,15 +67,13 @@ class RewardLoggerCallback(BaseCallback):
     """
 
     REWARD_KEYS = [
-        "r_step",
         "r_progress",
-        "r_speed",
-        "r_signal_compliance",
+        "r_overspeed",
+        "r_headway",
         "r_station",
-        "r_time",
+        "r_punctuality",
         "r_jerk",
-        "r_patience",
-        "r_shaping",   # PBRS shaping term — will be 0.0 until Task 6 is complete
+        "r_shaping",
         "r_total",
     ]
 

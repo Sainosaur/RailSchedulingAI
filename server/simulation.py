@@ -23,6 +23,7 @@ class SimulationRunner:
         self.broadcast_callback = broadcast_callback
         self.model = None
         self.venv = None
+        self.vl_active = True  # VL toggle — can be set before load_model()
 
         self.is_running = False
         self.steps_per_second = 10.0  # 10x simulation speed by default
@@ -39,6 +40,7 @@ class SimulationRunner:
             return ModernizedLine104(
                 lead_train_speed=lead_train_speed,
                 lead_stop_offset=DEFAULT_CONFIG.lead_stop_offset,
+                vl_active=self.vl_active,
             )
 
         # 2. Vectorise
@@ -144,6 +146,16 @@ class SimulationRunner:
     def set_speed(self, steps_per_second: float):
         """Updates playback speed."""
         self.steps_per_second = max(0.1, steps_per_second)
+
+    def set_vl_active(self, active: bool):
+        """Toggle VL checks on the live environment. Takes effect immediately."""
+        self.vl_active = active
+        if self.venv is not None:
+            raw_env = self.venv.envs[0]
+            while hasattr(raw_env, "env"):
+                raw_env = raw_env.env
+            raw_env.vl.vl_active = active
+            raw_env.vl_active = active
 
     async def _broadcast_step(self, force_done=False):
         """Extracts the state dict and pushes it to the websocket callback."""

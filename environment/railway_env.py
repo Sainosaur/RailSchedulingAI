@@ -46,6 +46,7 @@ class ModernizedLine104(gym.Env):
         slack_factor: float = 1.1,
         render_mode: str | None = None,
         training_mode: bool = False,
+        vl_active: bool = True,
     ):
         super().__init__()
         self.render_mode = render_mode
@@ -53,10 +54,11 @@ class ModernizedLine104(gym.Env):
         self.lead_stop_offset = lead_stop_offset
         self.training_mode = training_mode
         self.slack_factor = slack_factor
+        self.vl_active = vl_active
         self.active_hazards: set[tuple[float, float]] = set()
         self.reward_weights = DEFAULT_CONFIG.reward_weights
 
-        self.vl = ValidationLayer()
+        self.vl = ValidationLayer(vl_active=self.vl_active)
         self.lead_train = LeadTrain(
             stations=self.STATIONS,
             stop_offset=self.lead_stop_offset,
@@ -130,7 +132,7 @@ class ModernizedLine104(gym.Env):
         lead_seg = self.vl.get_segment(self.lead_train.x)
         lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
         x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
-        train_aspect = self.vl.compute_signal_aspect(self.x, seg, x_lead_zone_start)
+        train_aspect = self._compute_signal_aspect(self.x, seg, x_lead_zone_start)
         
         # Origin is cleared at Chabówka (index 0)
         station_aspect = 3 
@@ -202,7 +204,7 @@ class ModernizedLine104(gym.Env):
         lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
         x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
         
-        train_aspect = self.vl.compute_signal_aspect(self.x, seg, x_lead_zone_start)
+        train_aspect = self._compute_signal_aspect(self.x, seg, x_lead_zone_start)
         
         # Station aspect
         x_station_zone_start = seg.end - sh
@@ -357,16 +359,42 @@ class ModernizedLine104(gym.Env):
     def _compute_headway(self) -> float:
         return (self.lead_train.x - self.x) / self.v if self.v > 0.01 else 9999.0
 
+    def _compute_signal_aspect(self, x: float, seg, x_obs_zone_start: float) -> int:
+        """Compute signal aspect from zone geometry.
+        
+        x_obs_zone_start: start of zone containing obstacle (lead train or station).
+        Returns: -1=Violation, 0=Red, 1=Yellow, 2=Double Yellow, 3=Green.
+        
+        Bounds:
+          Violation:     x_diff <= 0       (open-ended negative)
+          Red:           0 < x_diff <= 1*SH (double-bounded)
+          Yellow:        1*SH < x_diff <= 2*SH (double-bounded)
+          Double Yellow: 2*SH < x_diff <= 3*SH (double-bounded)
+          Green:         x_diff > 3*SH     (open-ended positive)
+        """
+        x_ai_zone_end, _ = self.vl.compute_zone_boundaries(x, seg)
+        sh = seg.spatial_headway
+        x_diff = x_obs_zone_start - x_ai_zone_end
+
+        if x_diff <= 0:                              # Violation — zone overlap
+            return -1
+        elif 0 < x_diff <= 1 * sh:                   # Red
+            return 0
+        elif 1 * sh < x_diff <= 2 * sh:              # Yellow
+            return 1
+        elif 2 * sh < x_diff <= 3 * sh:              # Double Yellow
+            return 2
+        else:                                        # Green (x_diff > 3*SH)
+            return 3
+
     def _get_signal_aspect(self) -> int:
         """Dashboard helper: The current most restrictive signal aspect."""
         seg = self.vl.get_segment(self.x)
-        # 1. Aspect based on lead train position
         lead_seg = self.vl.get_segment(self.lead_train.x)
         lead_zone_idx = int((self.lead_train.x - lead_seg.start) / lead_seg.spatial_headway)
         x_lead_zone_start = lead_seg.start + lead_zone_idx * lead_seg.spatial_headway
-        train_aspect = self.vl.compute_signal_aspect(self.x, seg, x_lead_zone_start)
+        train_aspect = self._compute_signal_aspect(self.x, seg, x_lead_zone_start)
 
-        # 2. Aspect based on station clearance
         station_aspect = 3 if self.station_cleared else 0
         return int(min(train_aspect, station_aspect))
 

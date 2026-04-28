@@ -364,6 +364,19 @@ async def sim_status():
     return {"status": simulation_runner.is_running}
 
 
+@app.post("/api/sim/vl/toggle")
+async def toggle_vl(active: bool = True):
+    """Toggle Validation Layer checks on/off during simulation."""
+    simulation_runner.set_vl_active(active)
+    return {"vl_active": active}
+
+
+@app.get("/api/sim/vl/status")
+async def vl_status():
+    """Return current VL active state."""
+    return {"vl_active": simulation_runner.vl_active}
+
+
 if __name__ == "__main__":
     import uvicorn
 

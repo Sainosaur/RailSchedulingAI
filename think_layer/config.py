@@ -55,14 +55,12 @@ class TrainConfig:
 
     # ── Reward Weights ───────────────────────────────────────────────
     reward_weights: dict = field(default_factory=lambda: {
-        "step":              1.0,
-        "progress":          1.0,
-        "speed":             1.0,
-        "signal_compliance": 1.0,
-        "station":           1.0,
-        "time":              1.0,
-        "jerk":              1.0,
-        "patience":          1.0,
+        "progress":     1.0,
+        "overspeed":    1.0,
+        "headway":      1.0,
+        "station":      1.0,
+        "punctuality":  1.0,
+        "jerk":         1.0,
     })
 
     # ── Reproducibility ──────────────────────────────────────────────
