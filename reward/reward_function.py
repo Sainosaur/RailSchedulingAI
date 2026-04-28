@@ -17,36 +17,6 @@ import math
 
 @dataclass
 class RewardConfig:
-<<<<<<< Updated upstream
-    """Hyperparameters for the reward function."""
-    k_p: float = 5.0 # incremental progress reward scale
-    station_reward: float = 5.0
-    punctuality_factor: float = 0.5       # penalty per second *outside* tolerance
-    punctuality_tolerance: float = 60.0   # seconds, "on time" window
-    
-    k_h: float = 3.0  # HEADWAY_WARNING_SCALE
-    headway_warning_multiplier: float = 3.0  # e.g., 3x TH starts warning zone
-    headway_violation_multiplier: float = 1.0  # e.g., 1x TH is hard safety limit
-    
-    k_over: float = 0.5  # overspeed penalty weight  (quadratic)
-    k_under: float = 0.0  # underspeed penalty weight (linear, default 0)
-    
-    # Kinematic Comfort Limits
-    comfortable_acceleration: float = 0.5  # m/s²
-    comfortable_deceleration: float = 0.5  # m/s²
-    
-    # New addition: Behavioral and Operational penalties
-    heartbeat_penalty: float = -0.1          # penalty applied every step to prevent stalling
-    # BUG 10 FIX: -500 wiped out ~100 station arrivals per override, making the
-    # reward signal indistinguishable from noise.  Overrides are *correct*
-    # safety behaviour; this should be a mild discouragement, not a catastrophe.
-    override_penalty: float = -5.0           # penalty when the Validation Layer intervenes
-    jerk_penalty: float = -20.0               # penalty for flip-flopping actions abruptly
-    energy_penalty_weight: float = -5.0      # penalty for positive traction use
-    
-    headway_violation_penalty: float = -150.0
-    collision_penalty: float = -200.0
-=======
     # 1. Progress & Station Rewards (The "Carrots")
     k_p: float = 2000.0                      # incremental progress reward scale
     station_reward_base: float = 500.0        # base milestone for station arrival
@@ -93,7 +63,6 @@ class RewardConfig:
 
     # 8. Training mode — softens terminal penalties for longer exploration
     training_mode: bool = False
->>>>>>> Stashed changes
 
 DEFAULT_CONFIG = RewardConfig()
 
@@ -106,6 +75,7 @@ class TrainState:
     previous_position: float  # psition at previous timestamp t-1
     last_station_position: float  # position of the last station passed
     next_station_position: float  # position of the next station ahead
+    distance_to_occupied: float   # distance to the obstruction ahead (m)
 
     # speed
     current_speed: float  # m/s
@@ -155,13 +125,6 @@ def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
     """Monotonically increasing penalty as headway shrinks toward the violation
     threshold.  Scaled from 0 at the warning threshold to -k_h at the violation
     threshold.
-
-    BUG 8 FIX: the previous formula used a downward-opening parabola
-    (-k_h * h * (warning_thresh - h) / 1000) which was *maximally* punishing
-    at the midpoint of the warning zone and got weaker as the train approached
-    the danger zone — exactly backwards.  Replaced with a linear ramp:
-        t = 0  at warning_thresh (no penalty)
-        t = 1  at violation_thresh (full penalty = -k_h)
     """
     warning_thresh = state.temporal_headway * config.headway_warning_multiplier
     violation_thresh = state.temporal_headway * config.headway_violation_multiplier
@@ -177,59 +140,26 @@ def _compute_headway_penalty(state: TrainState, config: RewardConfig) -> float:
 
 
 def _compute_speed_reward(state: TrainState, config: RewardConfig) -> float:
-<<<<<<< Updated upstream
-    
-=======
     """Speed shaping: penalise overspeed, reward approaching the target.
-
-    Previous version used a flat underspeed penalty (k_under * gap) which
-    created a -25/step trap at v=0 with a 25 m/s limit.  The agent could
-    never earn positive reward during the acceleration phase and learned
-    to stop exploring ("learned helplessness").
-
-    New approach:
-      - Overspeed:  linear penalty (unchanged)
-      - Underspeed: ratio-based bonus  +k_speed_bonus * (v / v_target)
-        = 0 at v=0, = k_speed_bonus at v=v_target.
-        This gives the agent a smooth, positive gradient to accelerate.
     """
->>>>>>> Stashed changes
     v: float = state.current_speed
     v_max: float = state.speed_limit
-    d_from: float = max(0.0, state.current_position - state.last_station_position)
-    d_to: float = max(0.0, state.next_station_position - state.current_position)
-<<<<<<< Updated upstream
-
-    # Kinematic dynamic bounds (v^2 = u^2 + 2as => v = sqrt(2as))
-    v_accel = math.sqrt(2 * config.comfortable_acceleration * d_from)
-    v_brake = math.sqrt(2 * config.comfortable_deceleration * d_to)
-=======
-    d_brake: float = min(d_to, state.distance_to_occupied)
+    
+    d_brake: float = min(state.next_station_position - state.current_position, state.distance_to_occupied)
     
     # v_target is the min of the speed limit and the square-root braking curve
-    v_brake = math.sqrt(2 * config.comfortable_deceleration * d_brake)
+    v_brake = math.sqrt(2 * config.comfortable_deceleration * max(0.0, d_brake))
     v_target: float = min(v_max, v_brake)
     
     overspeed = max(0.0, v - v_target)
 
     # Unified Physics Tracking Reward:
-    # Instead of hacky rules for signal colors, we simply reward the agent for 
-    # perfectly tracking the physical `v_target`. 
-    # If v_target is 25 and v is 0, error is 25, bonus is 0. 
-    # If v_target is 0 (station/red signal) and v is 0, error is 0, bonus is 5.0.
     speed_error = abs(v - v_target)
-    tracking_ratio = max(0.0, 1.0 - (speed_error / v_max))
+    tracking_ratio = max(0.0, 1.0 - (speed_error / v_max)) if v_max > 0 else 1.0
     speed_bonus = config.k_speed_bonus * tracking_ratio
 
-    raw = -(config.k_over * overspeed) + speed_bonus
->>>>>>> Stashed changes
-    
-    v_target: float = min(v_max, v_accel, v_brake)
-    
-    overspeed: float = max(0.0, v - v_target)
-    underspeed: float = max(0.0, v_target - v)
+    return -(config.k_over * overspeed) + speed_bonus
 
-    return -(config.k_over * overspeed**2) - (config.k_under * underspeed)
 
 def _compute_energy_penalty(state: TrainState, config: RewardConfig) -> float:
     # Penalize purely positive acceleration applications (traction). Coasting and braking are free.
@@ -242,31 +172,20 @@ def _compute_override_penalty(state: TrainState, config: RewardConfig) -> float:
     return config.override_penalty if state.overridden else 0.0
 
 def _compute_jerk_penalty(state: TrainState, config: RewardConfig) -> float:
-    # Penalize the magnitude of the action shift squared (e.g., jump of 1 = -20, jump of 3 = -180)
+    # Penalize the magnitude of the action shift squared
     return config.jerk_penalty * (state.action_delta ** 2)
 
-<<<<<<< Updated upstream
-=======
 def _compute_signal_compliance_reward(state: TrainState, config: RewardConfig) -> float:
     # Deprecated: The unified speed tracking reward perfectly handles all 
-    # signal and physics states natively. The hardcoded compliance rules 
-    # were causing "Learned Helplessness" stalling and jerking.
-    # Kept to preserve the function signature in case it's called elsewhere.
+    # signal and physics states natively. 
     return 0.0
 
-
->>>>>>> Stashed changes
 def _compute_station_reward(state: TrainState, config: RewardConfig) -> float:
-    
-    return config.station_reward if state.reached_new_station else 0.0 
+    # Use station_reward_base for arrivals
+    return config.station_reward_base if state.reached_new_station else 0.0 
  
 def _compute_punctuality_penalty(state: TrainState, config: RewardConfig) -> float:
     """Penalty for arriving at a station outside the on-time tolerance window.
-
-    BUG 13 FIX: previously always returned 0 because scheduled/actual arrival
-    times were never set by the environment.  The environment now passes
-    actual_arrival_time=self.time and scheduled_arrival_time computed from
-    the expected journey time at lead_train_speed. 
     """
     if not state.reached_new_station:
         return 0.0
@@ -281,10 +200,6 @@ def _compute_headway_violation(state: TrainState, config: RewardConfig) -> tuple
 
     violation_thresh = state.temporal_headway * config.headway_violation_multiplier
     if state.headway <= violation_thresh:
-        # During training, apply the penalty but DON'T terminate the episode.
-        # Early termination kills exploration — the agent gets killed before
-        # it can learn to avoid the situation.  The penalty alone is enough
-        # of a teaching signal.
         terminate = not config.training_mode
         return config.headway_violation_penalty, terminate
     
@@ -326,11 +241,6 @@ class RewardOutput:
 def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> RewardOutput:
     """
     Compute the full reward for one timestep.
- 
-    r_t = r_continuous + r_event + r_terminal
- 
-    Also returns a `terminate` flag that the environment loop should
-    check to end the episode immediately.
     """
     # --- Continuous ---
     r_progress  = _compute_progress_reward(state, config)
@@ -374,11 +284,6 @@ def compute_reward(state: TrainState, config: RewardConfig = DEFAULT_CONFIG) -> 
         r_total=r_total,
         terminate=terminate)
 
-
-
-# Example usage
-
- 
 if __name__ == "__main__":
     # Typical mid-journey timestep
     state = TrainState(
@@ -386,6 +291,7 @@ if __name__ == "__main__":
         previous_position=1450.0,
         last_station_position=1000.0,
         next_station_position=2000.0,
+        distance_to_occupied=500.0,
         current_speed=30.0,
         speed_limit=30.0,
         headway=15.0, # e.g. 15s headway

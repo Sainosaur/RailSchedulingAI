@@ -121,6 +121,7 @@ class ModernizedLine104(gym.Env):
         self.lead_stalled: bool = False   # external stall command (frontend)
         self.lead_held: bool = False      # external hold at station (frontend)
         self.random_stall_timer: int = 0  # mid-track random stalls during training
+        self.ai_dwell_timer: int = 0      # AI dwell timer at station
 
         # Pre-compute ideal arrival times for punctuality tracking
         self._ideal_schedule = self._compute_ideal_schedule()
@@ -148,6 +149,8 @@ class ModernizedLine104(gym.Env):
         self.lead_station_idx = 1 # which station the lead is targeting next ﹀
         self.last_station_idx = 0
         self.visited_stations = {0}  # starting station already "visited"
+        self.ai_arrival_times = {}
+        self.ai_dwell_timer = 0
         self.last_a = 0.0
         self.step_count = 0
 
@@ -188,16 +191,15 @@ class ModernizedLine104(gym.Env):
 
         # Current signal aspect (derived from distance to lead train)
         env_aspect = self._get_signal_aspect()
+        
+        # Nearest obstruction (with 50m safety buffer) for the validator
+        nearest_obs = self._nearest_obstruction(self.x)
+        dist_to_occupied = max(0.0, nearest_obs - self.x)
 
         # ----- 1. Validation Layer (Layers 1–4) -----
         # VL handles the safety check against the aspect and dtz.
-<<<<<<< Updated upstream
-        safe_a, overridden = self.vl.get_safe_action(
-            proposed_a, env_aspect, self.x, self.v, self.dtz,
-=======
         safe_a, safety_overridden = self.vl.get_safe_action(
-            proposed_a, env_aspect, self.x, self.v, self.dtz, self._cached_dist_to_occupied
->>>>>>> Stashed changes
+            proposed_a, env_aspect, self.x, self.v, self.dtz, dist_to_occupied
         )
 
         # Jerk tracking: delta of the *physically executed* acceleration
@@ -277,9 +279,6 @@ class ModernizedLine104(gym.Env):
                 reached_new_station = True
                 self.last_station_idx = next_st_idx
                 self.visited_stations.add(next_st_idx)
-<<<<<<< Updated upstream
-=======
-
                 # --- AI station dwell ---
                 # Trigger dwell if the train is essentially stopped (snapping to coordinate)
                 if self.v <= 1.0:
@@ -290,7 +289,6 @@ class ModernizedLine104(gym.Env):
                         self.ai_dwell_timer = int(self.np_random.integers(
                             self.LEAD_DWELL_RANGE[0], self.LEAD_DWELL_RANGE[1]
                         ))
->>>>>>> Stashed changes
                 
                 # BUG 13 FIX: Supply arrival times to TrainState so the
                 # punctuality penalty is actually calculated.
@@ -318,6 +316,7 @@ class ModernizedLine104(gym.Env):
             previous_position=prev_x,
             last_station_position=last_st_pos,
             next_station_position=next_st_pos,
+            distance_to_occupied=dist_to_occupied,
             current_speed=self.v,
             speed_limit=seg.limit_ms,
             headway=headway,
@@ -326,7 +325,7 @@ class ModernizedLine104(gym.Env):
             actual_arrival_time=actual_arrival_time,
             collision=(self.x >= self.lead_x),
             temporal_headway=seg.temporal_headway,
-            overridden=overridden,
+            overridden=safety_overridden,
             action_delta=action_delta,
             applied_traction=applied_traction,
         )
@@ -344,7 +343,7 @@ class ModernizedLine104(gym.Env):
         truncated = bool(self.step_count >= self.MAX_STEPS)
 
         info = {
-            "overridden": overridden,
+            "overridden": safety_overridden,
             "safe_a": safe_a,
             "proposed_a": proposed_a,
             "aspect": env_aspect,

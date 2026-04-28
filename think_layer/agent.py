@@ -12,7 +12,7 @@ from typing import Callable
 import gymnasium as gym
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 
 # Ensure project-root imports work
@@ -54,27 +54,20 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
     (model, vec_env) — the PPO model and the VecNormalize wrapper
                        (needed to save/load normalisation stats).
     """
-    # 1. Vectorised environment (single env for now)
-    venv = DummyVecEnv([
+    # 1. Vectorised environment
+    env_fns = [
         make_env(
-            seed=config.seed,
+            seed=config.seed + i,
             lead_train_speed=config.lead_train_speed,
             max_episode_steps=config.max_episode_steps,
         )
-<<<<<<< Updated upstream
-    ])
-=======
         for i in range(config.n_envs)
     ]
+    
     if config.n_envs > 1:
-        # SubprocVecEnv: true parallelism across CPU cores.
-        # This env has non-trivial step cost (physics + validation + reward),
-        # so parallel stepping outweighs the IPC serialisation overhead.
-        # Use 'fork' for exceptionally fast worker initialization in Linux Optuna loops.
         venv = SubprocVecEnv(env_fns)
     else:
         venv = DummyVecEnv(env_fns)
->>>>>>> Stashed changes
 
     # 2. Observation & reward normalisation
     venv = VecNormalize(
@@ -99,10 +92,7 @@ def build_agent(config: TrainConfig) -> tuple[PPO, VecNormalize]:
         ent_coef=config.ent_coef,
         vf_coef=config.vf_coef,
         max_grad_norm=config.max_grad_norm,
-<<<<<<< Updated upstream
-=======
         use_sde=False,         # Use robust Gaussian noise, SDE collapsed to 0 variance
->>>>>>> Stashed changes
         tensorboard_log=config.log_dir,
         seed=config.seed,
         verbose=1,
