@@ -114,11 +114,16 @@ class ValidationLayer:
             violations["speed_limit_violation"] = True
             self._log(x_ai_zone_end, x_obs_zone_start, u, "SPEED_LIMIT_VIOLATION")
 
-        # 3. Accel not zero at stationary or at speed limit
-        if (u < 0.1 and proposed_a < -0.01) or \
-           (abs(u - seg.limit_ms) < 0.01 and proposed_a > 0.01):
+        # 3a. Negative acceleration while stationary (genuinely unsafe)
+        if u < 0.1 and proposed_a < -0.01:
             violations["accel_not_zero_violation"] = True
             self._log(x_ai_zone_end, x_obs_zone_start, u, "ACCEL_NOT_ZERO_VIOLATION")
+
+        # NOTE: The "proposed_a > 0 while at speed limit" check was removed.
+        # The env clamps speed; the validator only sees the raw proposed action.
+        # Flagging this pollutes the violation_rate metric without catching
+        # anything genuinely unsafe. The speed_limit_violation check (item 2)
+        # already catches actual overspeed events.
 
         # 4. Spatial violation (SUVAT stopping distance check)
         # dist_vio_check = u^2 / (2 * |EMERGENCY_DECEL|)

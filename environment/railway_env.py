@@ -69,12 +69,10 @@ class ModernizedLine104(gym.Env):
         self.action_space = gym.spaces.Box(
             low=-1.0, high=0.5, shape=(1,), dtype=np.float32
         )
-        # New observation space: 11 dimensions (added speed limit and dist to next station)
+        self.detailed_logs: bool = False
         self.observation_space = gym.spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
-            high=np.array(
-                [80000.0, 30.0, 1000.0, 3.0, 3.0, 80000.0, 2000.0, 10000.0, 6.0, 30.0, 80000.0], dtype=np.float32
-            ),
+            low=np.zeros(9, dtype=np.float32),
+            high=np.ones(9, dtype=np.float32),
             dtype=np.float32,
         )
 
@@ -267,7 +265,7 @@ class ModernizedLine104(gym.Env):
             "station_cleared_prev": station_cleared_prev,
         }
         
-        reward_output = compute_reward(post_step_state, reward_info, weights=self.reward_weights)
+        reward_output = compute_reward(post_step_state, reward_info, weights=self.reward_weights, detailed_logs=self.detailed_logs)
         
         # PBRS shaping: γφ(s') - φ(s)
         pbrs_shaping = PBRS_GAMMA * potential(post_step_state) - potential(pre_step_state)
@@ -298,32 +296,65 @@ class ModernizedLine104(gym.Env):
             "violations": violations,
             "reward_breakdown": reward_output.to_dict(),
             "punctuality_status": self.get_punctuality_status(),
+            "lead_train_v": self.lead_train.v,
         }
         return self._get_obs(train_aspect, station_aspect, x_lead_zone_start, optimal_braking_distance), reward_output.r_total, terminated, truncated, info
 
     def _get_obs(self, train_aspect: int, station_aspect: int, x_lead_zone_start: float, optimal_braking_distance: float) -> np.ndarray:
         seg = self.vl.get_segment(self.x)
-        if self.next_station_num < len(self.STATIONS):
-            dist_to_station = max(0.0, self.STATIONS[self.next_station_num] - self.x)
-        else:
-            dist_to_station = 0.0
 
-        return np.array(
-            [
-                self.x,
-                self.v,
-                self.dtz,
-                float(train_aspect),
-                float(station_aspect),
-                x_lead_zone_start,
-                optimal_braking_distance,
-                self.time,
-                float(self.next_station_num),
-                float(seg.limit_ms),   # Now the agent knows the speed limit
-                dist_to_station,       # Now the agent knows when to brake for stations
-            ],
-            dtype=np.float32,
+        # 1. Progress through current inter-station segment [0, 1]
+        seg_span = max(seg.end - seg.start, 1.0)
+        progress = np.clip((self.x - seg.start) / seg_span, 0.0, 1.0)
+
+        # 2. Speed ratio [0, 1]
+        v_ratio = np.clip(self.v / max(seg.limit_ms, 1.0), 0.0, 1.5)
+
+        # 3. Distance to zone end, normalised by SH [0, ~5]
+        dtz_norm = np.clip(self.dtz / max(seg.spatial_headway, 1.0), 0.0, 5.0)
+
+        # 4. Signal aspects (already discrete 0-3, fine as-is)
+        # Using the passed aspects since they are already computed in step()
+        
+        # 5. Headway gap in SH units [0, ~20]
+        x_ai_zone_end, _ = self.vl.compute_zone_boundaries(self.x, seg)
+        gap_sh = np.clip(
+            (x_lead_zone_start - x_ai_zone_end) / max(seg.spatial_headway, 1.0),
+            0.0, 20.0
         )
+
+        # 6. Speed limit on next segment (look-ahead) [0, 1]
+        seg_idx = self.vl.segments.index(seg)
+        if seg_idx + 1 < len(self.vl.segments):
+            next_limit_ratio = self.vl.segments[seg_idx + 1].limit_ms / 25.0
+        else:
+            next_limit_ratio = seg.limit_ms / 25.0
+        next_limit_ratio = np.clip(next_limit_ratio, 0.0, 1.0)
+
+        # 7. Distance to next station, normalised [0, 1]
+        next_st_idx = min(self.last_station_idx + 1, len(self.STATIONS) - 1)
+        next_st_pos = self.STATIONS[next_st_idx]
+        dist_to_st = np.clip(
+            (next_st_pos - self.x) / max(self.TRACK_END - self.TRACK_START, 1.0),
+            0.0, 1.0
+        )
+
+        # 8. Episode time fraction [0, 1]
+        time_frac = np.clip(self.step_count / self.MAX_STEPS, 0.0, 1.0)
+
+        obs = np.array([
+            progress,           # 0: how far through current segment
+            v_ratio,            # 1: speed / limit
+            dtz_norm,           # 2: distance to zone end in SH units
+            float(train_aspect) / 3.0, # 3: lead train signal (normalised)
+            float(station_aspect) / 3.0, # 4: station signal (normalised)
+            gap_sh / 20.0,      # 5: headway gap in SH units (normalised)
+            next_limit_ratio,   # 6: next segment speed limit
+            dist_to_st,         # 7: distance to next station
+            time_frac,          # 8: episode time remaining
+        ], dtype=np.float32)
+
+        return obs
 
     def render(self):
         if self.render_mode == "human":

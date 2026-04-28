@@ -17,12 +17,12 @@ class TrainConfig:
     """PPO training hyperparameters and runtime paths."""
 
     # ── PPO Hyperparameters ──────────────────────────────────────────
-    total_timesteps: int = 5_000_000
+    total_timesteps: int = 20_000_000
 
     learning_rate: float = 3e-4
     gamma: float = 0.999 # must match phi in reward_function.py, PBRS code.
     gae_lambda: float = 0.95
-    ent_coef: float = 0.08
+    ent_coef: float = 0.05
 
     clip_range: float = 0.2
     vf_coef: float = 0.5
@@ -44,7 +44,7 @@ class TrainConfig:
     # 94.7m = original 34.7m + 60m extra clearance.
     lead_stop_offset: float = 94.7
     max_episode_steps: int = 10_000
-    n_envs: int = 6
+    n_envs: int = 16
     slack_factor: float = 1.1  # 10% operational buffer for RL stability
 
     # ── Normalisation ────────────────────────────────────────────────
@@ -68,7 +68,7 @@ class TrainConfig:
 
     # ── Checkpointing & Evaluation ───────────────────────────────────
     checkpoint_freq: int = 250_000
-    eval_freq: int = 50_000
+    eval_freq: int = 100_000
     eval_episodes: int = 5
 
     # ── Paths ────────────────────────────────────────────────────────

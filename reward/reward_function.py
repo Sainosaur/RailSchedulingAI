@@ -176,8 +176,12 @@ def compute_reward(
     # Reward staying 3-4 SH behind lead train (max throughput + safety)
     # Only when moving (no bonus for sitting in the sweet spot stopped)
     # Budget: +0.5/step × ~3000 steps in bracket = +1,500
-    if u > 0.5 and sh > 0:
-        if 3 * sh <= x_diff <= 4 * sh:
+    LEAD_MOVING_THRESHOLD = 0.5   # m/s — lead must also be moving
+    MAX_MEANINGFUL_GAP = 8 * sh   # beyond 8 SH the gap is too wide to be "sweet spot"
+    lead_v = info.get("lead_train_v", 0.0)
+
+    if u > 0.5 and sh > 0 and lead_v > LEAD_MOVING_THRESHOLD:
+        if 3 * sh <= x_diff <= 4 * sh and x_diff < MAX_MEANINGFUL_GAP:
             out.r_headway = 0.5   # in sweet spot — bonus
         # No penalty for being outside — just no bonus
 

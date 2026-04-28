@@ -71,6 +71,7 @@ def evaluate(
             lead_stop_offset=config.lead_stop_offset,
             training_mode=False,
         )
+        env.detailed_logs = True
         return env
 
     venv = DummyVecEnv([_make_eval_env])
@@ -167,15 +168,15 @@ def evaluate(
             row = {
                 "episode": ep,
                 "step": ep_steps,
-                "time": info.get("time", 0.0),
+                "time": raw.time,
                 "position": raw.x,
                 "speed": current_speed,
                 "acceleration": current_accel,
                 "jerk": jerk,
-                "segment": info.get("segment", ""),
+                "segment": raw.vl.get_segment(raw.x).id,
                 "train_aspect": info.get("train_aspect", -1),
                 "station_aspect": info.get("station_aspect", -1),
-                "proposed_a": info.get("proposed_a", 0.0),
+                "proposed_a": raw.last_a,
                 "any_violation": info.get("violations", {}).get("any_violation", False),
                 "reward": raw_reward,
             }
@@ -183,7 +184,7 @@ def evaluate(
             # Add reward breakdown if present
             breakdown = info.get("reward_breakdown", {})
             for key, val in breakdown.items():
-                row[f"r_{key}"] = val
+                row[key] = val
 
             ep_rows.append(row)
             done = dones[0]
