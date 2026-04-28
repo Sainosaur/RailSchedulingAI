@@ -1,0 +1,74 @@
+Edited hypara_summ.txt
+
+It seems there might have been a file synchronization conflict with your text editor! If you had `hypara_summ.txt` open while I updated it in the background, your editor might have accidentally overwritten my version when it auto-saved.
+
+No worries! Here is the exact summary I wrote for you. You can easily copy and paste this directly back into `hypara_summ.txt`:
+
+```text
+=== HYPERPARAMETER SUMMARY FOR RAIL SCHEDULING AI (PPO) ===
+
+total_timesteps
+What it is: Total physical simulation steps generated across all parallel environments before training completes.
+- High (e.g. 5,000,000): Provides ample time to learn complex behaviors and secure convergence, but training takes hours.
+- Low (e.g. 100,000): Lightning fast to run, but the AI barely learns anything beyond immediate survival (e.g., cowardice).
+
+learning_rate
+What it is: The mathematical step size for neural network gradient updates.
+- High (e.g. 3e-4): Fast, aggressive learning. Can easily overshoot optimums and cause catastrophic forgetting where the AI suddenly becomes worse.
+- Low (e.g. 1e-5): Very stable, safe updates. Slower to train, but often creates a smoother, more reliable driving curve.
+
+n_steps
+What it is: The number of simulation steps each parallel environment runs before the agent pauses to update its neural network.
+- High (e.g. 4096): The agent sees very long temporal sequences, making it easier to learn delayed physical consequences (like braking distances).
+- Low (e.g. 128): Updates frequently on short memory chunks. Faster iterations but terrible for anticipating long-term trajectory needs.
+
+batch_size
+What it is: The chunk of memories drawn from the rollout buffer to calculate a single gradient step.
+- High (e.g. 512): Highly accurate gradients. Mathematically stable updates but takes longer to compute per pass.
+- Low (e.g. 64): High variance, noisy gradients. Fast on CPU, but can cause erratic updates and policy jitter.
+
+n_epochs
+What it is: How many times the algorithm loops over the collected rollout buffer to squeeze out learning value.
+- High (e.g. 10): Extracts maximum knowledge from a dataset. But carries extremely high risk of "overfitting" to the recent experience and destabilizing.
+- Low (e.g. 3): Safe, incremental updates. Prevents large destructive policy swings due to bad rollout data.
+
+gamma (Discount Factor)
+What it is: How much the AI cares about long-term future consequences vs immediate short-term rewards.
+- High (e.g. 0.999): The AI cares deeply about events ~1000 steps into the future. Vital for heavy physical trains that require early braking.
+- Low (e.g. 0.90): Myopic instinct. The AI only cares about maximizing the next 10 seconds and will blindly speed into red signals to grab immediate speed rewards.
+
+gae_lambda
+What it is: The bias vs variance tradeoff parameter for Generalized Advantage Estimation (GAE).
+- High (e.g. 0.99): High variance, low bias. Trusts the actual raw reward signals more than the AI's internal Critic guesses.
+- Low (e.g. 0.80): Low variance, high bias. Places massive trust in the Critic's predictions to smooth out noisy rewards.
+
+clip_range
+What it is: A mathematical boundary that prevents the new policy from deviating too far from the old policy in a single update.
+- High (e.g. 0.4): Allows massive leaps in behavior. Can learn breakthroughs quickly, or completely destroy a functioning policy instantly.
+- Low (e.g. 0.1): Forces the policy to evolve in tiny, safe increments. Highly stable.
+
+ent_coef (Entropy Coefficient)
+What it is: The magnitude of the "curiosity" bonus. Forces the AI to inject random noise into its throttle decisions.
+- High (e.g. 0.05): Forces aggressive exploration. Great for escaping local minima (like cowardice), but causes highly erratic, violent driving.
+- Low (e.g. 0.0): Completely deterministic and exploitative. If it successfully finds a strategy, it perfectly executes it, but if it gets stuck, it never tries anything new to escape.
+
+vf_coef (Value Function Coefficient)
+What it is: How heavily the overall loss function weighs the Critic's prediction errors compared to the Actor's policy updates.
+- High (e.g. 1.0): Forces the neural network to aggressively learn *how to correctly evaluate* scenarios.
+- Low (e.g. 0.1): Focuses primarily on finding good immediate actions, caring less about accurate long-term evaluation.
+
+max_grad_norm
+What it is: A hard mathematical safety cap on the size of a gradient explosion during a bad backpropagation cycle.
+- High (e.g. 1.0+): Allows large, swift learning jumps.
+- Low (e.g. 0.5): Extremely safe safety net to prevent internal mathematical overflow.
+
+policy_net / value_net (Architecture)
+What it is: The explicit number and size of the hidden layers acting as the AI's "brain".
+- High / Deep (e.g. [256, 256]): Massive capacity to memorize complex rules. Much slower to calculate. Prone to brittle over-memorization on limited logic sets.
+- Low / Shallow (e.g. [64, 64]): Hyper-fast to compute. Natively forces the AI to learn generic physics generalizations rather than memorizing exact station coordinates.
+
+n_envs
+What it is: How many isolated train simulators to spawn in parallel on your CPU.
+- High (e.g. 16): Captures massive amounts of diverse data quickly. If set too high, zero CPU threads are left for the PPO gradient math, causing context-switching lag.
+- Low (e.g. 2): Slow data collection, but incredibly fast gradient updates since the processor is completely free.
+```

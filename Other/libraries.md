@@ -1,0 +1,9 @@
+NetworkX
+Dataclasses
+Geopy
+Requests
+Gymnasium
+Typing
+Matplotlib
+FastAPI
+Websockets
