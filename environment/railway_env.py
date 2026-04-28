@@ -69,11 +69,11 @@ class ModernizedLine104(gym.Env):
         self.action_space = gym.spaces.Box(
             low=-1.0, high=0.5, shape=(1,), dtype=np.float32
         )
-        # New observation space: 9 dimensions
+        # New observation space: 11 dimensions (added speed limit and dist to next station)
         self.observation_space = gym.spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            low=np.array([0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
             high=np.array(
-                [80000.0, 30.0, 1000.0, 3.0, 3.0, 80000.0, 2000.0, 10000.0, 6.0], dtype=np.float32
+                [80000.0, 30.0, 1000.0, 3.0, 3.0, 80000.0, 2000.0, 10000.0, 6.0, 30.0, 80000.0], dtype=np.float32
             ),
             dtype=np.float32,
         )
@@ -302,6 +302,12 @@ class ModernizedLine104(gym.Env):
         return self._get_obs(train_aspect, station_aspect, x_lead_zone_start, optimal_braking_distance), reward_output.r_total, terminated, truncated, info
 
     def _get_obs(self, train_aspect: int, station_aspect: int, x_lead_zone_start: float, optimal_braking_distance: float) -> np.ndarray:
+        seg = self.vl.get_segment(self.x)
+        if self.next_station_num < len(self.STATIONS):
+            dist_to_station = max(0.0, self.STATIONS[self.next_station_num] - self.x)
+        else:
+            dist_to_station = 0.0
+
         return np.array(
             [
                 self.x,
@@ -313,6 +319,8 @@ class ModernizedLine104(gym.Env):
                 optimal_braking_distance,
                 self.time,
                 float(self.next_station_num),
+                float(seg.limit_ms),   # Now the agent knows the speed limit
+                dist_to_station,       # Now the agent knows when to brake for stations
             ],
             dtype=np.float32,
         )
