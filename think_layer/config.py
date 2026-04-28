@@ -44,7 +44,7 @@ class TrainConfig:
     # 94.7m = original 34.7m + 60m extra clearance.
     lead_stop_offset: float = 94.7
     max_episode_steps: int = 10_000
-    n_envs: int = 16
+    n_envs: int = 6
     slack_factor: float = 1.1  # 10% operational buffer for RL stability
 
     # ── Normalisation ────────────────────────────────────────────────
