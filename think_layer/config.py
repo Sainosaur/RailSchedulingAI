@@ -19,10 +19,10 @@ class TrainConfig:
     # ── PPO Hyperparameters ──────────────────────────────────────────
     total_timesteps: int = 5_000_000
 
-    learning_rate: float = 6.84e-5
+    learning_rate: float = 3e-4
     gamma: float = 0.999 # must match phi in reward_function.py, PBRS code.
-    gae_lambda: float = 0.99
-    ent_coef: float = 0.00678
+    gae_lambda: float = 0.95
+    ent_coef: float = 0.08
 
     clip_range: float = 0.2
     vf_coef: float = 0.5
