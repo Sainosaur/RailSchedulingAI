@@ -127,13 +127,12 @@ def compute_reward(
     # ═══════════════════════════════════════════════════════════════════════════
     # 1. PROGRESS — dense, every step
     # ═══════════════════════════════════════════════════════════════════════════
-    # Reward = speed / max_line_speed, capped at 1.0
+    # Reward = speed / segment_speed_limit, capped at 1.0
     # Stopped → 0.0 (this IS the penalty for not moving, no separate step cost)
     # At speed limit → ~1.0
     # Budget: ~1.0/step × 9500 moving steps = ~9,500 over perfect episode
-    MAX_LINE_SPEED_MS = 25.0  # 90 km/h — fastest segment on line 104
     if u > 0.01:
-        out.r_progress = min(1.0, u / MAX_LINE_SPEED_MS)
+        out.r_progress = min(1.0, u / max(state.speed_limit, 1.0))
     else:
         out.r_progress = 0.0
 
@@ -163,12 +162,17 @@ def compute_reward(
     elif station_aspect == 0 and -0.6 <= a <= -0.3 and u > 0.5:
         out.r_overspeed = 1.0  # mild bonus for smooth approach
 
-    # Red signal: must be braking or stopped
-    elif station_aspect == 0 and u > 0.1 and a > -0.1:
-        out.r_overspeed = -3.0  # moving at red without braking
+    # Red signal: must be braking, coasting, or stopped. Accelerating is punished.
+    elif station_aspect == 0 and u > 0.1 and a > 0.0:
+        out.r_overspeed = -3.0  # accelerating at red
 
-    elif train_aspect == 0 and u > 0.1 and a > -0.1:
-        out.r_overspeed = -3.0  # moving at red lead signal without braking
+    elif train_aspect == 0 and u > 0.1 and a > 0.0:
+        out.r_overspeed = -3.0  # accelerating at red lead signal
+        
+    # Stationary braking penalty: teach agent not to brake when already stopped
+    # to prevent negative speed/accel violations at stations.
+    elif u < 0.1 and a < -0.01:
+        out.r_overspeed -= 1.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 3. HEADWAY SWEET-SPOT — bonus for staying in bracket
@@ -177,7 +181,7 @@ def compute_reward(
     # Only when moving (no bonus for sitting in the sweet spot stopped)
     # Budget: +0.5/step × ~3000 steps in bracket = +1,500
     LEAD_MOVING_THRESHOLD = 0.5   # m/s — lead must also be moving
-    MAX_MEANINGFUL_GAP = 8 * sh   # beyond 8 SH the gap is too wide to be "sweet spot"
+    MAX_MEANINGFUL_GAP = 5 * sh   # beyond 5 SH the gap is too wide to be "sweet spot"
     lead_v = info.get("lead_train_v", 0.0)
 
     if u > 0.5 and sh > 0 and lead_v > LEAD_MOVING_THRESHOLD:
@@ -207,18 +211,22 @@ def compute_reward(
     # Budget: +200/station × 6 = +1,200 total for on-time arrivals
     if state.reached_new_station:
         if state.scheduled_arrival_time is not None and state.actual_arrival_time is not None:
-            deviation = abs(state.scheduled_arrival_time - state.actual_arrival_time)
-            if deviation <= 60.0:
-                out.r_punctuality = 200.0
+            lateness = state.actual_arrival_time - state.scheduled_arrival_time
+            if lateness > 0.0:
+                # Late: continuous penalty, max -200
+                out.r_punctuality = max(-200.0, -lateness)
             else:
-                out.r_punctuality = -100.0
+                # Early: slight penalty to discourage massive early arrivals, but still largely positive
+                # -lateness is how many seconds early we are.
+                early_amount = -lateness
+                out.r_punctuality = max(0.0, 200.0 - (early_amount * 0.1))
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 6. JERK — penalty only, smooth control is baseline expectation
     # ═══════════════════════════════════════════════════════════════════════════
     # Budget: ~-250 total (if agent has ~500 jerk events)
     jerk = abs(state.applied_acceleration - info.get("previous_a", 0.0)) / dt
-    if jerk > 1.0:
+    if jerk > 0.5:
         out.r_jerk = -0.5
 
     # ═══════════════════════════════════════════════════════════════════════════

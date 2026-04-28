@@ -240,7 +240,7 @@ class ModernizedLine104(gym.Env):
             
         # 5. Validation Layer Integration
         violations = self.vl.check_and_log(
-            self.x, self.v, proposed_a, seg, x_lead_zone_start, train_aspect, self.station_cleared
+            self.x, self.v, proposed_a, seg, x_lead_zone_start, x_station_zone_start, train_aspect, self.station_cleared
         )
         
         # 6. Rewards
