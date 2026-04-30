@@ -69,8 +69,7 @@ class ValidationLayer:
         u: float,
         proposed_a: float,
         seg: VLSegment,
-        x_lead_zone_start: float,
-        x_station_zone_start: float,
+        x_obs_zone_start: float,
         train_aspect: int,
         station_cleared: bool
     ) -> dict:
@@ -108,17 +107,17 @@ class ValidationLayer:
         projected_v = u + proposed_a * self.dt
         if projected_v < 0.0:
             violations["negative_speed_violation"] = True
-            self._log(x_ai_zone_end, x_lead_zone_start, u, "NEGATIVE_SPEED_VIOLATION")
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "NEGATIVE_SPEED_VIOLATION")
 
         # 2. Speed limit check
         if u > seg.limit_ms + 0.01:
             violations["speed_limit_violation"] = True
-            self._log(x_ai_zone_end, x_lead_zone_start, u, "SPEED_LIMIT_VIOLATION")
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "SPEED_LIMIT_VIOLATION")
 
         # 3a. Negative acceleration while stationary (genuinely unsafe)
         if u < 0.1 and proposed_a < -0.01:
             violations["accel_not_zero_violation"] = True
-            self._log(x_ai_zone_end, x_lead_zone_start, u, "ACCEL_NOT_ZERO_VIOLATION")
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "ACCEL_NOT_ZERO_VIOLATION")
 
         # NOTE: The "proposed_a > 0 while at speed limit" check was removed.
         # The env clamps speed; the validator only sees the raw proposed action.
@@ -127,26 +126,23 @@ class ValidationLayer:
         # already catches actual overspeed events.
 
         # 4. Spatial violation (SUVAT stopping distance check)
-        effective_obs_start = x_lead_zone_start
-        if not station_cleared and x_station_zone_start < x_lead_zone_start:
-            effective_obs_start = x_station_zone_start
-
+        # dist_vio_check = u^2 / (2 * |EMERGENCY_DECEL|)
         dist_vio_check = (u * u) / (2.0 * abs(EMERGENCY_DECEL))
-        if x_ai_zone_end + dist_vio_check >= effective_obs_start:
+        if x_ai_zone_end + dist_vio_check >= x_obs_zone_start:
             violations["spatial_violation"] = True
-            self._log(x_ai_zone_end, effective_obs_start, u, "SPATIAL_VIOLATION")
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "SPATIAL_VIOLATION")
 
         # 5. Station signal violation
         # If the obstacle IS the station and dwell not complete, and train tries to pass
-        if not station_cleared and x >= x_station_zone_start:
+        if not station_cleared and x >= x_obs_zone_start:
             violations["station_signal_violation"] = True
-            self._log(x_ai_zone_end, x_station_zone_start, u, "STATION_SIGNAL_VIOLATION")
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "STATION_SIGNAL_VIOLATION")
 
         # 6. Lead train signal violation
         # If aspect is Red and train is accelerating
         if train_aspect == 0 and proposed_a > 0.01:
             violations["lead_train_signal_violation"] = True
-            self._log(x_ai_zone_end, x_lead_zone_start, u, "LEAD_TRAIN_SIGNAL_VIOLATION")
+            self._log(x_ai_zone_end, x_obs_zone_start, u, "LEAD_TRAIN_SIGNAL_VIOLATION")
 
         violations["any_violation"] = any([
             violations["spatial_violation"],
