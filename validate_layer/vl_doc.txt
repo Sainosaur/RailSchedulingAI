@@ -1,45 +1,83 @@
 Validation Layer (VL) Documentation
-Current Revision: Final Prototype v2.0 (Arithmetic VL & Log-Only)
+Current Revision: Final Prototype v2.0 (Passive Monitor & Log-Only)
 
 1. Purpose
-The Validation Layer (VL) provides absolute mathematical monitoring of the RL Agent.
-In this version, the VL no longer overrides actions. It acts as a passive safety monitor and logger.
-Behavioral shaping is handled by the Reward Function, while the VL provides an audit trail of safety breaches.
+The Validation Layer (VL) provides passive safety monitoring of the RL Agent.
+It does NOT override actions. It detects constraint violations, flags them in a
+return dict, and logs them to CSV for audit (Explainable AI).
+Behavioural shaping is handled by the Reward Function using the violation flags
+returned by check_and_log().
 
 2. Architecture
 The VL uses arithmetic zone computation based on fixed block geometry.
-- O(n) segment lookup: Linear scan over segments.
-- O(1) zone arithmetic: All calculations within a segment use direct arithmetic rather than list lookups.
-- Modular Design: Adding trains, segments, or obstacles requires no changes to core VL logic.
+- O(n) segment lookup: Linear scan over segments via get_segment(x).
+- O(1) zone arithmetic: compute_zone_boundaries(x, seg) divides position by
+  spatial headway — no list lookups required.
+- Modular Design: Adding trains, segments, or obstacles requires no changes
+  to core VL logic.
 
-3. Monitoring Layers
+3. Public API
 
-Layer 1: Aspect Computation
-Uses zone geometry to compute signal aspects relative to obstacles (lead train or station).
-Aspects: 0=Red, 1=Yellow, 2=Double Yellow, 3=Green.
-x_diff = x_obs_zone_start - x_ai_zone_end.
-Violation (Collision/Overlap) occurs if x_diff <= 0.
+check_and_log(x, u, proposed_a, seg, x_obs_zone_start, train_aspect, station_cleared)
+    Inputs:
+        x               — AI train position (metres along track)
+        u               — AI train speed (m/s)
+        proposed_a      — acceleration proposed by the RL agent (m/s²)
+        seg             — VLSegment for the current position
+        x_obs_zone_start — start of the nearest obstacle zone (metres)
+        train_aspect    — signal aspect (0=Red, 1=Yellow, 2=Double Yellow, 3=Green)
+        station_cleared — whether the current station dwell is complete
 
-Layer 2: SUVAT Stopping Distance Check
-Replaces kinematic lookahead with a direct physical check.
-Required Stopping Distance: d_stop = u² / (2 * |EMERGENCY_DECEL|).
-Spatial Violation occurs if: x_ai_zone_end + d_stop >= x_obs_zone_start.
+    Returns: dict of boolean violation flags:
+        spatial_violation
+        speed_limit_violation
+        station_signal_violation
+        lead_train_signal_violation
+        negative_speed_violation
+        accel_not_zero_violation
+        any_violation
 
-Layer 3: Constraint Monitoring
-- NEGATIVE_SPEED_VIOLATION: Projected speed < 0.0.
-- SPEED_LIMIT_VIOLATION: Speed > segment limit.
-- ACCEL_NOT_ZERO_VIOLATION: Negative acceleration when stationary (would reverse
-  the train).
-  Note: Positive acceleration when stationary is intentionally NOT flagged here —
-  if the train creeps into the next zone, the spatial violation fires instead. Positive acceleration at cruise speed is also NOT flagged, as the environment's internal clamp handles it gracefully.
-- STATION_SIGNAL_VIOLATION: Attempting to pass a station zone before dwell completion.
-- LEAD_TRAIN_SIGNAL_VIOLATION: Accelerating at a Red train aspect.
+    When vl_active is False, all flags return False (no-op).
 
-Layer 4: Logging (Explainable AI)
-All violations are appended to `override_log.csv`.
+4. Constraint Checks (executed in order)
+
+Check 1: Negative Speed
+    Condition: u + proposed_a * dt < 0.0
+    Meaning:   The proposed acceleration would reverse the train.
+
+Check 2: Speed Limit
+    Condition: u > seg.limit_ms + 0.01
+    Meaning:   The train is currently exceeding the segment speed limit.
+
+Check 3: Acceleration While Stationary
+    Condition: u < 0.1 and proposed_a < -0.01
+    Meaning:   Negative acceleration when already stationary (would reverse).
+    Note:      Positive acceleration at the speed limit is NOT flagged — the
+               environment clamps speed internally. The speed limit check
+               (Check 2) catches actual overspeed events.
+
+Check 4: Spatial Violation (SUVAT Stopping Distance)
+    d_stop = u² / (2 * |EMERGENCY_DECEL|)
+    Condition: x_ai_zone_end + d_stop >= x_obs_zone_start
+    Meaning:   Even under emergency braking, the train cannot stop before
+               reaching the obstacle zone.
+
+Check 5: Station Signal Violation
+    Condition: NOT station_cleared AND x >= x_obs_zone_start
+    Meaning:   The train has entered or passed a station zone before the
+               dwell period is complete.
+
+Check 6: Lead Train Signal Violation
+    Condition: train_aspect == 0 (Red) AND proposed_a > 0.01
+    Meaning:   The agent is attempting to accelerate against a Red signal.
+
+5. Logging (Explainable AI)
+All violations are appended to `override_log.csv` via log_manager.py.
 Columns: timestamp, x_ai_zone_end, x_obs_zone_start, ai_speed, constraint_id.
+LOG_RESET (bool): when True, the log is wiped on initialisation.
+LOG_ENABLED (bool): when False, no disk I/O occurs (use during bulk training).
 
-4. Track Data (Line 104)
+6. Track Data (Line 104)
 
 Index   SH (m)   TH (s)
 0       390.0    15.6
@@ -49,9 +87,10 @@ Index   SH (m)   TH (s)
 4       40.0     4.8
 5       40.0     4.8
 
-Note: The last zone of each segment is the station stopping zone. It may be oversized (>= SH) due to the safety merge.
+Note: The last zone of each segment may be oversized (>= SH) due to the
+safety merge that absorbs fractional remainders.
 
-5. Safety Constants
+7. Safety Constants
 - ACCEL: 0.5 m/s²
 - SERVICE_DECEL: -0.5 m/s²
 - EMERGENCY_DECEL: -1.0 m/s²
